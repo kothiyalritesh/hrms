@@ -1,14 +1,22 @@
 import React from "react";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
-import HomeScreen from "@/screens/HomeScreen";
-import DetailScreen from "@/screens/DetailScreen";
+import DashboardScreen from "@/screens/DashboardScreen";
+import LeaveScreen from "@/screens/LeaveScreen";
+import PayrollScreen from "@/screens/PayrollScreen";
+import DocumentsScreen from "@/screens/DocumentsScreen";
+import ProjectsScreen from "@/screens/ProjectsScreen";
+import NotificationsScreen from "@/screens/NotificationsScreen";
 import { HeaderTitle } from "@/components/HeaderTitle";
 import { useTheme } from "@/hooks/useTheme";
 import { getCommonScreenOptions } from "@/navigation/screenOptions";
 
 export type HomeStackParamList = {
-  Home: undefined;
-  Detail: undefined;
+  Dashboard: undefined;
+  LeaveScreen: undefined;
+  PayrollScreen: undefined;
+  DocumentsScreen: undefined;
+  ProjectsScreen: undefined;
+  Notifications: undefined;
 };
 
 const Stack = createNativeStackNavigator<HomeStackParamList>();
@@ -23,16 +31,36 @@ export default function HomeStackNavigator() {
       }}
     >
       <Stack.Screen
-        name="Home"
-        component={HomeScreen}
+        name="Dashboard"
+        component={DashboardScreen}
         options={{
-          headerTitle: () => <HeaderTitle title="My App" />,
+          headerTitle: () => <HeaderTitle title="RE HRMS" />,
         }}
       />
       <Stack.Screen
-        name="Detail"
-        component={DetailScreen}
-        options={{ headerTitle: "Detail" }}
+        name="LeaveScreen"
+        component={LeaveScreen}
+        options={{ headerTitle: "Leave Management" }}
+      />
+      <Stack.Screen
+        name="PayrollScreen"
+        component={PayrollScreen}
+        options={{ headerTitle: "Payroll" }}
+      />
+      <Stack.Screen
+        name="DocumentsScreen"
+        component={DocumentsScreen}
+        options={{ headerTitle: "Documents" }}
+      />
+      <Stack.Screen
+        name="ProjectsScreen"
+        component={ProjectsScreen}
+        options={{ headerTitle: "Projects" }}
+      />
+      <Stack.Screen
+        name="Notifications"
+        component={NotificationsScreen}
+        options={{ headerTitle: "Notifications" }}
       />
     </Stack.Navigator>
   );

@@ -1,14 +1,19 @@
 import React from "react";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
-
 import ProfileScreen from "@/screens/ProfileScreen";
-import CrashScreen from "@/screens/CrashScreen";
+import LeaveScreen from "@/screens/LeaveScreen";
+import PayrollScreen from "@/screens/PayrollScreen";
+import DocumentsScreen from "@/screens/DocumentsScreen";
+import NotificationsScreen from "@/screens/NotificationsScreen";
 import { useTheme } from "@/hooks/useTheme";
 import { getCommonScreenOptions } from "@/navigation/screenOptions";
 
 export type ProfileStackParamList = {
   Profile: undefined;
-  Crash: undefined;
+  LeaveScreen: undefined;
+  PayrollScreen: undefined;
+  DocumentsScreen: undefined;
+  Notifications: undefined;
 };
 
 const Stack = createNativeStackNavigator<ProfileStackParamList>();
@@ -26,11 +31,24 @@ export default function ProfileStackNavigator() {
         }}
       />
       <Stack.Screen
-        name="Crash"
-        component={CrashScreen}
-        options={{
-          title: "Crash Test",
-        }}
+        name="LeaveScreen"
+        component={LeaveScreen}
+        options={{ headerTitle: "Leave Management" }}
+      />
+      <Stack.Screen
+        name="PayrollScreen"
+        component={PayrollScreen}
+        options={{ headerTitle: "Payroll" }}
+      />
+      <Stack.Screen
+        name="DocumentsScreen"
+        component={DocumentsScreen}
+        options={{ headerTitle: "Documents" }}
+      />
+      <Stack.Screen
+        name="Notifications"
+        component={NotificationsScreen}
+        options={{ headerTitle: "Notifications" }}
       />
     </Stack.Navigator>
   );
