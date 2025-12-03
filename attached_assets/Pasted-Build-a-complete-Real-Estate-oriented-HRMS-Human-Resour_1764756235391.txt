@@ -1,0 +1,384 @@
+Build a complete Real Estate–oriented HRMS (Human Resource Management System) mobile application.
+The tech stack must be:
+
+React Native + Expo for iOS + Android
+
+Backend: Firebase (Authentication, Firestore, Firebase Storage, Cloud Functions)
+
+Also allow support for local offline storage using SQLite / AsyncStorage
+
+The app must run smoothly, be responsive, secure, and scalable.
+
+🎯 Overall Purpose of the App
+
+The HRMS app should streamline employee management specifically for Real Estate companies, including:
+
+Attendance & field tracking for site visits
+
+Leave management
+
+Payroll & salary slip generation
+
+Task & workflow assignment
+
+Document management (property files, HR docs)
+
+Employee profiles & KYC
+
+Real estate team structure & reporting hierarchy
+
+Notifications
+
+Dashboard & analytics for HR/admin
+
+👤 User Roles
+
+Employee (Sales, Marketing, Site Supervisor, Telecaller, Field Team)
+
+HR
+
+Team Lead / Manager
+
+Admin / Super Admin
+
+Each role should see different screens & access levels.
+
+📱 Core Modules & Features (Very Detailed)
+1. Authentication & Onboarding
+
+Firebase Auth (Email/password, OTP, Google Sign-In)
+
+Employee Registration with role selection (Admin-only)
+
+Profile completion:
+
+Name, phone, email
+
+Address, emergency contact
+
+PAN/Aadhaar upload
+
+Team/Department
+
+Reporting Manager
+
+Automatic syncing with Firestore
+
+2. Employee Dashboard
+
+Different dashboards for each role.
+
+Dashboard Widgets:
+
+Attendance today: Present/Absent
+
+Pending tasks
+
+Leaves remaining
+
+Salary slip access
+
+Real estate KPIs:
+
+Site visits scheduled
+
+Leads assigned
+
+Deals closed
+
+Follow-ups
+
+Notifications
+
+Quick actions (Mark attendance, Apply leave, Upload document)
+
+3. Attendance Management
+
+Perfect for real estate field jobs.
+
+Features:
+
+Geo-location based attendance
+
+Selfie attendance
+
+QR-based attendance at office/site
+
+Auto-detect if employee is at project site
+
+Check-in / Check-out
+
+Attendance logs
+
+Weekly & monthly reports
+
+Late mark detection
+
+Overtime calculation
+
+Offline mode: store locally → sync to Firestore when online.
+
+4. Leave Management
+
+Apply for leave (Sick/Casual/EL/WFH)
+
+Upload medical/leave documents
+
+Leave approval by manager
+
+Yearly leave balance
+
+Auto notifications (email + in-app)
+
+5. Real Estate Team Tasks & Workflows
+
+A custom module for the real estate sector:
+
+Task Types
+
+Client follow-up
+
+Site visit scheduling
+
+Lead assignment
+
+Document verification
+
+Property update tasks
+
+Marketing tasks
+
+Features
+
+HR/Admin creates tasks
+
+Assign to team/employee
+
+Deadline, priority, reminders
+
+Task tracking
+
+Employee updates task status with images/audio/location
+
+Notification on task completion
+
+6. Payroll & Salary Management
+
+Monthly payroll generation
+
+Auto attendance-based salary calculation
+
+Reimbursement uploads
+
+Salary slip PDF generation
+
+Download & view salary history
+
+Admin panel to upload salary components
+
+7. Employee Document Locker
+
+Cloud storage using Firebase Storage:
+
+Store:
+
+Offer letter
+
+Appointment letter
+
+PAN/Aadhaar
+
+Property documents for employees working on sales
+
+Certificates
+
+Features:
+
+Upload, view, delete
+
+Auto-sync with Firestore
+
+Role-based access
+
+8. Performance Tracking
+
+Metrics for real estate employees:
+
+Leads handled
+
+Site visits done
+
+Deals closed
+
+Calls made
+
+Client feedback
+
+Monthly performance graph
+
+Achievement badges
+
+Managers get employee-wise reports.
+
+9. Real Estate Project Directory
+
+Useful for employees in sales/support.
+
+Includes:
+
+List of properties/projects
+
+Project details
+
+Pricing
+
+Brochures
+
+Availability status
+
+Location/Map
+
+Documents
+
+Add/update property (Admin only)
+
+10. Notifications & Alerts
+
+Send via Firebase:
+
+Task reminders
+
+Leave status
+
+Payroll notifications
+
+Policy updates
+
+Meeting reminders
+
+Site visit reminders
+
+HR announcements
+
+11. Chat & Internal Communication
+
+(Optional but recommended)
+
+Team chat
+
+Group chat (project-based)
+
+Share images, documents
+
+Manager–employee direct chat
+
+Encrypted messaging using Firestore streams
+
+12. Offline Support
+
+Attendance offline
+
+Task updates offline
+
+Property details saved locally
+
+Sync when the internet is back
+Use SQLite or MMKV for local caching.
+
+13. Admin Panel (Mobile Only)
+
+Admin can manage everything from the app:
+
+View all employees
+
+Add new employee
+
+Approve leaves
+
+Edit payroll
+
+Add tasks
+
+Manage real estate projects
+
+Send notifications
+
+14. Settings & Profile
+
+Update profile info
+
+Change password
+
+Theme: Dark/Light
+
+Notification settings
+
+About HRMS
+
+Logout
+
+📂 Database Structure (Firestore)
+
+Request the AI to generate:
+
+Collections:
+
+employees
+
+attendance
+
+leaves
+
+payroll
+
+tasks
+
+projects
+
+messages
+
+notifications
+
+settings
+
+Also generate rules:
+
+Role based access
+
+Field-level security
+
+Validation rules
+
+Cloud Functions triggers
+
+🎨 UI/UX Requirements
+
+Modern, clean UI
+
+Real estate theme (blue/white/grey)
+
+Material design
+
+Smooth navigation
+
+Animations via Reanimated
+
+Bottom tabs for employees
+
+Side drawer for managers/admin
+
+📦 APIs & Integrations
+
+Firebase Auth
+
+Firestore
+
+Firebase Storage
+
+Google Maps API for location
+
+Expo Permissions (Camera, Location)
+
+Expo FileSystem
+
+Expo Background Services for tracking
