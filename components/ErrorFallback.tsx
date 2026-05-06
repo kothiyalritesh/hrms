@@ -58,7 +58,12 @@ export function ErrorFallback({ error, resetError }: ErrorFallbackProps) {
       ) : null}
 
       <View style={styles.content}>
-        <View style={[styles.iconContainer, { backgroundColor: Colors.light.errorBg }]}>
+        <View
+          style={[
+            styles.iconContainer,
+            { backgroundColor: Colors.light.errorBg },
+          ]}
+        >
           <Feather name="alert-triangle" size={48} color={Colors.light.error} />
         </View>
 
@@ -66,8 +71,12 @@ export function ErrorFallback({ error, resetError }: ErrorFallbackProps) {
           Oops! Something went wrong
         </ThemedText>
 
-        <ThemedText type="body" style={[styles.message, { color: theme.textSecondary }]}>
-          RE HRMS encountered an unexpected issue. Please restart the app to continue.
+        <ThemedText
+          type="body"
+          style={[styles.message, { color: theme.textSecondary }]}
+        >
+          RE HRMS encountered an unexpected issue. Please restart the app to
+          continue.
         </ThemedText>
 
         <Pressable
@@ -81,7 +90,12 @@ export function ErrorFallback({ error, resetError }: ErrorFallbackProps) {
             },
           ]}
         >
-          <Feather name="refresh-cw" size={18} color="#FFFFFF" style={styles.buttonIcon} />
+          <Feather
+            name="refresh-cw"
+            size={18}
+            color="#FFFFFF"
+            style={styles.buttonIcon}
+          />
           <ThemedText
             type="body"
             style={[styles.buttonText, { color: "#FFFFFF" }]}

@@ -1,5 +1,14 @@
 import React, { useState, useCallback } from "react";
-import { StyleSheet, View, Pressable, TextInput, Modal, RefreshControl, ScrollView, Dimensions } from "react-native";
+import {
+  StyleSheet,
+  View,
+  Pressable,
+  TextInput,
+  Modal,
+  RefreshControl,
+  ScrollView,
+  Dimensions,
+} from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -11,7 +20,20 @@ import { useTheme } from "@/hooks/useTheme";
 import { useAuth } from "@/contexts/AuthContext";
 import { Spacing, BorderRadius, Colors, Shadows } from "@/constants/theme";
 import Spacer from "@/components/Spacer";
-import { ProjectStorage, Project } from "@/utils/storage";
+import { supabase } from "@/lib/supabase";
+
+interface Project {
+  id: string;
+  name: string;
+  location: string;
+  address: string;
+  price: string;
+  price_per_sqft?: string;
+  type: "residential" | "commercial" | "plots";
+  status: "available" | "sold_out" | "upcoming";
+  amenities: string[];
+  description: string;
+}
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 const CARD_WIDTH = (SCREEN_WIDTH - Spacing.xl * 2 - Spacing.md) / 2;
@@ -30,43 +52,63 @@ interface ProjectCardProps {
 function ProjectCard({ project, onPress }: ProjectCardProps) {
   const { theme } = useTheme();
   const statusColor = STATUS_COLORS[project.status];
-  
+
   return (
-    <Pressable 
+    <Pressable
       style={({ pressed }) => [
         styles.projectCard,
-        { backgroundColor: theme.backgroundDefault, opacity: pressed ? 0.9 : 1 }
+        {
+          backgroundColor: theme.backgroundDefault,
+          opacity: pressed ? 0.9 : 1,
+        },
       ]}
       onPress={onPress}
     >
-      <View style={[styles.projectImage, { backgroundColor: theme.primary + "20" }]}>
+      <View
+        style={[styles.projectImage, { backgroundColor: theme.primary + "20" }]}
+      >
         <Feather name="home" size={32} color={theme.primary} />
       </View>
-      
+
       <View style={styles.projectContent}>
-        <View style={[styles.statusBadge, { backgroundColor: statusColor + "20" }]}>
-          <ThemedText type="caption" style={{ color: statusColor, fontWeight: "600", fontSize: 10 }}>
+        <View
+          style={[styles.statusBadge, { backgroundColor: statusColor + "20" }]}
+        >
+          <ThemedText
+            type="caption"
+            style={{ color: statusColor, fontWeight: "600", fontSize: 10 }}
+          >
             {project.status.replace("_", " ").toUpperCase()}
           </ThemedText>
         </View>
-        
+
         <ThemedText type="body" style={styles.projectName} numberOfLines={1}>
           {project.name}
         </ThemedText>
-        
+
         <View style={styles.projectLocation}>
           <Feather name="map-pin" size={12} color={theme.textSecondary} />
-          <ThemedText type="caption" style={{ color: theme.textSecondary }} numberOfLines={1}>
+          <ThemedText
+            type="caption"
+            style={{ color: theme.textSecondary }}
+            numberOfLines={1}
+          >
             {project.location}
           </ThemedText>
         </View>
-        
-        <ThemedText type="small" style={{ color: theme.primary, fontWeight: "600" }}>
+
+        <ThemedText
+          type="small"
+          style={{ color: theme.primary, fontWeight: "600" }}
+        >
           {project.price}
         </ThemedText>
-        
+
         <View style={styles.projectType}>
-          <ThemedText type="caption" style={{ color: theme.textSecondary, textTransform: "capitalize" }}>
+          <ThemedText
+            type="caption"
+            style={{ color: theme.textSecondary, textTransform: "capitalize" }}
+          >
             {project.type}
           </ThemedText>
         </View>
@@ -79,26 +121,27 @@ export default function ProjectsScreen() {
   const { theme } = useTheme();
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
-  
+
   const [projects, setProjects] = useState<Project[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
-  const [filterStatus, setFilterStatus] = useState<Project["status"] | "all">("all");
+  const [filterStatus, setFilterStatus] = useState<Project["status"] | "all">(
+    "all",
+  );
   const [refreshing, setRefreshing] = useState(false);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
 
-  const canManageProjects = user?.role === "admin";
+  const canManageProjects = ["SYSTEM_ADMIN", "ADMIN", "BUSINESS_HEAD"].includes(user?.role || "");
 
   const loadData = useCallback(async () => {
-    const allProjects = await ProjectStorage.getAll();
-    setProjects(allProjects);
+    const { data, error } = await supabase
+      .from("projects")
+      .select("*")
+      .order("name", { ascending: true });
+    if (!error) setProjects(data || []);
   }, []);
 
-  useFocusEffect(
-    useCallback(() => {
-      loadData();
-    }, [loadData])
-  );
+  useFocusEffect(useCallback(() => { loadData(); }, [loadData]));
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -106,7 +149,7 @@ export default function ProjectsScreen() {
     setRefreshing(false);
   };
 
-  const filteredProjects = projects.filter(project => {
+  const filteredProjects = projects.filter((project) => {
     if (filterStatus !== "all" && project.status !== filterStatus) return false;
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
@@ -129,10 +172,19 @@ export default function ProjectsScreen() {
     <View style={{ flex: 1, backgroundColor: theme.backgroundRoot }}>
       <ScreenScrollView
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.primary} />
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={theme.primary}
+          />
         }
       >
-        <View style={[styles.searchContainer, { backgroundColor: theme.backgroundDefault }]}>
+        <View
+          style={[
+            styles.searchContainer,
+            { backgroundColor: theme.backgroundDefault },
+          ]}
+        >
           <Feather name="search" size={18} color={theme.textSecondary} />
           <TextInput
             style={[styles.searchInput, { color: theme.text }]}
@@ -150,25 +202,28 @@ export default function ProjectsScreen() {
 
         <Spacer height={Spacing.md} />
 
-        <ScrollView 
-          horizontal 
+        <ScrollView
+          horizontal
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.filtersScroll}
         >
-          {filters.map(f => (
+          {filters.map((f) => (
             <Pressable
               key={f.key}
               style={[
                 styles.filterChip,
-                { 
-                  backgroundColor: filterStatus === f.key ? theme.primary : theme.backgroundDefault,
-                }
+                {
+                  backgroundColor:
+                    filterStatus === f.key
+                      ? theme.primary
+                      : theme.backgroundDefault,
+                },
               ]}
               onPress={() => setFilterStatus(f.key)}
             >
-              <ThemedText 
-                type="caption" 
-                style={{ 
+              <ThemedText
+                type="caption"
+                style={{
                   color: filterStatus === f.key ? "#FFFFFF" : theme.text,
                   fontWeight: filterStatus === f.key ? "600" : "400",
                 }}
@@ -182,21 +237,44 @@ export default function ProjectsScreen() {
         <Spacer height={Spacing.lg} />
 
         <View style={styles.statsRow}>
-          <View style={[styles.statCard, { backgroundColor: theme.backgroundDefault }]}>
-            <ThemedText type="h3" style={{ color: theme.primary }}>{projects.length}</ThemedText>
-            <ThemedText type="caption" style={{ color: theme.textSecondary }}>Total Projects</ThemedText>
+          <View
+            style={[
+              styles.statCard,
+              { backgroundColor: theme.backgroundDefault },
+            ]}
+          >
+            <ThemedText type="h3" style={{ color: theme.primary }}>
+              {projects.length}
+            </ThemedText>
+            <ThemedText type="caption" style={{ color: theme.textSecondary }}>
+              Total Projects
+            </ThemedText>
           </View>
-          <View style={[styles.statCard, { backgroundColor: theme.backgroundDefault }]}>
+          <View
+            style={[
+              styles.statCard,
+              { backgroundColor: theme.backgroundDefault },
+            ]}
+          >
             <ThemedText type="h3" style={{ color: Colors.light.success }}>
-              {projects.filter(p => p.status === "available").length}
+              {projects.filter((p) => p.status === "available").length}
             </ThemedText>
-            <ThemedText type="caption" style={{ color: theme.textSecondary }}>Available</ThemedText>
+            <ThemedText type="caption" style={{ color: theme.textSecondary }}>
+              Available
+            </ThemedText>
           </View>
-          <View style={[styles.statCard, { backgroundColor: theme.backgroundDefault }]}>
+          <View
+            style={[
+              styles.statCard,
+              { backgroundColor: theme.backgroundDefault },
+            ]}
+          >
             <ThemedText type="h3" style={{ color: Colors.light.info }}>
-              {projects.filter(p => p.status === "upcoming").length}
+              {projects.filter((p) => p.status === "upcoming").length}
             </ThemedText>
-            <ThemedText type="caption" style={{ color: theme.textSecondary }}>Upcoming</ThemedText>
+            <ThemedText type="caption" style={{ color: theme.textSecondary }}>
+              Upcoming
+            </ThemedText>
           </View>
         </View>
 
@@ -204,7 +282,7 @@ export default function ProjectsScreen() {
 
         {filteredProjects.length > 0 ? (
           <View style={styles.projectsGrid}>
-            {filteredProjects.map(project => (
+            {filteredProjects.map((project) => (
               <ProjectCard
                 key={project.id}
                 project={project}
@@ -216,11 +294,21 @@ export default function ProjectsScreen() {
             ))}
           </View>
         ) : (
-          <View style={[styles.emptyState, { backgroundColor: theme.backgroundDefault }]}>
+          <View
+            style={[
+              styles.emptyState,
+              { backgroundColor: theme.backgroundDefault },
+            ]}
+          >
             <Feather name="home" size={48} color={theme.textSecondary} />
             <Spacer height={Spacing.md} />
-            <ThemedText type="body" style={{ color: theme.textSecondary, textAlign: "center" }}>
-              {searchQuery ? "No projects match your search" : "No projects available"}
+            <ThemedText
+              type="body"
+              style={{ color: theme.textSecondary, textAlign: "center" }}
+            >
+              {searchQuery
+                ? "No projects match your search"
+                : "No projects available"}
             </ThemedText>
           </View>
         )}
@@ -235,80 +323,130 @@ export default function ProjectsScreen() {
         onRequestClose={() => setShowDetailModal(false)}
       >
         <View style={styles.modalOverlay}>
-          <ThemedView style={[styles.modalContainer, { paddingBottom: insets.bottom + Spacing.lg }]}>
+          <ThemedView
+            style={[
+              styles.modalContainer,
+              { paddingBottom: insets.bottom + Spacing.lg },
+            ]}
+          >
             <View style={styles.modalHeader}>
               <ThemedText type="h3">Project Details</ThemedText>
               <Pressable onPress={() => setShowDetailModal(false)}>
                 <Feather name="x" size={24} color={theme.text} />
               </Pressable>
             </View>
-            
+
             {selectedProject ? (
-              <ScrollView style={styles.modalContent} showsVerticalScrollIndicator={false}>
-                <View style={[styles.detailImage, { backgroundColor: theme.primary + "20" }]}>
+              <ScrollView
+                style={styles.modalContent}
+                showsVerticalScrollIndicator={false}
+              >
+                <View
+                  style={[
+                    styles.detailImage,
+                    { backgroundColor: theme.primary + "20" },
+                  ]}
+                >
                   <Feather name="home" size={64} color={theme.primary} />
                 </View>
-                
+
                 <Spacer height={Spacing.lg} />
-                
+
                 <View style={styles.detailHeader}>
                   <ThemedText type="h2">{selectedProject.name}</ThemedText>
-                  <View style={[styles.statusBadge, { backgroundColor: STATUS_COLORS[selectedProject.status] + "20" }]}>
-                    <ThemedText type="caption" style={{ color: STATUS_COLORS[selectedProject.status], fontWeight: "600" }}>
+                  <View
+                    style={[
+                      styles.statusBadge,
+                      {
+                        backgroundColor:
+                          STATUS_COLORS[selectedProject.status] + "20",
+                      },
+                    ]}
+                  >
+                    <ThemedText
+                      type="caption"
+                      style={{
+                        color: STATUS_COLORS[selectedProject.status],
+                        fontWeight: "600",
+                      }}
+                    >
                       {selectedProject.status.replace("_", " ").toUpperCase()}
                     </ThemedText>
                   </View>
                 </View>
-                
+
                 <View style={styles.detailLocation}>
-                  <Feather name="map-pin" size={16} color={theme.textSecondary} />
-                  <ThemedText type="body" style={{ color: theme.textSecondary }}>
+                  <Feather
+                    name="map-pin"
+                    size={16}
+                    color={theme.textSecondary}
+                  />
+                  <ThemedText
+                    type="body"
+                    style={{ color: theme.textSecondary }}
+                  >
                     {selectedProject.address}
                   </ThemedText>
                 </View>
-                
+
                 <Spacer height={Spacing.lg} />
-                
-                <View style={[styles.priceCard, { backgroundColor: theme.primary + "10" }]}>
-                  <ThemedText type="caption" style={{ color: theme.primary }}>Price Range</ThemedText>
-                  <ThemedText type="h3" style={{ color: theme.primary }}>{selectedProject.price}</ThemedText>
-                  {selectedProject.pricePerSqft ? (
+
+                <View
+                  style={[
+                    styles.priceCard,
+                    { backgroundColor: theme.primary + "10" },
+                  ]}
+                >
+                  <ThemedText type="caption" style={{ color: theme.primary }}>
+                    Price Range
+                  </ThemedText>
+                  <ThemedText type="h3" style={{ color: theme.primary }}>
+                    {selectedProject.price}
+                  </ThemedText>
+                  {selectedProject.price_per_sqft ? (
                     <ThemedText type="caption" style={{ color: theme.textSecondary }}>
-                      {selectedProject.pricePerSqft}
+                      {selectedProject.price_per_sqft}
                     </ThemedText>
                   ) : null}
                 </View>
-                
+
                 <Spacer height={Spacing.lg} />
-                
+
                 <ThemedText type="h4">Description</ThemedText>
                 <Spacer height={Spacing.sm} />
                 <ThemedText type="body" style={{ color: theme.textSecondary }}>
                   {selectedProject.description}
                 </ThemedText>
-                
+
                 <Spacer height={Spacing.lg} />
-                
+
                 <ThemedText type="h4">Amenities</ThemedText>
                 <Spacer height={Spacing.sm} />
                 <View style={styles.amenitiesGrid}>
                   {selectedProject.amenities.map((amenity, index) => (
-                    <View 
-                      key={index} 
-                      style={[styles.amenityChip, { backgroundColor: theme.backgroundSecondary }]}
+                    <View
+                      key={index}
+                      style={[
+                        styles.amenityChip,
+                        { backgroundColor: theme.backgroundSecondary },
+                      ]}
                     >
-                      <Feather name="check" size={12} color={Colors.light.success} />
+                      <Feather
+                        name="check"
+                        size={12}
+                        color={Colors.light.success}
+                      />
                       <ThemedText type="caption">{amenity}</ThemedText>
                     </View>
                   ))}
                 </View>
-                
+
                 <Spacer height={Spacing.xl} />
-                
+
                 <Button onPress={() => setShowDetailModal(false)}>
                   Contact Sales
                 </Button>
-                
+
                 <Spacer height={Spacing.lg} />
               </ScrollView>
             ) : null}

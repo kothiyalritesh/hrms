@@ -1,0 +1,19 @@
+UPLOAD STEPS - DO EXACTLY THIS ORDER:
+
+1. Open cPanel File Manager
+2. Navigate to public_html/HRMS/ (or your app folder)
+3. SELECT ALL files and folders (Ctrl+A)
+4. Click DELETE - confirm deletion
+   (This removes the old _expo folder with old JS bundle)
+5. Now upload the contents of your local dist/ folder:
+   - dist/index.html
+   - dist/favicon.ico  
+   - dist/metadata.json
+   - dist/_expo/ (entire folder)
+6. Open browser in INCOGNITO window
+7. Go to your URL
+8. The new JS bundle index-b1b56aa4da49a4bff031f1d00e62ee2b.js will load
+
+ALSO run this in Supabase SQL Editor before testing:
+DELETE FROM attendance_logs WHERE date = CURRENT_DATE;
+DELETE FROM activity_logs WHERE DATE(timestamp) = CURRENT_DATE;

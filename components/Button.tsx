@@ -1,5 +1,11 @@
 import React, { ReactNode } from "react";
-import { StyleSheet, Pressable, ViewStyle, StyleProp, ActivityIndicator } from "react-native";
+import {
+  StyleSheet,
+  Pressable,
+  ViewStyle,
+  StyleProp,
+  ActivityIndicator,
+} from "react-native";
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
@@ -64,7 +70,9 @@ export function Button({
       case "primary":
         return theme.primary;
       case "secondary":
-        return isDark ? Colors.dark.backgroundSecondary : Colors.light.backgroundSecondary;
+        return isDark
+          ? Colors.dark.backgroundSecondary
+          : Colors.light.backgroundSecondary;
       case "destructive":
         return Colors.light.error;
       case "outline":

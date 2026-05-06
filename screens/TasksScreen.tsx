@@ -1,5 +1,13 @@
 import React, { useState, useCallback } from "react";
-import { StyleSheet, View, Pressable, TextInput, Modal, Alert, RefreshControl } from "react-native";
+import {
+  StyleSheet,
+  View,
+  Pressable,
+  TextInput,
+  Modal,
+  Alert,
+  RefreshControl,
+} from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -12,7 +20,7 @@ import { useTheme } from "@/hooks/useTheme";
 import { useAuth } from "@/contexts/AuthContext";
 import { Spacing, BorderRadius, Colors, Shadows } from "@/constants/theme";
 import Spacer from "@/components/Spacer";
-import { TaskStorage, Task } from "@/utils/storage";
+import { supabase } from "@/lib/supabase";
 
 type FilterType = "all" | "pending" | "in_progress" | "completed";
 
@@ -29,7 +37,20 @@ const STATUS_COLORS = {
   cancelled: Colors.light.textSecondary,
 };
 
-const TASK_TYPE_ICONS: Record<Task["type"], keyof typeof Feather.glyphMap> = {
+interface Task {
+  id: string;
+  title: string;
+  description: string;
+  type: string;
+  priority: "high" | "medium" | "low";
+  status: "pending" | "in_progress" | "completed" | "cancelled";
+  assigned_to: string;
+  due_date: string;
+  created_at: string;
+  location?: { address: string };
+}
+
+const TASK_TYPE_ICONS: Record<string, keyof typeof Feather.glyphMap> = {
   follow_up: "phone",
   site_visit: "map-pin",
   lead: "user-plus",
@@ -48,71 +69,112 @@ function TaskCard({ task, onPress, onStatusChange }: TaskCardProps) {
   const { theme } = useTheme();
   const priorityColor = PRIORITY_COLORS[task.priority];
   const statusColor = STATUS_COLORS[task.status];
-  const deadline = new Date(task.deadline);
-  const isOverdue = deadline < new Date() && task.status !== "completed";
-  
+  const deadline = new Date(task.due_date || task.created_at);
+  const isOverdue =
+    task.due_date && deadline < new Date() && task.status !== "completed";
+
   return (
-    <Pressable 
+    <Pressable
       style={({ pressed }) => [
         styles.taskCard,
-        { backgroundColor: theme.backgroundDefault, opacity: pressed ? 0.9 : 1 }
+        {
+          backgroundColor: theme.backgroundDefault,
+          opacity: pressed ? 0.9 : 1,
+        },
       ]}
       onPress={onPress}
     >
       <View style={styles.taskHeader}>
-        <View style={[styles.taskTypeIcon, { backgroundColor: theme.primary + "20" }]}>
-          <Feather name={TASK_TYPE_ICONS[task.type]} size={18} color={theme.primary} />
+        <View
+          style={[
+            styles.taskTypeIcon,
+            { backgroundColor: theme.primary + "20" },
+          ]}
+        >
+          <Feather
+            name={TASK_TYPE_ICONS[task.type] || "more-horizontal"}
+            size={18}
+            color={theme.primary}
+          />
         </View>
         <View style={styles.taskTitleContainer}>
           <ThemedText type="body" style={styles.taskTitle} numberOfLines={1}>
             {task.title}
           </ThemedText>
           <View style={styles.taskMeta}>
-            <View style={[styles.priorityBadge, { backgroundColor: priorityColor + "20" }]}>
-              <ThemedText type="caption" style={{ color: priorityColor, fontWeight: "600" }}>
+            <View
+              style={[
+                styles.priorityBadge,
+                { backgroundColor: priorityColor + "20" },
+              ]}
+            >
+              <ThemedText
+                type="caption"
+                style={{ color: priorityColor, fontWeight: "600" }}
+              >
                 {task.priority.toUpperCase()}
               </ThemedText>
             </View>
-            <View style={[styles.statusBadge, { backgroundColor: statusColor + "20" }]}>
-              <ThemedText type="caption" style={{ color: statusColor, fontWeight: "500" }}>
+            <View
+              style={[
+                styles.statusBadge,
+                { backgroundColor: statusColor + "20" },
+              ]}
+            >
+              <ThemedText
+                type="caption"
+                style={{ color: statusColor, fontWeight: "500" }}
+              >
                 {task.status.replace("_", " ").toUpperCase()}
               </ThemedText>
             </View>
           </View>
         </View>
       </View>
-      
-      <ThemedText type="small" style={[styles.taskDescription, { color: theme.textSecondary }]} numberOfLines={2}>
+
+      <ThemedText
+        type="small"
+        style={[styles.taskDescription, { color: theme.textSecondary }]}
+        numberOfLines={2}
+      >
         {task.description}
       </ThemedText>
-      
+
       <View style={styles.taskFooter}>
         <View style={styles.deadlineContainer}>
-          <Feather 
-            name="calendar" 
-            size={14} 
-            color={isOverdue ? Colors.light.error : theme.textSecondary} 
+          <Feather
+            name="calendar"
+            size={14}
+            color={isOverdue ? Colors.light.error : theme.textSecondary}
           />
-          <ThemedText 
-            type="caption" 
-            style={{ color: isOverdue ? Colors.light.error : theme.textSecondary }}
+          <ThemedText
+            type="caption"
+            style={{
+              color: isOverdue ? Colors.light.error : theme.textSecondary,
+            }}
           >
             {deadline.toLocaleDateString()}
           </ThemedText>
         </View>
-        
+
         {task.status !== "completed" ? (
           <View style={styles.actionButtons}>
             {task.status === "pending" ? (
-              <Pressable 
-                style={({ pressed }) => [styles.actionBtn, { opacity: pressed ? 0.7 : 1 }]}
+              <Pressable
+                style={({ pressed }) => [
+                  styles.actionBtn,
+                  { opacity: pressed ? 0.7 : 1 },
+                ]}
                 onPress={() => onStatusChange("in_progress")}
               >
                 <Feather name="play" size={16} color={Colors.light.info} />
               </Pressable>
             ) : null}
-            <Pressable 
-              style={({ pressed }) => [styles.actionBtn, { opacity: pressed ? 0.7 : 1 }]}
+            <Pressable
+              style={({ pressed }) => [
+                styles.actionBtn,
+                { opacity: pressed ? 0.7 : 1 },
+              ]}
               onPress={() => onStatusChange("completed")}
             >
               <Feather name="check" size={16} color={Colors.light.success} />
@@ -129,7 +191,7 @@ export default function TasksScreen() {
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
   const tabBarHeight = useBottomTabBarHeight();
-  
+
   const [tasks, setTasks] = useState<Task[]>([]);
   const [filter, setFilter] = useState<FilterType>("all");
   const [searchQuery, setSearchQuery] = useState("");
@@ -137,7 +199,7 @@ export default function TasksScreen() {
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
-  
+
   const [newTask, setNewTask] = useState({
     title: "",
     description: "",
@@ -146,17 +208,34 @@ export default function TasksScreen() {
     deadline: new Date(Date.now() + 86400000).toISOString(),
   });
 
-  const canCreateTasks = user?.role === "admin" || user?.role === "hr" || user?.role === "manager";
+  const canCreateTasks = [
+    "SYSTEM_ADMIN",
+    "ADMIN",
+    "BUSINESS_HEAD",
+    "TEAM_HEAD",
+    "TEAM_LEADER",
+    "SALES_MANAGER",
+    "GM_SALES",
+    "AGM_SALES",
+  ].includes(user?.role || "");
 
   const loadTasks = useCallback(async () => {
-    const allTasks = await TaskStorage.getAll();
-    setTasks(allTasks);
-  }, []);
+    let query = supabase
+      .from("tasks")
+      .select("*")
+      .order("created_at", { ascending: false });
+    // Non-admin/manager users only see their own tasks
+    if (!canCreateTasks) {
+      query = query.eq("assigned_to", user?.id);
+    }
+    const { data, error } = await query;
+    if (!error) setTasks(data || []);
+  }, [user?.id, canCreateTasks]);
 
   useFocusEffect(
     useCallback(() => {
       loadTasks();
-    }, [loadTasks])
+    }, [loadTasks]),
   );
 
   const onRefresh = async () => {
@@ -165,44 +244,44 @@ export default function TasksScreen() {
     setRefreshing(false);
   };
 
-  const handleStatusChange = async (taskId: string, newStatus: Task["status"]) => {
-    await TaskStorage.update(taskId, { 
-      status: newStatus,
-      completedAt: newStatus === "completed" ? new Date().toISOString() : undefined,
-    });
+  const handleStatusChange = async (taskId: string, newStatus: string) => {
+    await supabase.from("tasks").update({ status: newStatus }).eq("id", taskId);
     await loadTasks();
+    if (newStatus === "completed") Alert.alert("✅ Task Completed", "Great work! Task marked as completed.");
+    else if (newStatus === "in_progress") Alert.alert("▶️ Task Started", "Task is now in progress.");
   };
 
   const handleCreateTask = async () => {
     if (!newTask.title.trim()) {
-      Alert.alert("Error", "Please enter a task title");
+      Alert.alert("Required", "Please enter a task title");
       return;
     }
-    
-    const task: Task = {
-      id: "task_" + Date.now(),
-      ...newTask,
+    const { error } = await supabase.from("tasks").insert({
+      title: newTask.title,
+      description: newTask.description,
+      type: newTask.type,
+      priority: newTask.priority,
+      due_date: new Date(Date.now() + 86400000).toISOString().split("T")[0],
       status: "pending",
-      assignedTo: user?.id || "",
-      assignedBy: user?.id || "",
-      createdAt: new Date().toISOString(),
-    };
-    
-    await TaskStorage.add(task);
-    await loadTasks();
-    setShowCreateModal(false);
-    setNewTask({
-      title: "",
-      description: "",
-      type: "follow_up",
-      priority: "medium",
-      deadline: new Date(Date.now() + 86400000).toISOString(),
+      assigned_to: user?.id || null,
     });
+    if (error) {
+      Alert.alert("Error", error.message);
+      return;
+    }
+    setShowCreateModal(false);
+    setNewTask({ title: "", description: "", type: "follow_up", priority: "medium", deadline: new Date(Date.now() + 86400000).toISOString() });
+    await loadTasks();
+    Alert.alert("✅ Task Created", `"${newTask.title}" has been added to your tasks.`);
   };
 
-  const filteredTasks = tasks.filter(task => {
+  const filteredTasks = tasks.filter((task) => {
     if (filter !== "all" && task.status !== filter) return false;
-    if (searchQuery && !task.title.toLowerCase().includes(searchQuery.toLowerCase())) return false;
+    if (
+      searchQuery &&
+      !task.title.toLowerCase().includes(searchQuery.toLowerCase())
+    )
+      return false;
     return true;
   });
 
@@ -217,11 +296,20 @@ export default function TasksScreen() {
     <View style={{ flex: 1, backgroundColor: theme.backgroundRoot }}>
       <ScreenScrollView
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.primary} />
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={theme.primary}
+          />
         }
         contentContainerStyle={{ paddingBottom: tabBarHeight + Spacing["4xl"] }}
       >
-        <View style={[styles.searchContainer, { backgroundColor: theme.backgroundDefault }]}>
+        <View
+          style={[
+            styles.searchContainer,
+            { backgroundColor: theme.backgroundDefault },
+          ]}
+        >
           <Feather name="search" size={18} color={theme.textSecondary} />
           <TextInput
             style={[styles.searchInput, { color: theme.text }]}
@@ -240,20 +328,21 @@ export default function TasksScreen() {
         <Spacer height={Spacing.md} />
 
         <View style={styles.filtersRow}>
-          {filters.map(f => (
+          {filters.map((f) => (
             <Pressable
               key={f.key}
               style={[
                 styles.filterChip,
-                { 
-                  backgroundColor: filter === f.key ? theme.primary : theme.backgroundDefault,
-                }
+                {
+                  backgroundColor:
+                    filter === f.key ? theme.primary : theme.backgroundDefault,
+                },
               ]}
               onPress={() => setFilter(f.key)}
             >
-              <ThemedText 
-                type="caption" 
-                style={{ 
+              <ThemedText
+                type="caption"
+                style={{
                   color: filter === f.key ? "#FFFFFF" : theme.text,
                   fontWeight: filter === f.key ? "600" : "400",
                 }}
@@ -268,7 +357,7 @@ export default function TasksScreen() {
 
         {filteredTasks.length > 0 ? (
           <View style={styles.tasksList}>
-            {filteredTasks.map(task => (
+            {filteredTasks.map((task) => (
               <TaskCard
                 key={task.id}
                 task={task}
@@ -281,10 +370,18 @@ export default function TasksScreen() {
             ))}
           </View>
         ) : (
-          <View style={[styles.emptyState, { backgroundColor: theme.backgroundDefault }]}>
+          <View
+            style={[
+              styles.emptyState,
+              { backgroundColor: theme.backgroundDefault },
+            ]}
+          >
             <Feather name="inbox" size={48} color={theme.textSecondary} />
             <Spacer height={Spacing.md} />
-            <ThemedText type="body" style={{ color: theme.textSecondary, textAlign: "center" }}>
+            <ThemedText
+              type="body"
+              style={{ color: theme.textSecondary, textAlign: "center" }}
+            >
               {searchQuery ? "No tasks match your search" : "No tasks yet"}
             </ThemedText>
           </View>
@@ -295,12 +392,12 @@ export default function TasksScreen() {
         <Pressable
           style={({ pressed }) => [
             styles.fab,
-            { 
+            {
               backgroundColor: theme.primary,
               bottom: tabBarHeight + Spacing.xl,
               opacity: pressed ? 0.9 : 1,
               transform: [{ scale: pressed ? 0.95 : 1 }],
-            }
+            },
           ]}
           onPress={() => setShowCreateModal(true)}
         >
@@ -315,14 +412,19 @@ export default function TasksScreen() {
         onRequestClose={() => setShowDetailModal(false)}
       >
         <View style={styles.modalOverlay}>
-          <ThemedView style={[styles.modalContainer, { paddingBottom: insets.bottom + Spacing.lg }]}>
+          <ThemedView
+            style={[
+              styles.modalContainer,
+              { paddingBottom: insets.bottom + Spacing.lg },
+            ]}
+          >
             <View style={styles.modalHeader}>
               <ThemedText type="h3">Task Details</ThemedText>
               <Pressable onPress={() => setShowDetailModal(false)}>
                 <Feather name="x" size={24} color={theme.text} />
               </Pressable>
             </View>
-            
+
             {selectedTask ? (
               <View style={styles.modalContent}>
                 <ThemedText type="h4">{selectedTask.title}</ThemedText>
@@ -331,43 +433,50 @@ export default function TasksScreen() {
                   {selectedTask.description}
                 </ThemedText>
                 <Spacer height={Spacing.lg} />
-                
+
                 <View style={styles.detailRow}>
                   <ThemedText type="small" style={{ color: theme.textSecondary }}>Type:</ThemedText>
                   <ThemedText type="small" style={{ textTransform: "capitalize" }}>
-                    {selectedTask.type.replace("_", " ")}
+                    {(selectedTask.type || "other").replace(/_/g, " ")}
                   </ThemedText>
                 </View>
                 <View style={styles.detailRow}>
                   <ThemedText type="small" style={{ color: theme.textSecondary }}>Priority:</ThemedText>
                   <ThemedText type="small" style={{ color: PRIORITY_COLORS[selectedTask.priority] }}>
-                    {selectedTask.priority.toUpperCase()}
+                    {(selectedTask.priority || "medium").toUpperCase()}
                   </ThemedText>
                 </View>
                 <View style={styles.detailRow}>
                   <ThemedText type="small" style={{ color: theme.textSecondary }}>Status:</ThemedText>
                   <ThemedText type="small" style={{ color: STATUS_COLORS[selectedTask.status] }}>
-                    {selectedTask.status.replace("_", " ").toUpperCase()}
+                    {(selectedTask.status || "pending").replace(/_/g, " ").toUpperCase()}
                   </ThemedText>
                 </View>
                 <View style={styles.detailRow}>
                   <ThemedText type="small" style={{ color: theme.textSecondary }}>Deadline:</ThemedText>
                   <ThemedText type="small">
-                    {new Date(selectedTask.deadline).toLocaleDateString()}
+                    {selectedTask.due_date ? new Date(selectedTask.due_date).toLocaleDateString() : "No date"}
                   </ThemedText>
                 </View>
-                
+
                 {selectedTask.location ? (
                   <View style={styles.detailRow}>
-                    <ThemedText type="small" style={{ color: theme.textSecondary }}>Location:</ThemedText>
-                    <ThemedText type="small">{selectedTask.location.address}</ThemedText>
+                    <ThemedText
+                      type="small"
+                      style={{ color: theme.textSecondary }}
+                    >
+                      Location:
+                    </ThemedText>
+                    <ThemedText type="small">
+                      {selectedTask.location.address}
+                    </ThemedText>
                   </View>
                 ) : null}
-                
+
                 <Spacer height={Spacing.xl} />
-                
+
                 {selectedTask.status !== "completed" ? (
-                  <Button 
+                  <Button
                     onPress={() => {
                       handleStatusChange(selectedTask.id, "completed");
                       setShowDetailModal(false);
@@ -389,55 +498,84 @@ export default function TasksScreen() {
         onRequestClose={() => setShowCreateModal(false)}
       >
         <View style={styles.modalOverlay}>
-          <ThemedView style={[styles.modalContainer, { paddingBottom: insets.bottom + Spacing.lg }]}>
+          <ThemedView
+            style={[
+              styles.modalContainer,
+              { paddingBottom: insets.bottom + Spacing.lg },
+            ]}
+          >
             <View style={styles.modalHeader}>
               <ThemedText type="h3">Create Task</ThemedText>
               <Pressable onPress={() => setShowCreateModal(false)}>
                 <Feather name="x" size={24} color={theme.text} />
               </Pressable>
             </View>
-            
+
             <View style={styles.modalContent}>
-              <ThemedText type="small" style={styles.inputLabel}>Title</ThemedText>
+              <ThemedText type="small" style={styles.inputLabel}>
+                Title
+              </ThemedText>
               <TextInput
-                style={[styles.modalInput, { backgroundColor: theme.backgroundSecondary, color: theme.text }]}
+                style={[
+                  styles.modalInput,
+                  {
+                    backgroundColor: theme.backgroundSecondary,
+                    color: theme.text,
+                  },
+                ]}
                 placeholder="Task title"
                 placeholderTextColor={theme.textSecondary}
                 value={newTask.title}
                 onChangeText={(text) => setNewTask({ ...newTask, title: text })}
               />
-              
+
               <Spacer height={Spacing.md} />
-              
-              <ThemedText type="small" style={styles.inputLabel}>Description</ThemedText>
+
+              <ThemedText type="small" style={styles.inputLabel}>
+                Description
+              </ThemedText>
               <TextInput
-                style={[styles.modalInput, styles.textArea, { backgroundColor: theme.backgroundSecondary, color: theme.text }]}
+                style={[
+                  styles.modalInput,
+                  styles.textArea,
+                  {
+                    backgroundColor: theme.backgroundSecondary,
+                    color: theme.text,
+                  },
+                ]}
                 placeholder="Task description"
                 placeholderTextColor={theme.textSecondary}
                 value={newTask.description}
-                onChangeText={(text) => setNewTask({ ...newTask, description: text })}
+                onChangeText={(text) =>
+                  setNewTask({ ...newTask, description: text })
+                }
                 multiline
                 numberOfLines={3}
               />
-              
+
               <Spacer height={Spacing.md} />
-              
-              <ThemedText type="small" style={styles.inputLabel}>Priority</ThemedText>
+
+              <ThemedText type="small" style={styles.inputLabel}>
+                Priority
+              </ThemedText>
               <View style={styles.prioritySelector}>
-                {(["low", "medium", "high"] as const).map(p => (
+                {(["low", "medium", "high"] as const).map((p) => (
                   <Pressable
                     key={p}
                     style={[
                       styles.priorityOption,
-                      { 
-                        backgroundColor: newTask.priority === p ? PRIORITY_COLORS[p] : theme.backgroundSecondary,
-                      }
+                      {
+                        backgroundColor:
+                          newTask.priority === p
+                            ? PRIORITY_COLORS[p]
+                            : theme.backgroundSecondary,
+                      },
                     ]}
                     onPress={() => setNewTask({ ...newTask, priority: p })}
                   >
-                    <ThemedText 
-                      type="caption" 
-                      style={{ 
+                    <ThemedText
+                      type="caption"
+                      style={{
                         color: newTask.priority === p ? "#FFFFFF" : theme.text,
                         fontWeight: "600",
                       }}
@@ -447,9 +585,9 @@ export default function TasksScreen() {
                   </Pressable>
                 ))}
               </View>
-              
+
               <Spacer height={Spacing.xl} />
-              
+
               <Button onPress={handleCreateTask}>Create Task</Button>
             </View>
           </ThemedView>

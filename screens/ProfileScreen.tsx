@@ -1,5 +1,16 @@
-import React, { useState } from "react";
-import { StyleSheet, View, Pressable, Alert, Image, TextInput, Modal, ScrollView } from "react-native";
+import React, { useState, useEffect } from "react";
+import {
+  StyleSheet,
+  View,
+  Pressable,
+  Alert,
+  Image,
+  TextInput,
+  Modal,
+  ScrollView,
+  Platform,
+  TouchableOpacity,
+} from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
@@ -11,6 +22,7 @@ import { useTheme } from "@/hooks/useTheme";
 import { useAuth } from "@/contexts/AuthContext";
 import { Spacing, BorderRadius, Colors } from "@/constants/theme";
 import Spacer from "@/components/Spacer";
+import { supabase } from "@/lib/supabase";
 
 type ProfileScreenProps = {
   navigation: NativeStackNavigationProp<any>;
@@ -25,16 +37,26 @@ interface MenuItemProps {
   danger?: boolean;
 }
 
-function MenuItem({ icon, title, subtitle, onPress, showArrow = true, danger = false }: MenuItemProps) {
+function MenuItem({
+  icon,
+  title,
+  subtitle,
+  onPress,
+  showArrow = true,
+  danger = false,
+}: MenuItemProps) {
   const { theme } = useTheme();
   const iconColor = danger ? Colors.light.error : theme.primary;
   const textColor = danger ? Colors.light.error : theme.text;
-  
+
   return (
-    <Pressable 
+    <Pressable
       style={({ pressed }) => [
         styles.menuItem,
-        { backgroundColor: theme.backgroundDefault, opacity: pressed ? 0.8 : 1 }
+        {
+          backgroundColor: theme.backgroundDefault,
+          opacity: pressed ? 0.8 : 1,
+        },
       ]}
       onPress={onPress}
     >
@@ -42,9 +64,13 @@ function MenuItem({ icon, title, subtitle, onPress, showArrow = true, danger = f
         <Feather name={icon} size={20} color={iconColor} />
       </View>
       <View style={styles.menuContent}>
-        <ThemedText type="body" style={{ color: textColor }}>{title}</ThemedText>
+        <ThemedText type="body" style={{ color: textColor }}>
+          {title}
+        </ThemedText>
         {subtitle ? (
-          <ThemedText type="caption" style={{ color: theme.textSecondary }}>{subtitle}</ThemedText>
+          <ThemedText type="caption" style={{ color: theme.textSecondary }}>
+            {subtitle}
+          </ThemedText>
         ) : null}
       </View>
       {showArrow ? (
@@ -58,43 +84,129 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
   const { theme } = useTheme();
   const { user, logout, updateUser } = useAuth();
   const insets = useSafeAreaInsets();
-  
+
   const [showEditModal, setShowEditModal] = useState(false);
-  const [editName, setEditName] = useState(user?.name || "");
-  const [editPhone, setEditPhone] = useState(user?.phone || "");
+  const [editName, setEditName] = useState("");
+  const [editPhone, setEditPhone] = useState("");
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [passwordLoading, setPasswordLoading] = useState(false);
+  const [offices, setOffices] = useState<any[]>([]);
+  const [currentOfficeId, setCurrentOfficeId] = useState<string | null>(null);
+  const [showOfficePicker, setShowOfficePicker] = useState(false);
+  const [savingOffice, setSavingOffice] = useState(false);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    // Load offices and current assignment
+    supabase.from("offices").select("id, name").eq("is_active", true).then(({ data }: { data: any[] | null }) => {
+      setOffices(data || []);
+    });
+    supabase.from("profiles").select("office_id").eq("id", user.id).single().then(({ data }: { data: any }) => {
+      setCurrentOfficeId(data?.office_id || null);
+    });
+  }, [user?.id]);
+
+  const handleSaveOffice = async (officeId: string) => {
+    if (!user?.id) return;
+    setSavingOffice(true);
+    const { error } = await supabase
+      .from("profiles")
+      .update({ office_id: officeId })
+      .eq("id", user.id);
+    setSavingOffice(false);
+    if (error) {
+      Alert.alert("Error", "Failed to save office. Please try again.");
+      return;
+    }
+    setCurrentOfficeId(officeId);
+    setShowOfficePicker(false);
+    const office = offices.find((o) => o.id === officeId);
+    Alert.alert("✅ Office Saved", `Your office is now set to ${office?.name}.`);
+  };
+
+  const handleChangePassword = async () => {
+    if (newPassword.trim().length < 4) {
+      Alert.alert("Too Short", "New password must be at least 4 characters.");
+      return;
+    }
+    if (newPassword.trim() !== confirmPassword.trim()) {
+      Alert.alert("Mismatch", "New passwords do not match.");
+      return;
+    }
+    setPasswordLoading(true);
+    try {
+      // Verify current password against DB (custom_password or default first-name)
+      const { data: profile, error: fetchErr } = await supabase
+        .from("profiles")
+        .select("custom_password, name")
+        .eq("id", user!.id)
+        .single();
+      if (fetchErr || !profile) throw new Error("Could not verify identity.");
+      const expected = profile.custom_password || profile.name?.split(" ")[0]?.toLowerCase();
+      if (currentPassword.trim() !== expected) {
+        Alert.alert("Wrong Password", "Current password is incorrect.");
+        setPasswordLoading(false);
+        return;
+      }
+      const { error } = await supabase
+        .from("profiles")
+        .update({ custom_password: newPassword.trim() })
+        .eq("id", user!.id);
+      if (error) throw error;
+      setShowPasswordModal(false);
+      setCurrentPassword(""); setNewPassword(""); setConfirmPassword("");
+      Alert.alert("✅ Password Changed", "Your password has been updated.");
+    } catch (e: any) {
+      Alert.alert("Error", e.message || "Failed to change password.");
+    } finally {
+      setPasswordLoading(false);
+    }
+  };
+
+  const openEditModal = () => {
+    setEditName(user?.name || "");
+    setEditPhone(user?.phone || "");
+    setShowEditModal(true);
+  };
 
   const handleLogout = () => {
-    Alert.alert(
-      "Logout",
-      "Are you sure you want to logout?",
-      [
-        { text: "Cancel", style: "cancel" },
-        { 
-          text: "Logout", 
-          style: "destructive",
-          onPress: async () => {
-            await logout();
-          }
-        },
-      ]
-    );
+    if (Platform.OS === "web") {
+      const confirmed = window.confirm("Are you sure you want to logout?");
+      if (confirmed) logout();
+      return;
+    }
+    Alert.alert("Logout", "Are you sure you want to logout?", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Logout", style: "destructive", onPress: () => logout() },
+    ]);
   };
 
   const handleSaveProfile = async () => {
     if (!editName.trim()) {
-      Alert.alert("Error", "Name cannot be empty");
+      Alert.alert("Required", "Name cannot be empty");
       return;
     }
     await updateUser({ name: editName, phone: editPhone });
     setShowEditModal(false);
+    Alert.alert("✅ Profile Updated", "Your profile has been updated successfully.");
   };
 
   const getRoleBadgeColor = () => {
     switch (user?.role) {
-      case "admin": return Colors.light.error;
-      case "hr": return Colors.light.info;
-      case "manager": return Colors.light.warning;
-      default: return Colors.light.success;
+      case "SYSTEM_ADMIN":
+      case "ADMIN":
+        return Colors.light.error;
+      case "BUSINESS_HEAD":
+      case "TEAM_HEAD":
+        return Colors.light.info;
+      case "SALES_MANAGER":
+      case "GM_SALES":
+        return Colors.light.warning;
+      default:
+        return Colors.light.success;
     }
   };
 
@@ -102,32 +214,43 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
     <View style={{ flex: 1, backgroundColor: theme.backgroundRoot }}>
       <ScreenScrollView>
         <View style={styles.profileHeader}>
-          <View style={[styles.avatarContainer, { backgroundColor: theme.primary }]}>
-            {user?.avatar ? (
-              <Image source={{ uri: user.avatar }} style={styles.avatar} />
-            ) : (
-              <ThemedText type="h1" style={{ color: "#FFFFFF" }}>
-                {user?.name?.charAt(0).toUpperCase() || "U"}
-              </ThemedText>
-            )}
-            <Pressable 
-              style={[styles.editAvatarBtn, { backgroundColor: theme.backgroundDefault }]}
-              onPress={() => setShowEditModal(true)}
+          <View
+            style={[styles.avatarContainer, { backgroundColor: theme.primary }]}
+          >
+            <ThemedText type="h1" style={{ color: "#FFFFFF" }}>
+              {user?.name?.charAt(0).toUpperCase() || "U"}
+            </ThemedText>
+            <Pressable
+              style={[
+                styles.editAvatarBtn,
+                { backgroundColor: theme.backgroundDefault },
+              ]}
+              onPress={openEditModal}
             >
               <Feather name="edit-2" size={14} color={theme.primary} />
             </Pressable>
           </View>
-          
+
           <Spacer height={Spacing.md} />
-          
+
           <ThemedText type="h2">{user?.name}</ThemedText>
-          <ThemedText type="small" style={{ color: theme.textSecondary }}>{user?.email}</ThemedText>
-          
+          <ThemedText type="small" style={{ color: theme.textSecondary }}>
+            {user?.email}
+          </ThemedText>
+
           <Spacer height={Spacing.sm} />
-          
-          <View style={[styles.roleBadge, { backgroundColor: getRoleBadgeColor() + "20" }]}>
-            <ThemedText type="caption" style={{ color: getRoleBadgeColor(), fontWeight: "600" }}>
-              {user?.role?.toUpperCase()}
+
+          <View
+            style={[
+              styles.roleBadge,
+              { backgroundColor: getRoleBadgeColor() + "20" },
+            ]}
+          >
+            <ThemedText
+              type="caption"
+              style={{ color: getRoleBadgeColor(), fontWeight: "600" }}
+            >
+              {user?.role?.replace(/_/g, " ")}
             </ThemedText>
           </View>
         </View>
@@ -135,33 +258,35 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
         <Spacer height={Spacing.xl} />
 
         <View style={styles.infoCard}>
-          <View style={[styles.infoRow, { backgroundColor: theme.backgroundDefault }]}>
-            <Feather name="briefcase" size={18} color={theme.textSecondary} />
-            <View style={styles.infoContent}>
-              <ThemedText type="caption" style={{ color: theme.textSecondary }}>Designation</ThemedText>
-              <ThemedText type="body">{user?.designation || "Not set"}</ThemedText>
-            </View>
-          </View>
-          <View style={[styles.infoRow, { backgroundColor: theme.backgroundDefault }]}>
-            <Feather name="users" size={18} color={theme.textSecondary} />
-            <View style={styles.infoContent}>
-              <ThemedText type="caption" style={{ color: theme.textSecondary }}>Department</ThemedText>
-              <ThemedText type="body">{user?.department || "Not set"}</ThemedText>
-            </View>
-          </View>
-          <View style={[styles.infoRow, { backgroundColor: theme.backgroundDefault }]}>
+          <View
+            style={[
+              styles.infoRow,
+              { backgroundColor: theme.backgroundDefault },
+            ]}
+          >
             <Feather name="phone" size={18} color={theme.textSecondary} />
             <View style={styles.infoContent}>
-              <ThemedText type="caption" style={{ color: theme.textSecondary }}>Phone</ThemedText>
+              <ThemedText type="caption" style={{ color: theme.textSecondary }}>
+                Phone
+              </ThemedText>
               <ThemedText type="body">{user?.phone || "Not set"}</ThemedText>
             </View>
           </View>
-          <View style={[styles.infoRow, { backgroundColor: theme.backgroundDefault }]}>
+          <View
+            style={[
+              styles.infoRow,
+              { backgroundColor: theme.backgroundDefault },
+            ]}
+          >
             <Feather name="calendar" size={18} color={theme.textSecondary} />
             <View style={styles.infoContent}>
-              <ThemedText type="caption" style={{ color: theme.textSecondary }}>Joined</ThemedText>
+              <ThemedText type="caption" style={{ color: theme.textSecondary }}>
+                Joined
+              </ThemedText>
               <ThemedText type="body">
-                {user?.joinDate ? new Date(user.joinDate).toLocaleDateString() : "Not set"}
+                {user?.created_at
+                  ? new Date(user.created_at).toLocaleDateString()
+                  : "Not set"}
               </ThemedText>
             </View>
           </View>
@@ -169,27 +294,29 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
 
         <Spacer height={Spacing.xl} />
 
-        <ThemedText type="h4" style={styles.sectionTitle}>Account</ThemedText>
+        <ThemedText type="h4" style={styles.sectionTitle}>
+          Account
+        </ThemedText>
         <Spacer height={Spacing.sm} />
-        
+
         <View style={styles.menuSection}>
           <MenuItem
             icon="user"
             title="Edit Profile"
-            subtitle="Update your personal information"
-            onPress={() => setShowEditModal(true)}
+            subtitle="Update your name and phone"
+            onPress={openEditModal}
+          />
+          <MenuItem
+            icon="map-pin"
+            title="My Office"
+            subtitle={offices.find((o) => o.id === currentOfficeId)?.name || "Not assigned — tap to set"}
+            onPress={() => setShowOfficePicker(true)}
           />
           <MenuItem
             icon="file-text"
             title="My Documents"
             subtitle="View uploaded documents"
             onPress={() => navigation.navigate("DocumentsScreen")}
-          />
-          <MenuItem
-            icon="dollar-sign"
-            title="Payroll"
-            subtitle="View salary slips"
-            onPress={() => navigation.navigate("PayrollScreen")}
           />
           <MenuItem
             icon="calendar"
@@ -201,9 +328,11 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
 
         <Spacer height={Spacing.xl} />
 
-        <ThemedText type="h4" style={styles.sectionTitle}>Settings</ThemedText>
+        <ThemedText type="h4" style={styles.sectionTitle}>
+          Settings
+        </ThemedText>
         <Spacer height={Spacing.sm} />
-        
+
         <View style={styles.menuSection}>
           <MenuItem
             icon="bell"
@@ -214,12 +343,17 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
           <MenuItem
             icon="lock"
             title="Change Password"
-            onPress={() => Alert.alert("Coming Soon", "Password change feature will be available soon.")}
+            onPress={() => setShowPasswordModal(true)}
           />
           <MenuItem
             icon="help-circle"
             title="Help & Support"
-            onPress={() => Alert.alert("Contact HR", "Please contact HR department for any assistance.")}
+            onPress={() =>
+              Alert.alert(
+                "Contact HR",
+                "Please contact HR department for any assistance.",
+              )
+            }
           />
         </View>
 
@@ -236,14 +370,120 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
         </View>
 
         <Spacer height={Spacing["2xl"]} />
-        
-        <ThemedText type="caption" style={[styles.versionText, { color: theme.textSecondary }]}>
+
+        <ThemedText
+          type="caption"
+          style={[styles.versionText, { color: theme.textSecondary }]}
+        >
           RE HRMS v1.0.0
         </ThemedText>
-        
+
         <Spacer height={Spacing.xl} />
       </ScreenScrollView>
 
+      {/* Change Password Modal */}
+      <Modal
+        visible={showPasswordModal}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setShowPasswordModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <ThemedView style={[styles.modalContainer, { paddingBottom: insets.bottom + Spacing.lg }]}>
+            <View style={styles.modalHeader}>
+              <ThemedText type="h3">Change Password</ThemedText>
+              <Pressable onPress={() => setShowPasswordModal(false)}>
+                <Feather name="x" size={24} color={theme.text} />
+              </Pressable>
+            </View>
+            <ScrollView style={styles.modalContent} keyboardShouldPersistTaps="handled">
+              <ThemedText type="small" style={styles.inputLabel}>Current Password</ThemedText>
+              <TextInput
+                style={[styles.modalInput, { backgroundColor: theme.backgroundSecondary, color: theme.text }]}
+                value={currentPassword}
+                onChangeText={setCurrentPassword}
+                placeholder="Enter current password"
+                placeholderTextColor={theme.textSecondary}
+                secureTextEntry
+              />
+              <Spacer height={Spacing.md} />
+              <ThemedText type="small" style={styles.inputLabel}>New Password</ThemedText>
+              <TextInput
+                style={[styles.modalInput, { backgroundColor: theme.backgroundSecondary, color: theme.text }]}
+                value={newPassword}
+                onChangeText={setNewPassword}
+                placeholder="Enter new password"
+                placeholderTextColor={theme.textSecondary}
+                secureTextEntry
+              />
+              <Spacer height={Spacing.md} />
+              <ThemedText type="small" style={styles.inputLabel}>Confirm New Password</ThemedText>
+              <TextInput
+                style={[styles.modalInput, { backgroundColor: theme.backgroundSecondary, color: theme.text }]}
+                value={confirmPassword}
+                onChangeText={setConfirmPassword}
+                placeholder="Confirm new password"
+                placeholderTextColor={theme.textSecondary}
+                secureTextEntry
+              />
+              <Spacer height={Spacing.xl} />
+              <Button onPress={handleChangePassword} loading={passwordLoading}>Update Password</Button>
+            </ScrollView>
+          </ThemedView>
+        </View>
+      </Modal>
+
+      {/* Office Picker Modal */}
+      <Modal
+        visible={showOfficePicker}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setShowOfficePicker(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <ThemedView style={[styles.modalContainer, { paddingBottom: insets.bottom + Spacing.lg }]}>
+            <View style={styles.modalHeader}>
+              <ThemedText type="h3">Select Your Office</ThemedText>
+              <Pressable onPress={() => setShowOfficePicker(false)}>
+                <Feather name="x" size={24} color={theme.text} />
+              </Pressable>
+            </View>
+            <ScrollView style={styles.modalContent}>
+              {!currentOfficeId && (
+                <View style={[s.warningBanner]}>
+                  <Feather name="alert-circle" size={16} color="#92400E" />
+                  <ThemedText style={s.warningText}>
+                    No office assigned. Select your office to enable check-in.
+                  </ThemedText>
+                </View>
+              )}
+              <Spacer height={Spacing.md} />
+              {offices.map((office) => {
+                const selected = office.id === currentOfficeId;
+                return (
+                  <TouchableOpacity
+                    key={office.id}
+                    style={[s.officeRow, selected && { borderColor: theme.primary, backgroundColor: theme.primary + "10" }]}
+                    onPress={() => handleSaveOffice(office.id)}
+                    disabled={savingOffice}
+                  >
+                    <View style={[s.officeIcon, { backgroundColor: selected ? theme.primary : theme.primary + "20" }]}>
+                      <Feather name="map-pin" size={16} color={selected ? "#fff" : theme.primary} />
+                    </View>
+                    <ThemedText type="body" style={{ flex: 1, color: selected ? theme.primary : theme.text, fontWeight: selected ? "700" : "400" }}>
+                      {office.name}
+                    </ThemedText>
+                    {selected && <Feather name="check-circle" size={20} color={theme.primary} />}
+                  </TouchableOpacity>
+                );
+              })}
+              <Spacer height={Spacing.lg} />
+            </ScrollView>
+          </ThemedView>
+        </View>
+      </Modal>
+
+      {/* Edit Profile Modal */}
       <Modal
         visible={showEditModal}
         animationType="slide"
@@ -251,38 +491,62 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
         onRequestClose={() => setShowEditModal(false)}
       >
         <View style={styles.modalOverlay}>
-          <ThemedView style={[styles.modalContainer, { paddingBottom: insets.bottom + Spacing.lg }]}>
+          <ThemedView
+            style={[
+              styles.modalContainer,
+              { paddingBottom: insets.bottom + Spacing.lg },
+            ]}
+          >
             <View style={styles.modalHeader}>
               <ThemedText type="h3">Edit Profile</ThemedText>
               <Pressable onPress={() => setShowEditModal(false)}>
                 <Feather name="x" size={24} color={theme.text} />
               </Pressable>
             </View>
-            
-            <ScrollView style={styles.modalContent} keyboardShouldPersistTaps="handled">
-              <ThemedText type="small" style={styles.inputLabel}>Name</ThemedText>
+
+            <ScrollView
+              style={styles.modalContent}
+              keyboardShouldPersistTaps="handled"
+            >
+              <ThemedText type="small" style={styles.inputLabel}>
+                Name
+              </ThemedText>
               <TextInput
-                style={[styles.modalInput, { backgroundColor: theme.backgroundSecondary, color: theme.text }]}
+                style={[
+                  styles.modalInput,
+                  {
+                    backgroundColor: theme.backgroundSecondary,
+                    color: theme.text,
+                  },
+                ]}
                 value={editName}
                 onChangeText={setEditName}
                 placeholder="Your name"
                 placeholderTextColor={theme.textSecondary}
               />
-              
+
               <Spacer height={Spacing.lg} />
-              
-              <ThemedText type="small" style={styles.inputLabel}>Phone</ThemedText>
+
+              <ThemedText type="small" style={styles.inputLabel}>
+                Phone
+              </ThemedText>
               <TextInput
-                style={[styles.modalInput, { backgroundColor: theme.backgroundSecondary, color: theme.text }]}
+                style={[
+                  styles.modalInput,
+                  {
+                    backgroundColor: theme.backgroundSecondary,
+                    color: theme.text,
+                  },
+                ]}
                 value={editPhone}
                 onChangeText={setEditPhone}
                 placeholder="Phone number"
                 placeholderTextColor={theme.textSecondary}
                 keyboardType="phone-pad"
               />
-              
+
               <Spacer height={Spacing.xl} />
-              
+
               <Button onPress={handleSaveProfile}>Save Changes</Button>
             </ScrollView>
           </ThemedView>
@@ -394,5 +658,40 @@ const styles = StyleSheet.create({
     borderRadius: BorderRadius.sm,
     paddingHorizontal: Spacing.lg,
     fontSize: 16,
+  },
+});
+
+const s = StyleSheet.create({
+  warningBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "#FEF3C7",
+    borderWidth: 1,
+    borderColor: "#F59E0B",
+    borderRadius: 10,
+    padding: 12,
+  },
+  warningText: {
+    flex: 1,
+    fontSize: 13,
+    color: "#92400E",
+  },
+  officeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    padding: 14,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: "#E5E7EB",
+    marginBottom: 10,
+  },
+  officeIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
   },
 });

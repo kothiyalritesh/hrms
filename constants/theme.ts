@@ -1,8 +1,8 @@
 import { Platform } from "react-native";
 
-const primaryBlue = "#1E40AF";
-const primaryBlueLight = "#3B82F6";
-const primaryBlueDark = "#1E3A8A";
+const primaryPurple = "#60045d";
+const primaryPurpleLight = "#8B1A87";
+const primaryPurpleDark = "#3D0239";
 
 export const Colors = {
   light: {
@@ -10,17 +10,17 @@ export const Colors = {
     textSecondary: "#6B7280",
     buttonText: "#FFFFFF",
     tabIconDefault: "#9CA3AF",
-    tabIconSelected: primaryBlue,
-    link: primaryBlue,
-    primary: primaryBlue,
-    primaryLight: primaryBlueLight,
-    primaryDark: primaryBlueDark,
-    backgroundRoot: "#F9FAFB",
+    tabIconSelected: primaryPurple,
+    link: primaryPurple,
+    primary: primaryPurple,
+    primaryLight: primaryPurpleLight,
+    primaryDark: primaryPurpleDark,
+    backgroundRoot: "#FAF5FA",
     backgroundDefault: "#FFFFFF",
-    backgroundSecondary: "#F3F4F6",
-    backgroundTertiary: "#E5E7EB",
-    border: "#E5E7EB",
-    borderLight: "#F3F4F6",
+    backgroundSecondary: "#F5EEF5",
+    backgroundTertiary: "#EDE0ED",
+    border: "#E8D5E8",
+    borderLight: "#F5EEF5",
     success: "#10B981",
     successBg: "#DCFCE7",
     successText: "#16A34A",
@@ -39,17 +39,17 @@ export const Colors = {
     textSecondary: "#9CA3AF",
     buttonText: "#FFFFFF",
     tabIconDefault: "#6B7280",
-    tabIconSelected: primaryBlueLight,
-    link: primaryBlueLight,
-    primary: primaryBlueLight,
-    primaryLight: "#60A5FA",
-    primaryDark: primaryBlue,
-    backgroundRoot: "#111827",
-    backgroundDefault: "#1F2937",
-    backgroundSecondary: "#374151",
-    backgroundTertiary: "#4B5563",
-    border: "#374151",
-    borderLight: "#1F2937",
+    tabIconSelected: primaryPurpleLight,
+    link: primaryPurpleLight,
+    primary: primaryPurpleLight,
+    primaryLight: "#A855A0",
+    primaryDark: primaryPurple,
+    backgroundRoot: "#1A0A1A",
+    backgroundDefault: "#2D1A2D",
+    backgroundSecondary: "#3D2A3D",
+    backgroundTertiary: "#4D3A4D",
+    border: "#4D2A4D",
+    borderLight: "#2D1A2D",
     success: "#34D399",
     successBg: "#064E3B",
     successText: "#6EE7B7",
@@ -152,33 +152,14 @@ export const Fonts = Platform.select({
   },
 });
 
+const _shadow = (h: number, opacity: number, radius: number, elevation: number) =>
+  Platform.OS === "web"
+    ? { boxShadow: `0 ${h}px ${radius}px rgba(0,0,0,${opacity})` }
+    : { shadowColor: "#000", shadowOffset: { width: 0, height: h }, shadowOpacity: opacity, shadowRadius: radius, elevation };
+
 export const Shadows = {
-  sm: {
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 1,
-  },
-  md: {
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  lg: {
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  fab: {
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 4,
-  },
+  sm:  _shadow(1, 0.05, 2, 1),
+  md:  _shadow(2, 0.10, 4, 2),
+  lg:  _shadow(4, 0.15, 8, 4),
+  fab: _shadow(2, 0.10, 2, 4),
 };

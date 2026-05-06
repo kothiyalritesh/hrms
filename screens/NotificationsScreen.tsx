@@ -1,5 +1,11 @@
 import React, { useState, useCallback } from "react";
-import { StyleSheet, View, Pressable, RefreshControl, Alert } from "react-native";
+import {
+  StyleSheet,
+  View,
+  Pressable,
+  RefreshControl,
+  Alert,
+} from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
 import { ScreenScrollView } from "@/components/ScreenScrollView";
@@ -8,21 +14,29 @@ import { useTheme } from "@/hooks/useTheme";
 import { Spacing, BorderRadius, Colors } from "@/constants/theme";
 import Spacer from "@/components/Spacer";
 import { NotificationStorage, Notification } from "@/utils/storage";
+import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/contexts/AuthContext";
 
-const NOTIFICATION_ICONS: Record<Notification["type"], keyof typeof Feather.glyphMap> = {
+const NOTIFICATION_ICONS: Record<string, keyof typeof Feather.glyphMap> = {
   task: "check-square",
   leave: "calendar",
   payroll: "dollar-sign",
   announcement: "bell",
   reminder: "clock",
+  attendance_warning: "alert-triangle",
+  location_violation: "map-pin",
+  location_alert: "map-pin",
 };
 
-const NOTIFICATION_COLORS: Record<Notification["type"], string> = {
+const NOTIFICATION_COLORS: Record<string, string> = {
   task: Colors.light.primary,
   leave: Colors.light.success,
   payroll: Colors.light.info,
   announcement: Colors.light.warning,
   reminder: Colors.light.error,
+  attendance_warning: Colors.light.warning,
+  location_violation: Colors.light.error,
+  location_alert: Colors.light.error,
 };
 
 interface NotificationCardProps {
@@ -32,37 +46,59 @@ interface NotificationCardProps {
 
 function NotificationCard({ notification, onPress }: NotificationCardProps) {
   const { theme } = useTheme();
-  const iconColor = NOTIFICATION_COLORS[notification.type];
+  const iconColor = NOTIFICATION_COLORS[notification.type] ?? Colors.light.warning;
+  const iconName: keyof typeof Feather.glyphMap = NOTIFICATION_ICONS[notification.type] ?? "bell";
   const timeAgo = getTimeAgo(notification.createdAt);
-  
+
   return (
-    <Pressable 
+    <Pressable
       style={({ pressed }) => [
         styles.notificationCard,
-        { 
-          backgroundColor: notification.read ? theme.backgroundDefault : theme.primary + "08",
+        {
+          backgroundColor: notification.read
+            ? theme.backgroundDefault
+            : theme.primary + "08",
           opacity: pressed ? 0.8 : 1,
           borderLeftColor: notification.read ? "transparent" : iconColor,
-        }
+        },
       ]}
       onPress={onPress}
     >
-      <View style={[styles.iconContainer, { backgroundColor: iconColor + "20" }]}>
-        <Feather name={NOTIFICATION_ICONS[notification.type]} size={20} color={iconColor} />
+      <View
+        style={[styles.iconContainer, { backgroundColor: iconColor + "20" }]}
+      >
+        <Feather
+          name={iconName}
+          size={20}
+          color={iconColor}
+        />
       </View>
-      
+
       <View style={styles.notificationContent}>
-        <ThemedText type="body" style={[styles.notificationTitle, { fontWeight: notification.read ? "400" : "600" }]}>
+        <ThemedText
+          type="body"
+          style={[
+            styles.notificationTitle,
+            { fontWeight: notification.read ? "400" : "600" },
+          ]}
+        >
           {notification.title}
         </ThemedText>
-        <ThemedText type="small" style={{ color: theme.textSecondary }} numberOfLines={2}>
+        <ThemedText
+          type="small"
+          style={{ color: theme.textSecondary }}
+          numberOfLines={2}
+        >
           {notification.message}
         </ThemedText>
-        <ThemedText type="caption" style={[styles.timeText, { color: theme.textSecondary }]}>
+        <ThemedText
+          type="caption"
+          style={[styles.timeText, { color: theme.textSecondary }]}
+        >
           {timeAgo}
         </ThemedText>
       </View>
-      
+
       {!notification.read ? (
         <View style={[styles.unreadDot, { backgroundColor: iconColor }]} />
       ) : null}
@@ -77,7 +113,7 @@ function getTimeAgo(dateString: string): string {
   const diffMins = Math.floor(diffMs / 60000);
   const diffHours = Math.floor(diffMs / 3600000);
   const diffDays = Math.floor(diffMs / 86400000);
-  
+
   if (diffMins < 1) return "Just now";
   if (diffMins < 60) return `${diffMins}m ago`;
   if (diffHours < 24) return `${diffHours}h ago`;
@@ -87,18 +123,33 @@ function getTimeAgo(dateString: string): string {
 
 export default function NotificationsScreen() {
   const { theme } = useTheme();
+  const { user } = useAuth();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [refreshing, setRefreshing] = useState(false);
 
   const loadData = useCallback(async () => {
-    const allNotifications = await NotificationStorage.getAll();
-    setNotifications(allNotifications);
-  }, []);
+    if (!user?.id) return;
+    const { data } = await supabase
+      .from("notifications")
+      .select("*")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false })
+      .limit(100);
+    const mapped: Notification[] = (data || []).map((n: any) => ({
+      id: n.id,
+      title: n.title,
+      message: n.message,
+      type: n.type || "announcement",
+      read: n.read ?? false,
+      createdAt: n.created_at,
+    }));
+    setNotifications(mapped);
+  }, [user?.id]);
 
   useFocusEffect(
     useCallback(() => {
       loadData();
-    }, [loadData])
+    }, [loadData]),
   );
 
   const onRefresh = async () => {
@@ -109,14 +160,15 @@ export default function NotificationsScreen() {
 
   const handleNotificationPress = async (notification: Notification) => {
     if (!notification.read) {
-      await NotificationStorage.markAsRead(notification.id);
+      await supabase.from("notifications").update({ read: true }).eq("id", notification.id);
       await loadData();
     }
     Alert.alert(notification.title, notification.message);
   };
 
   const handleMarkAllRead = async () => {
-    await NotificationStorage.markAllAsRead();
+    if (!user?.id) return;
+    await supabase.from("notifications").update({ read: true }).eq("user_id", user.id).eq("read", false);
     await loadData();
   };
 
@@ -126,24 +178,25 @@ export default function NotificationsScreen() {
       "Are you sure you want to clear all notifications?",
       [
         { text: "Cancel", style: "cancel" },
-        { 
-          text: "Clear All", 
+        {
+          text: "Clear All",
           style: "destructive",
           onPress: async () => {
-            await NotificationStorage.clear();
+            if (!user?.id) return;
+            await supabase.from("notifications").delete().eq("user_id", user.id);
             await loadData();
-          }
+          },
         },
-      ]
+      ],
     );
   };
 
-  const unreadCount = notifications.filter(n => !n.read).length;
-  const todayNotifications = notifications.filter(n => {
+  const unreadCount = notifications.filter((n) => !n.read).length;
+  const todayNotifications = notifications.filter((n) => {
     const notifDate = new Date(n.createdAt).toDateString();
     return notifDate === new Date().toDateString();
   });
-  const earlierNotifications = notifications.filter(n => {
+  const earlierNotifications = notifications.filter((n) => {
     const notifDate = new Date(n.createdAt).toDateString();
     return notifDate !== new Date().toDateString();
   });
@@ -151,35 +204,55 @@ export default function NotificationsScreen() {
   return (
     <ScreenScrollView
       refreshControl={
-        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.primary} />
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={onRefresh}
+          tintColor={theme.primary}
+        />
       }
     >
       {notifications.length > 0 ? (
         <>
           <View style={styles.actionsRow}>
             {unreadCount > 0 ? (
-              <Pressable 
-                style={({ pressed }) => [styles.actionBtn, { opacity: pressed ? 0.7 : 1 }]}
+              <Pressable
+                style={({ pressed }) => [
+                  styles.actionBtn,
+                  { opacity: pressed ? 0.7 : 1 },
+                ]}
                 onPress={handleMarkAllRead}
               >
                 <Feather name="check-circle" size={16} color={theme.primary} />
-                <ThemedText type="small" style={{ color: theme.primary }}>Mark all read</ThemedText>
+                <ThemedText type="small" style={{ color: theme.primary }}>
+                  Mark all read
+                </ThemedText>
               </Pressable>
             ) : null}
-            <Pressable 
-              style={({ pressed }) => [styles.actionBtn, { opacity: pressed ? 0.7 : 1 }]}
+            <Pressable
+              style={({ pressed }) => [
+                styles.actionBtn,
+                { opacity: pressed ? 0.7 : 1 },
+              ]}
               onPress={handleClearAll}
             >
               <Feather name="trash-2" size={16} color={Colors.light.error} />
-              <ThemedText type="small" style={{ color: Colors.light.error }}>Clear all</ThemedText>
+              <ThemedText type="small" style={{ color: Colors.light.error }}>
+                Clear all
+              </ThemedText>
             </Pressable>
           </View>
 
           {unreadCount > 0 ? (
-            <View style={[styles.unreadBanner, { backgroundColor: Colors.light.infoBg }]}>
+            <View
+              style={[
+                styles.unreadBanner,
+                { backgroundColor: Colors.light.infoBg },
+              ]}
+            >
               <Feather name="bell" size={16} color={Colors.light.infoText} />
               <ThemedText type="small" style={{ color: Colors.light.infoText }}>
-                You have {unreadCount} unread notification{unreadCount > 1 ? "s" : ""}
+                You have {unreadCount} unread notification
+                {unreadCount > 1 ? "s" : ""}
               </ThemedText>
             </View>
           ) : null}
@@ -188,10 +261,12 @@ export default function NotificationsScreen() {
 
           {todayNotifications.length > 0 ? (
             <>
-              <ThemedText type="h4" style={styles.sectionTitle}>Today</ThemedText>
+              <ThemedText type="h4" style={styles.sectionTitle}>
+                Today
+              </ThemedText>
               <Spacer height={Spacing.sm} />
               <View style={styles.notificationsList}>
-                {todayNotifications.map(notification => (
+                {todayNotifications.map((notification) => (
                   <NotificationCard
                     key={notification.id}
                     notification={notification}
@@ -205,10 +280,12 @@ export default function NotificationsScreen() {
 
           {earlierNotifications.length > 0 ? (
             <>
-              <ThemedText type="h4" style={styles.sectionTitle}>Earlier</ThemedText>
+              <ThemedText type="h4" style={styles.sectionTitle}>
+                Earlier
+              </ThemedText>
               <Spacer height={Spacing.sm} />
               <View style={styles.notificationsList}>
-                {earlierNotifications.map(notification => (
+                {earlierNotifications.map((notification) => (
                   <NotificationCard
                     key={notification.id}
                     notification={notification}
@@ -220,13 +297,28 @@ export default function NotificationsScreen() {
           ) : null}
         </>
       ) : (
-        <View style={[styles.emptyState, { backgroundColor: theme.backgroundDefault }]}>
+        <View
+          style={[
+            styles.emptyState,
+            { backgroundColor: theme.backgroundDefault },
+          ]}
+        >
           <Feather name="bell-off" size={48} color={theme.textSecondary} />
           <Spacer height={Spacing.md} />
-          <ThemedText type="body" style={{ color: theme.textSecondary, textAlign: "center" }}>
+          <ThemedText
+            type="body"
+            style={{ color: theme.textSecondary, textAlign: "center" }}
+          >
             No notifications yet
           </ThemedText>
-          <ThemedText type="small" style={{ color: theme.textSecondary, textAlign: "center", marginTop: Spacing.xs }}>
+          <ThemedText
+            type="small"
+            style={{
+              color: theme.textSecondary,
+              textAlign: "center",
+              marginTop: Spacing.xs,
+            }}
+          >
             You will see task updates, leave approvals, and announcements here
           </ThemedText>
         </View>

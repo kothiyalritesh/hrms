@@ -1,5 +1,12 @@
 import React, { useState, useCallback } from "react";
-import { StyleSheet, View, Pressable, Modal, Alert, RefreshControl } from "react-native";
+import { Platform, StyleSheet,
+  View,
+  Pressable,
+  Modal,
+  Alert,
+  RefreshControl,
+  Linking,
+} from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -9,18 +16,20 @@ import { ThemedText } from "@/components/ThemedText";
 import { ThemedView } from "@/components/ThemedView";
 import { Button } from "@/components/Button";
 import { useTheme } from "@/hooks/useTheme";
-import { Spacing, BorderRadius, Colors, Shadows } from "@/constants/theme";
+import { useAuth } from "@/contexts/AuthContext";
+import { Spacing, BorderRadius, Colors } from "@/constants/theme";
 import Spacer from "@/components/Spacer";
-import { DocumentStorage, Document } from "@/utils/storage";
+import { supabase } from "@/lib/supabase";
 
 type DocumentCategory = "personal" | "hr" | "property" | "certificate";
 
-const CATEGORY_ICONS: Record<DocumentCategory, keyof typeof Feather.glyphMap> = {
-  personal: "user",
-  hr: "file-text",
-  property: "home",
-  certificate: "award",
-};
+const CATEGORY_ICONS: Record<DocumentCategory, keyof typeof Feather.glyphMap> =
+  {
+    personal: "user",
+    hr: "file-text",
+    property: "home",
+    certificate: "award",
+  };
 
 const CATEGORY_LABELS: Record<DocumentCategory, string> = {
   personal: "Personal (PAN/Aadhaar)",
@@ -32,11 +41,12 @@ const CATEGORY_LABELS: Record<DocumentCategory, string> = {
 interface DocumentCardProps {
   doc: Document;
   onDelete: () => void;
+  onView: () => void;
 }
 
-function DocumentCard({ doc, onDelete }: DocumentCardProps) {
+function DocumentCard({ doc, onDelete, onView }: DocumentCardProps) {
   const { theme } = useTheme();
-  
+
   const formatSize = (bytes: number) => {
     if (bytes < 1024) return bytes + " B";
     if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
@@ -50,45 +60,29 @@ function DocumentCard({ doc, onDelete }: DocumentCardProps) {
     return "file";
   };
 
-  const handleView = () => {
-    Alert.alert("View Document", `Opening ${doc.name}`);
-  };
-
   const handleDelete = () => {
-    Alert.alert(
-      "Delete Document",
-      `Are you sure you want to delete "${doc.name}"?`,
-      [
-        { text: "Cancel", style: "cancel" },
-        { text: "Delete", style: "destructive", onPress: onDelete },
-      ]
-    );
+    Alert.alert("Delete Document", `Are you sure you want to delete "${doc.name}"?`, [
+      { text: "Cancel", style: "cancel" },
+      { text: "Delete", style: "destructive", onPress: onDelete },
+    ]);
   };
 
   return (
     <View style={[styles.docCard, { backgroundColor: theme.backgroundDefault }]}>
       <View style={[styles.docIcon, { backgroundColor: theme.primary + "15" }]}>
-        <Feather name={getFileIcon(doc.type)} size={24} color={theme.primary} />
+        <Feather name={getFileIcon(doc.mime_type)} size={24} color={theme.primary} />
       </View>
       <View style={styles.docContent}>
-        <ThemedText type="body" style={styles.docName} numberOfLines={1}>
-          {doc.name}
-        </ThemedText>
+        <ThemedText type="body" style={styles.docName} numberOfLines={1}>{doc.name}</ThemedText>
         <ThemedText type="caption" style={{ color: theme.textSecondary }}>
-          {formatSize(doc.size)} - {new Date(doc.uploadedAt).toLocaleDateString()}
+          {formatSize(doc.size)} · {new Date(doc.uploaded_at).toLocaleDateString()}
         </ThemedText>
       </View>
       <View style={styles.docActions}>
-        <Pressable 
-          style={({ pressed }) => [styles.actionBtn, { opacity: pressed ? 0.6 : 1 }]}
-          onPress={handleView}
-        >
+        <Pressable style={({ pressed }) => [styles.actionBtn, { opacity: pressed ? 0.6 : 1 }]} onPress={onView}>
           <Feather name="eye" size={18} color={theme.primary} />
         </Pressable>
-        <Pressable 
-          style={({ pressed }) => [styles.actionBtn, { opacity: pressed ? 0.6 : 1 }]}
-          onPress={handleDelete}
-        >
+        <Pressable style={({ pressed }) => [styles.actionBtn, { opacity: pressed ? 0.6 : 1 }]} onPress={handleDelete}>
           <Feather name="trash-2" size={18} color={Colors.light.error} />
         </Pressable>
       </View>
@@ -96,26 +90,40 @@ function DocumentCard({ doc, onDelete }: DocumentCardProps) {
   );
 }
 
+interface Document {
+  id: string;
+  name: string;
+  category: DocumentCategory;
+  file_path: string;
+  file_url: string;
+  size: number;
+  uploaded_at: string;
+  mime_type: string;
+}
+
 export default function DocumentsScreen() {
   const { theme } = useTheme();
+  const { user } = useAuth();
   const insets = useSafeAreaInsets();
-  
+
   const [documents, setDocuments] = useState<Document[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<DocumentCategory | "all">("all");
   const [refreshing, setRefreshing] = useState(false);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [uploadCategory, setUploadCategory] = useState<DocumentCategory>("personal");
+  const [uploading, setUploading] = useState(false);
 
   const loadData = useCallback(async () => {
-    const allDocs = await DocumentStorage.getAll();
-    setDocuments(allDocs);
-  }, []);
+    if (!user?.id) return;
+    const { data, error } = await supabase
+      .from("employee_documents")
+      .select("*")
+      .eq("user_id", user.id)
+      .order("uploaded_at", { ascending: false });
+    if (!error) setDocuments(data || []);
+  }, [user?.id]);
 
-  useFocusEffect(
-    useCallback(() => {
-      loadData();
-    }, [loadData])
-  );
+  useFocusEffect(useCallback(() => { loadData(); }, [loadData]));
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -124,72 +132,116 @@ export default function DocumentsScreen() {
   };
 
   const handlePickDocument = async () => {
+    if (!user?.id) return;
     try {
-      const result = await DocumentPicker.getDocumentAsync({
-        type: "*/*",
-        copyToCacheDirectory: true,
+      const result = await DocumentPicker.getDocumentAsync({ type: "*/*", copyToCacheDirectory: true });
+      if (result.canceled || !result.assets?.length) return;
+
+      const file = result.assets[0];
+      setUploading(true);
+
+      // Read file as blob
+      const response = await fetch(file.uri);
+      const blob = await response.blob();
+      const filePath = `${user.id}/${uploadCategory}/${Date.now()}_${file.name}`;
+
+      // Upload to Supabase Storage
+      const { error: uploadError } = await supabase.storage
+        .from("employee-documents")
+        .upload(filePath, blob, { contentType: file.mimeType || "application/octet-stream", upsert: false });
+
+      if (uploadError) throw uploadError;
+
+      // Get public URL
+      const { data: urlData } = supabase.storage
+        .from("employee-documents")
+        .getPublicUrl(filePath);
+
+      // Save record to DB
+      const { error: dbError } = await supabase.from("employee_documents").insert({
+        user_id: user.id,
+        name: file.name,
+        category: uploadCategory,
+        file_path: filePath,
+        file_url: urlData.publicUrl,
+        size: file.size || 0,
+        mime_type: file.mimeType || "application/octet-stream",
       });
 
-      if (!result.canceled && result.assets && result.assets.length > 0) {
-        const file = result.assets[0];
-        const newDoc: Document = {
-          id: "doc_" + Date.now(),
-          name: file.name,
-          category: uploadCategory,
-          uri: file.uri,
-          size: file.size || 0,
-          uploadedAt: new Date().toISOString(),
-          type: file.mimeType || "application/octet-stream",
-        };
+      if (dbError) throw dbError;
 
-        await DocumentStorage.add(newDoc);
-        await loadData();
-        setShowUploadModal(false);
-        Alert.alert("Success", "Document uploaded successfully");
-      }
-    } catch (error) {
-      Alert.alert("Error", "Failed to upload document");
+      await loadData();
+      setShowUploadModal(false);
+      Alert.alert("Success", "Document uploaded successfully");
+    } catch (error: any) {
+      Alert.alert("Error", error?.message || "Failed to upload document");
+    } finally {
+      setUploading(false);
     }
   };
 
-  const handleDelete = async (docId: string) => {
-    await DocumentStorage.delete(docId);
-    await loadData();
+  const handleDelete = async (doc: Document) => {
+    try {
+      await supabase.storage.from("employee-documents").remove([doc.file_path]);
+      await supabase.from("employee_documents").delete().eq("id", doc.id);
+      await loadData();
+    } catch (error: any) {
+      Alert.alert("Error", "Failed to delete document");
+    }
   };
 
-  const filteredDocs = selectedCategory === "all" 
-    ? documents 
-    : documents.filter(d => d.category === selectedCategory);
+  const handleView = (doc: Document) => {
+    if (doc.file_url) Linking.openURL(doc.file_url);
+  };
 
-  const categories: (DocumentCategory | "all")[] = ["all", "personal", "hr", "property", "certificate"];
+  const filteredDocs = selectedCategory === "all"
+    ? documents
+    : documents.filter((d) => d.category === selectedCategory);
+
+  const categories: (DocumentCategory | "all")[] = [
+    "all",
+    "personal",
+    "hr",
+    "property",
+    "certificate",
+  ];
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.backgroundRoot }}>
       <ScreenScrollView
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.primary} />
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={theme.primary}
+          />
         }
       >
         <View style={styles.filtersRow}>
-          {categories.map(cat => (
+          {categories.map((cat) => (
             <Pressable
               key={cat}
               style={[
                 styles.filterChip,
-                { 
-                  backgroundColor: selectedCategory === cat ? theme.primary : theme.backgroundDefault,
-                }
+                {
+                  backgroundColor:
+                    selectedCategory === cat
+                      ? theme.primary
+                      : theme.backgroundDefault,
+                },
               ]}
               onPress={() => setSelectedCategory(cat)}
             >
-              <ThemedText 
-                type="caption" 
-                style={{ 
+              <ThemedText
+                type="caption"
+                style={{
                   color: selectedCategory === cat ? "#FFFFFF" : theme.text,
                   fontWeight: selectedCategory === cat ? "600" : "400",
                 }}
               >
-                {cat === "all" ? "All" : cat.charAt(0).toUpperCase() + cat.slice(1)}
+                {cat === "all"
+                  ? "All"
+                  : cat.charAt(0).toUpperCase() + cat.slice(1)}
               </ThemedText>
             </Pressable>
           ))}
@@ -199,19 +251,28 @@ export default function DocumentsScreen() {
 
         {filteredDocs.length > 0 ? (
           <View style={styles.docsList}>
-            {filteredDocs.map(doc => (
-              <DocumentCard 
-                key={doc.id} 
-                doc={doc} 
-                onDelete={() => handleDelete(doc.id)}
+            {filteredDocs.map((doc) => (
+              <DocumentCard
+                key={doc.id}
+                doc={doc}
+                onDelete={() => handleDelete(doc)}
+                onView={() => handleView(doc)}
               />
             ))}
           </View>
         ) : (
-          <View style={[styles.emptyState, { backgroundColor: theme.backgroundDefault }]}>
+          <View
+            style={[
+              styles.emptyState,
+              { backgroundColor: theme.backgroundDefault },
+            ]}
+          >
             <Feather name="folder" size={48} color={theme.textSecondary} />
             <Spacer height={Spacing.md} />
-            <ThemedText type="body" style={{ color: theme.textSecondary, textAlign: "center" }}>
+            <ThemedText
+              type="body"
+              style={{ color: theme.textSecondary, textAlign: "center" }}
+            >
               No documents uploaded
             </ThemedText>
             <Spacer height={Spacing.md} />
@@ -227,12 +288,15 @@ export default function DocumentsScreen() {
       <Pressable
         style={({ pressed }) => [
           styles.fab,
-          { 
+          {
             backgroundColor: theme.primary,
             bottom: insets.bottom + Spacing.xl,
             opacity: pressed ? 0.9 : 1,
             transform: [{ scale: pressed ? 0.95 : 1 }],
-          }
+            ...(Platform.OS === "web"
+              ? { boxShadow: "0 2px 8px rgba(0,0,0,0.2)" }
+              : { shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.2, shadowRadius: 4, elevation: 4 }),
+          },
         ]}
         onPress={() => setShowUploadModal(true)}
       >
@@ -246,38 +310,63 @@ export default function DocumentsScreen() {
         onRequestClose={() => setShowUploadModal(false)}
       >
         <View style={styles.modalOverlay}>
-          <ThemedView style={[styles.modalContainer, { paddingBottom: insets.bottom + Spacing.lg }]}>
+          <ThemedView
+            style={[
+              styles.modalContainer,
+              { paddingBottom: insets.bottom + Spacing.lg },
+            ]}
+          >
             <View style={styles.modalHeader}>
               <ThemedText type="h3">Upload Document</ThemedText>
               <Pressable onPress={() => setShowUploadModal(false)}>
                 <Feather name="x" size={24} color={theme.text} />
               </Pressable>
             </View>
-            
+
             <View style={styles.modalContent}>
-              <ThemedText type="small" style={styles.inputLabel}>Document Category</ThemedText>
+              <ThemedText type="small" style={styles.inputLabel}>
+                Document Category
+              </ThemedText>
               <View style={styles.categoryGrid}>
-                {(["personal", "hr", "property", "certificate"] as DocumentCategory[]).map(cat => (
+                {(
+                  [
+                    "personal",
+                    "hr",
+                    "property",
+                    "certificate",
+                  ] as DocumentCategory[]
+                ).map((cat) => (
                   <Pressable
                     key={cat}
                     style={[
                       styles.categoryOption,
-                      { 
-                        backgroundColor: uploadCategory === cat ? theme.primary + "20" : theme.backgroundSecondary,
-                        borderColor: uploadCategory === cat ? theme.primary : "transparent",
-                      }
+                      {
+                        backgroundColor:
+                          uploadCategory === cat
+                            ? theme.primary + "20"
+                            : theme.backgroundSecondary,
+                        borderColor:
+                          uploadCategory === cat
+                            ? theme.primary
+                            : "transparent",
+                      },
                     ]}
                     onPress={() => setUploadCategory(cat)}
                   >
-                    <Feather 
-                      name={CATEGORY_ICONS[cat]} 
-                      size={24} 
-                      color={uploadCategory === cat ? theme.primary : theme.textSecondary} 
+                    <Feather
+                      name={CATEGORY_ICONS[cat]}
+                      size={24}
+                      color={
+                        uploadCategory === cat
+                          ? theme.primary
+                          : theme.textSecondary
+                      }
                     />
-                    <ThemedText 
-                      type="caption" 
-                      style={{ 
-                        color: uploadCategory === cat ? theme.primary : theme.text,
+                    <ThemedText
+                      type="caption"
+                      style={{
+                        color:
+                          uploadCategory === cat ? theme.primary : theme.text,
                         textAlign: "center",
                       }}
                     >
@@ -286,16 +375,19 @@ export default function DocumentsScreen() {
                   </Pressable>
                 ))}
               </View>
-              
+
               <Spacer height={Spacing.xl} />
-              
-              <Button onPress={handlePickDocument}>
-                Select Document
+
+              <Button onPress={handlePickDocument} disabled={uploading}>
+                {uploading ? "Uploading..." : "Select & Upload Document"}
               </Button>
-              
+
               <Spacer height={Spacing.md} />
-              
-              <ThemedText type="caption" style={[styles.helpText, { color: theme.textSecondary }]}>
+
+              <ThemedText
+                type="caption"
+                style={[styles.helpText, { color: theme.textSecondary }]}
+              >
                 Supported formats: PDF, JPG, PNG, DOC, DOCX
               </ThemedText>
             </View>
@@ -364,7 +456,6 @@ const styles = StyleSheet.create({
     borderRadius: Spacing.fabSize / 2,
     alignItems: "center",
     justifyContent: "center",
-    ...Shadows.fab,
   },
   modalOverlay: {
     flex: 1,

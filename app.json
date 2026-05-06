@@ -13,7 +13,10 @@
       "bundleIdentifier": "com.rehrms.app",
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "This app needs access to your location for geo-based attendance marking.",
-        "NSCameraUsageDescription": "This app needs access to your camera for selfie attendance and document uploads."
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "This app tracks your location during field visits for attendance and compliance.",
+        "NSLocationAlwaysUsageDescription": "This app tracks your location in the background during active field visits.",
+        "NSCameraUsageDescription": "This app needs access to your camera for selfie attendance and document uploads.",
+        "UIBackgroundModes": ["location", "fetch"]
       }
     },
     "android": {
@@ -29,14 +32,32 @@
       "permissions": [
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION",
-        "CAMERA"
+        "ACCESS_BACKGROUND_LOCATION",
+        "CAMERA",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION"
       ]
     },
     "web": {
       "output": "single",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/images/favicon.png",
+      "bundler": "metro",
+      "publicPath": "/",
+      "name": "RE HRMS",
+      "shortName": "RE HRMS",
+      "description": "Real Estate HRMS - Attendance & Field Visit Tracking",
+      "themeColor": "#1E40AF",
+      "backgroundColor": "#ffffff"
     },
     "plugins": [
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow RE HRMS to use your location for field visit tracking.",
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
+        }
+      ],
       [
         "expo-splash-screen",
         {
@@ -53,6 +74,10 @@
     ],
     "experiments": {
       "reactCompiler": true
+    },
+    "extra": {
+      "supabaseUrl": "https://jidbrwpzfpbursihtvpg.supabase.co",
+      "supabaseAnonKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImppZGJyd3B6ZnBidXJzaWh0dnBnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ0MTg3OTgsImV4cCI6MjA4OTk5NDc5OH0.P-j0skFmSd-WtqV5-wi51ArxAwE4ZBt3ctYBtY-mj-0"
     }
   }
 }

@@ -40,7 +40,13 @@ export interface Task {
   id: string;
   title: string;
   description: string;
-  type: "follow_up" | "site_visit" | "lead" | "document" | "marketing" | "other";
+  type:
+    | "follow_up"
+    | "site_visit"
+    | "lead"
+    | "document"
+    | "marketing"
+    | "other";
   priority: "high" | "medium" | "low";
   status: "pending" | "in_progress" | "completed" | "cancelled";
   assignedTo: string;
@@ -57,7 +63,7 @@ export interface Notification {
   id: string;
   title: string;
   message: string;
-  type: "task" | "leave" | "payroll" | "announcement" | "reminder";
+  type: string; // open string to support all DB notification types
   read: boolean;
   createdAt: string;
   actionUrl?: string;
@@ -130,7 +136,7 @@ export const AttendanceStorage = {
   },
   async update(id: string, updates: Partial<AttendanceRecord>): Promise<void> {
     const records = await this.getAll();
-    const index = records.findIndex(r => r.id === id);
+    const index = records.findIndex((r) => r.id === id);
     if (index !== -1) {
       records[index] = { ...records[index], ...updates };
       await setItem(STORAGE_KEYS.ATTENDANCE, records);
@@ -139,7 +145,7 @@ export const AttendanceStorage = {
   async getTodayRecord(): Promise<AttendanceRecord | null> {
     const records = await this.getAll();
     const today = new Date().toISOString().split("T")[0];
-    return records.find(r => r.date === today) || null;
+    return records.find((r) => r.date === today) || null;
   },
 };
 
@@ -154,18 +160,22 @@ export const LeaveStorage = {
   },
   async update(id: string, updates: Partial<LeaveRequest>): Promise<void> {
     const requests = await this.getAll();
-    const index = requests.findIndex(r => r.id === id);
+    const index = requests.findIndex((r) => r.id === id);
     if (index !== -1) {
       requests[index] = { ...requests[index], ...updates };
       await setItem(STORAGE_KEYS.LEAVES, requests);
     }
   },
-  async getBalance(): Promise<{ sick: number; casual: number; earned: number }> {
+  async getBalance(): Promise<{
+    sick: number;
+    casual: number;
+    earned: number;
+  }> {
     const requests = await this.getAll();
-    const approved = requests.filter(r => r.status === "approved");
-    const usedSick = approved.filter(r => r.type === "sick").length;
-    const usedCasual = approved.filter(r => r.type === "casual").length;
-    const usedEarned = approved.filter(r => r.type === "earned").length;
+    const approved = requests.filter((r) => r.status === "approved");
+    const usedSick = approved.filter((r) => r.type === "sick").length;
+    const usedCasual = approved.filter((r) => r.type === "casual").length;
+    const usedEarned = approved.filter((r) => r.type === "earned").length;
     return {
       sick: Math.max(0, 12 - usedSick),
       casual: Math.max(0, 12 - usedCasual),
@@ -185,7 +195,7 @@ export const TaskStorage = {
   },
   async update(id: string, updates: Partial<Task>): Promise<void> {
     const tasks = await this.getAll();
-    const index = tasks.findIndex(t => t.id === id);
+    const index = tasks.findIndex((t) => t.id === id);
     if (index !== -1) {
       tasks[index] = { ...tasks[index], ...updates };
       await setItem(STORAGE_KEYS.TASKS, tasks);
@@ -193,11 +203,14 @@ export const TaskStorage = {
   },
   async delete(id: string): Promise<void> {
     const tasks = await this.getAll();
-    await setItem(STORAGE_KEYS.TASKS, tasks.filter(t => t.id !== id));
+    await setItem(
+      STORAGE_KEYS.TASKS,
+      tasks.filter((t) => t.id !== id),
+    );
   },
   async getByStatus(status: Task["status"]): Promise<Task[]> {
     const tasks = await this.getAll();
-    return tasks.filter(t => t.status === status);
+    return tasks.filter((t) => t.status === status);
   },
 };
 
@@ -212,7 +225,7 @@ export const NotificationStorage = {
   },
   async markAsRead(id: string): Promise<void> {
     const notifications = await this.getAll();
-    const index = notifications.findIndex(n => n.id === id);
+    const index = notifications.findIndex((n) => n.id === id);
     if (index !== -1) {
       notifications[index].read = true;
       await setItem(STORAGE_KEYS.NOTIFICATIONS, notifications);
@@ -220,12 +233,12 @@ export const NotificationStorage = {
   },
   async markAllAsRead(): Promise<void> {
     const notifications = await this.getAll();
-    notifications.forEach(n => (n.read = true));
+    notifications.forEach((n) => (n.read = true));
     await setItem(STORAGE_KEYS.NOTIFICATIONS, notifications);
   },
   async getUnreadCount(): Promise<number> {
     const notifications = await this.getAll();
-    return notifications.filter(n => !n.read).length;
+    return notifications.filter((n) => !n.read).length;
   },
   async clear(): Promise<void> {
     await setItem(STORAGE_KEYS.NOTIFICATIONS, []);
@@ -243,7 +256,7 @@ export const ProjectStorage = {
   },
   async update(id: string, updates: Partial<Project>): Promise<void> {
     const projects = await this.getAll();
-    const index = projects.findIndex(p => p.id === id);
+    const index = projects.findIndex((p) => p.id === id);
     if (index !== -1) {
       projects[index] = { ...projects[index], ...updates };
       await setItem(STORAGE_KEYS.PROJECTS, projects);
@@ -251,7 +264,10 @@ export const ProjectStorage = {
   },
   async delete(id: string): Promise<void> {
     const projects = await this.getAll();
-    await setItem(STORAGE_KEYS.PROJECTS, projects.filter(p => p.id !== id));
+    await setItem(
+      STORAGE_KEYS.PROJECTS,
+      projects.filter((p) => p.id !== id),
+    );
   },
 };
 
@@ -269,7 +285,10 @@ export const PayrollStorage = {
     const now = new Date();
     const currentMonth = now.toLocaleString("default", { month: "long" });
     const currentYear = now.getFullYear();
-    return records.find(r => r.month === currentMonth && r.year === currentYear) || null;
+    return (
+      records.find((r) => r.month === currentMonth && r.year === currentYear) ||
+      null
+    );
   },
 };
 
@@ -284,11 +303,14 @@ export const DocumentStorage = {
   },
   async delete(id: string): Promise<void> {
     const docs = await this.getAll();
-    await setItem(STORAGE_KEYS.DOCUMENTS, docs.filter(d => d.id !== id));
+    await setItem(
+      STORAGE_KEYS.DOCUMENTS,
+      docs.filter((d) => d.id !== id),
+    );
   },
   async getByCategory(category: Document["category"]): Promise<Document[]> {
     const docs = await this.getAll();
-    return docs.filter(d => d.category === category);
+    return docs.filter((d) => d.category === category);
   },
 };
 
@@ -299,7 +321,8 @@ export async function initializeMockData(userId: string): Promise<void> {
       {
         id: "task_1",
         title: "Client Follow-up - Sharma Family",
-        description: "Follow up with Mr. Sharma regarding 3BHK flat in Green Valley project",
+        description:
+          "Follow up with Mr. Sharma regarding 3BHK flat in Green Valley project",
         type: "follow_up",
         priority: "high",
         status: "pending",
@@ -311,7 +334,8 @@ export async function initializeMockData(userId: string): Promise<void> {
       {
         id: "task_2",
         title: "Site Visit - Palm Heights",
-        description: "Conduct site visit with potential buyers at Palm Heights project",
+        description:
+          "Conduct site visit with potential buyers at Palm Heights project",
         type: "site_visit",
         priority: "medium",
         status: "in_progress",
@@ -319,7 +343,11 @@ export async function initializeMockData(userId: string): Promise<void> {
         assignedBy: "manager_1",
         deadline: new Date(Date.now() + 172800000).toISOString(),
         createdAt: new Date(Date.now() - 86400000).toISOString(),
-        location: { latitude: 28.6139, longitude: 77.209, address: "Palm Heights, Sector 45, Gurgaon" },
+        location: {
+          latitude: 28.6139,
+          longitude: 77.209,
+          address: "Palm Heights, Sector 45, Gurgaon",
+        },
       },
       {
         id: "task_3",
@@ -351,8 +379,16 @@ export async function initializeMockData(userId: string): Promise<void> {
         pricePerSqft: "Rs 8,500/sqft",
         type: "residential",
         status: "available",
-        amenities: ["Swimming Pool", "Gym", "Club House", "Park", "24/7 Security", "Power Backup"],
-        description: "Premium 2/3/4 BHK apartments with world-class amenities in the heart of Gurgaon.",
+        amenities: [
+          "Swimming Pool",
+          "Gym",
+          "Club House",
+          "Park",
+          "24/7 Security",
+          "Power Backup",
+        ],
+        description:
+          "Premium 2/3/4 BHK apartments with world-class amenities in the heart of Gurgaon.",
       },
       {
         id: "proj_2",
@@ -364,7 +400,8 @@ export async function initializeMockData(userId: string): Promise<void> {
         type: "residential",
         status: "available",
         amenities: ["Garden", "Gym", "Parking", "Security", "Club House"],
-        description: "Affordable luxury apartments with excellent connectivity to Delhi NCR.",
+        description:
+          "Affordable luxury apartments with excellent connectivity to Delhi NCR.",
       },
       {
         id: "proj_3",
@@ -375,8 +412,15 @@ export async function initializeMockData(userId: string): Promise<void> {
         pricePerSqft: "Rs 15,000/sqft",
         type: "commercial",
         status: "upcoming",
-        amenities: ["Conference Rooms", "Cafeteria", "Parking", "24/7 Security", "High-speed Internet"],
-        description: "Premium commercial spaces in prime location with excellent corporate infrastructure.",
+        amenities: [
+          "Conference Rooms",
+          "Cafeteria",
+          "Parking",
+          "24/7 Security",
+          "High-speed Internet",
+        ],
+        description:
+          "Premium commercial spaces in prime location with excellent corporate infrastructure.",
       },
     ];
     for (const project of mockProjects) {
@@ -429,7 +473,10 @@ export async function initializeMockData(userId: string): Promise<void> {
       deductions: 8000,
       netSalary: 52000,
       status: index === 0 ? "processed" : "paid",
-      paidOn: index > 0 ? new Date(Date.now() - (index * 30 * 86400000)).toISOString() : undefined,
+      paidOn:
+        index > 0
+          ? new Date(Date.now() - index * 30 * 86400000).toISOString()
+          : undefined,
     }));
     for (const record of mockPayroll) {
       await PayrollStorage.add(record);

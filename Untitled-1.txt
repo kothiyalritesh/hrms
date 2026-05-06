@@ -1,0 +1,129 @@
+
+
+RE HRMS
+Good Morning,
+admin main
+Attendance
+Not Marked
+Tap to mark
+Pending Tasks
+0
+To complete
+Leave Balance
+39
+Days remaining
+Site Visits
+0
+Scheduled
+Quick Actions
+Mark Attendance
+Apply Leave
+Upload Doc
+Projects
+Upcoming Birthdays
+Events
+Pending Tasks
+View All
+All caught up! No pending tasks.
+Tasks
+Search tasks...
+All
+Pending
+In Progress
+Completed
+dwqd
+MEDIUM
+PENDING
+dwqwqd
+3/26/2026
+Attendance
+11:17 AM
+Wednesday, March 25
+Mark Attendance
+
+Office Attendance
+
+Select Office
+Home
+Tasks
+Attendance
+Profile
+Admin and
+
+RE HRMS
+Good Morning,
+admin main
+Attendance
+Not Marked
+Tap to mark
+Pending Tasks
+0
+To complete
+Leave Balance
+39
+Days remaining
+Site Visits
+0
+Scheduled
+Quick Actions
+Mark Attendance
+Apply Leave
+Upload Doc
+Projects
+Upcoming Birthdays
+Events
+Pending Tasks
+View All
+All caught up! No pending tasks.
+Tasks
+Search tasks...
+All
+Pending
+In Progress
+Completed
+dwqd
+MEDIUM
+PENDING
+dwqwqd
+3/26/2026
+Attendance
+11:17 AM
+Wednesday, March 25
+Mark Attendance
+
+Office Attendance
+
+Select Office
+Profile
+A
+admin main
+SYSTEM ADMIN
+Phone
+Not set
+Joined
+12/23/2025
+Account
+Edit Profile
+Update your name and phone
+My Documents
+View uploaded documents
+Payroll
+View salary slips
+Leave History
+View leave applications
+Settings
+Notifications
+Manage notification preferences
+Change Password
+Help & Support
+Logout
+RE HRMS v1.0.0
+
+User Management
+Employee Management
+Add Employee
+Home
+Tasks
+Attendance
+Profile
+Admin page doesnt work , make sure they work as intended and also add a fucntio add users and create their user credentials using their numbers and check if we have otp functionlity in our backend
