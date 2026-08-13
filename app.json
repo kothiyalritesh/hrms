@@ -1,0 +1,115 @@
+{
+  "expo": {
+    "name": "Bop Realty",
+    "slug": "re-hrms",
+    "version": "1.2.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "re-hrms",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/49f3f4fa-06cd-45ed-b80e-cec0d93bf6a9",
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 0
+    },
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.rehrms.app",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "BOP HRMS uses your precise location to verify attendance and field-visit proximity.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "BOP HRMS shares your location only while an HRMS attendance record is checked in, including when the app is minimized.",
+        "NSLocationAlwaysUsageDescription": "BOP HRMS shares your location only while an HRMS attendance record is checked in.",
+        "NSCameraUsageDescription": "This app needs access to your camera for selfie attendance and document uploads.",
+        "UIBackgroundModes": [
+          "location",
+          "remote-notification"
+        ]
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#1E40AF",
+        "foregroundImage": "./assets/images/android-icon-foreground.png",
+        "backgroundImage": "./assets/images/android-icon-background.png",
+        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "package": "com.rehrms.app",
+      "versionCode": 9,
+      "permissions": [
+        "CAMERA",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION",
+        "POST_NOTIFICATIONS"
+      ]
+    },
+    "web": {
+      "output": "single",
+      "favicon": "./assets/images/favicon.png",
+      "bundler": "metro"
+    },
+    "plugins": [
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/splash-icon.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#ffffff",
+          "dark": {
+            "backgroundColor": "#111827"
+          }
+        }
+      ],
+      "expo-web-browser",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Allow BOP HRMS to use precise location for attendance and field-visit verification.",
+          "locationAlwaysAndWhenInUsePermission": "Allow BOP HRMS to share location only while your HRMS attendance is checked in.",
+          "isIosBackgroundLocationEnabled": true,
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true,
+          "androidForegroundServiceIcon": "./assets/images/android-icon-monochrome.png"
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/android-icon-monochrome.png",
+          "color": "#6D1B6D",
+          "defaultChannel": "hrms_manager_updates",
+          "sounds": [
+            "./assets/sounds/arrival_ping.wav"
+          ],
+          "enableBackgroundRemoteNotifications": true
+        }
+      ],
+      [
+        "expo-secure-store",
+        {
+          "configureAndroidBackup": true
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow RE HRMS to select optional field-visit photo evidence.",
+          "cameraPermission": "Allow RE HRMS to capture optional field-visit photo evidence.",
+          "microphonePermission": false
+        }
+      ],
+      "expo-sharing",
+      "@react-native-community/datetimepicker"
+    ],
+    "experiments": {
+      "reactCompiler": true
+    }
+  }
+}

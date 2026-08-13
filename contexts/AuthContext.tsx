@@ -1,0 +1,605 @@
+import React, {
+  createContext,
+  ReactNode,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
+import { persistentAuthStorage } from "@/utils/secureStorage";
+import { AppState, Platform } from "react-native";
+import type { Session } from "@supabase/supabase-js";
+import { supabase, supabaseAuthStorageKey } from "@/lib/supabase";
+import { firstRpcRow } from "@/utils/supabaseRpc";
+import {
+  canAccessHRPanelRole,
+  isAdminRole,
+  isHRRole,
+  normalizeUserRole,
+} from "@/utils/userRole";
+import { DeviceSessionService } from "@/services/device-session.service";
+import { stopNativeTracking } from "@/services/location/backgroundLocationTask";
+import { clearOfflineLocationQueue } from "@/services/location/secureQueue";
+import { CurrentLocationVisitService } from "@/services/current-location-visit.service";
+import { getFunctionErrorMessage } from "@/utils/functionError";
+import { deactivateCurrentDevicePushToken } from "@/services/location/notification.service";
+
+export type UserRole =
+  | "SYSTEM_ADMIN"
+  | "ADMIN"
+  | "HR"
+  | "HRD"
+  | "BUSINESS_HEAD"
+  | "TEAM_HEAD"
+  | "TEAM_LEADER"
+  | "VP_SALES"
+  | "SALES_MANAGER"
+  | "GM_SALES"
+  | "AGM_SALES"
+  | "HEAD_BUSINESS_DEVELOPMENT"
+  | "BDM"
+  | "BDM_SALES"
+  | "SENIOR_BDE"
+  | "BDE"
+  | "SALES_EXECUTIVE"
+  | "ASSOCIATE_BUSINESS_HEAD"
+  | "ASSOCIATE_TEAM_HEAD"
+  | "ASSOCIATE_SENIOR_BDM"
+  | "ASSOCIATE_BDM"
+  | "ASSOCIATE_BDE"
+  | "ASSOCIATE_SALES_EXECUTIVE"
+  | "ASSOCIATE_MANAGER"
+  | "ASSOCIATE_SR_MANAGER"
+  | "ASSOCIATE_GM_SALES"
+  | "ASSOCIATE_AGM_SALES"
+  | "AGENT"
+  | "CO-ORDINATOR"
+  | "TELECALLER"
+  | "SALES"
+  | "DEPUTY_GENERAL_MANAGER"
+  | "SENIOR_ASSOCIATE_BDM"
+  | "VIDEO_EDITOR"
+  | "WEB_DEVELOPER"
+  | "DIGITAL_MARKETING_MANAGER"
+  | "ASSOCIATE_PARTNER";
+
+export interface User {
+  id: string;
+  name: string;
+  email: string | null;
+  phone?: string | null;
+  role: UserRole;
+  avatar?: string | null;
+  status: "ACTIVE" | "INACTIVE" | "SUSPENDED";
+  reports_to?: string | null;
+  created_at: string;
+}
+
+interface AuthContextType {
+  user: User | null;
+  isLoading: boolean;
+  isAuthenticated: boolean;
+  authState: "loading" | "authenticated" | "unauthenticated";
+  requestOTP: (phone: string) => Promise<{ success: boolean; error?: string }>;
+  verifyOTP: (
+    phone: string,
+    otp: string,
+  ) => Promise<{ success: boolean; error?: string }>;
+  logout: () => Promise<void>;
+  updateUser: (data: Partial<User>) => Promise<void>;
+  isDevMode: boolean;
+  isAdmin: boolean;
+  isHR: boolean;
+  /** True for HR, HRD, SYSTEM_ADMIN, ADMIN - full panel rights. */
+  isHRD: boolean;
+}
+
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+// Never version-bump this key: doing so forces every employee to log in again.
+const STORAGE_KEY = "@hrms_auth_user_v3";
+const AUTH_METADATA_KEY = "@hrms_auth_metadata_v1";
+const LEGACY_STORAGE_KEYS = [
+  "@hrms_auth_user_v2",
+  "@hrms_auth_user_v1",
+  "@hrms_auth_user",
+];
+
+interface StoredAuthMetadata {
+  user_id: string;
+  phone: string | null;
+  is_logged_in: boolean;
+  expires_at: number | null;
+  last_successful_authentication_at: string;
+  last_session_refresh_at: string;
+}
+
+function profileToUser(profile: any): User {
+  const normalizedRole = normalizeUserRole(profile.role) || "SALES_EXECUTIVE";
+  return {
+    id: profile.id,
+    name: profile.name,
+    email: profile.email,
+    phone: profile.phone,
+    role: normalizedRole as UserRole,
+    avatar: profile.avatar ?? null,
+    status: profile.is_active ? "ACTIVE" : "INACTIVE",
+    reports_to: profile.reports_to ?? null,
+    created_at: profile.created_at,
+  };
+}
+
+function isStoredUser(value: unknown): value is User {
+  const candidate = value as Partial<User> | null;
+  return !!candidate?.id && !!candidate?.name && !!candidate?.role;
+}
+
+async function readStoredUser(): Promise<User | null> {
+  for (const key of [STORAGE_KEY, ...LEGACY_STORAGE_KEYS]) {
+    try {
+      const raw = await persistentAuthStorage.getItem(key);
+      if (!raw) continue;
+      const parsed: unknown = JSON.parse(raw);
+      if (!isStoredUser(parsed)) continue;
+      if (key !== STORAGE_KEY) {
+        await persistentAuthStorage.setItem(
+          STORAGE_KEY,
+          JSON.stringify(parsed),
+        );
+        await persistentAuthStorage.removeItem(key);
+      }
+      return parsed;
+    } catch {
+      // A damaged legacy value must not prevent secure session recovery.
+    }
+  }
+  return null;
+}
+
+async function readStoredAuthMetadata(): Promise<StoredAuthMetadata | null> {
+  try {
+    const raw = await persistentAuthStorage.getItem(AUTH_METADATA_KEY);
+    if (!raw) return null;
+    const value = JSON.parse(raw) as Partial<StoredAuthMetadata>;
+    if (!value.user_id || value.is_logged_in !== true) return null;
+    return value as StoredAuthMetadata;
+  } catch {
+    return null;
+  }
+}
+
+async function persistSessionMetadata(
+  session: Session,
+  user?: User | null,
+  successfulAuthenticationAt?: string,
+) {
+  const previousRaw = await persistentAuthStorage.getItem(AUTH_METADATA_KEY);
+  let previous: { last_successful_authentication_at?: string } | null = null;
+  try {
+    previous = previousRaw ? JSON.parse(previousRaw) : null;
+  } catch {
+    previous = null;
+  }
+  await persistentAuthStorage.setItem(
+    AUTH_METADATA_KEY,
+    JSON.stringify({
+      user_id: session.user.id,
+      phone:
+        user?.phone ??
+        session.user.phone ??
+        session.user.user_metadata?.phone ??
+        null,
+      is_logged_in: true,
+      expires_at: session.expires_at ?? null,
+      last_successful_authentication_at:
+        successfulAuthenticationAt ??
+        previous?.last_successful_authentication_at ??
+        new Date().toISOString(),
+      last_session_refresh_at: new Date().toISOString(),
+    }),
+  );
+}
+
+async function clearPersistedAuthentication() {
+  await Promise.all([
+    persistentAuthStorage.removeItem(supabaseAuthStorageKey),
+    persistentAuthStorage.removeItem(STORAGE_KEY),
+    persistentAuthStorage.removeItem(AUTH_METADATA_KEY),
+    ...LEGACY_STORAGE_KEYS.map((key) => persistentAuthStorage.removeItem(key)),
+  ]);
+}
+
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [user, setUser] = useState<User | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const userRef = useRef<User | null>(null);
+  const mountedRef = useRef(true);
+  const logoutRequestedRef = useRef(false);
+
+  const applyUser = useCallback((nextUser: User | null) => {
+    userRef.current = nextUser;
+    if (mountedRef.current) setUser(nextUser);
+  }, []);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    let disposed = false;
+
+    let profileRestoreInFlight: Promise<boolean> | null = null;
+    let lastProfileValidationAt = 0;
+
+    const invalidateSession = async () => {
+      logoutRequestedRef.current = true;
+      try {
+        await deactivateCurrentDevicePushToken().catch(() => undefined);
+        await supabase.auth.signOut({ scope: "local" }).catch(() => undefined);
+        await clearPersistedAuthentication();
+      } finally {
+        applyUser(null);
+        logoutRequestedRef.current = false;
+      }
+    };
+
+    const restoreProfile = (session: Session, cached?: User | null) => {
+      if (profileRestoreInFlight) return profileRestoreInFlight;
+      profileRestoreInFlight = (async () => {
+        const usableCache = cached?.id === session.user.id ? cached : null;
+
+        // A locally restored Supabase session is sufficient to open the app.
+        // Server profile/device validation continues in the background and can
+        // revoke access only when the server explicitly confirms it.
+        if (usableCache) {
+          applyUser(usableCache);
+          if (mountedRef.current) setIsLoading(false);
+        }
+        await persistSessionMetadata(session, usableCache).catch((error) => {
+          console.warn("Session metadata persistence deferred:", error);
+        });
+
+        if (usableCache && Date.now() - lastProfileValidationAt < 30_000) {
+          return true;
+        }
+
+        const { data, error } = await supabase.rpc("rpc_get_my_profile_v2");
+        const profile = firstRpcRow<any>(data);
+        if (disposed || error || !profile) return !!usableCache;
+
+        if (!profile.is_active) {
+          await invalidateSession();
+          return false;
+        }
+
+        const fresh = profileToUser(profile);
+        lastProfileValidationAt = Date.now();
+        try {
+          const deviceSession = await DeviceSessionService.registerCurrent();
+          if (deviceSession.revoked) {
+            await invalidateSession();
+            return false;
+          }
+        } catch (error) {
+          // Network, server, or heartbeat failures never invalidate a session.
+          console.warn("Device session validation deferred:", error);
+        }
+
+        applyUser(fresh);
+        await Promise.all([
+          persistentAuthStorage.setItem(STORAGE_KEY, JSON.stringify(fresh)),
+          persistSessionMetadata(session, fresh),
+        ]);
+        return true;
+      })().finally(() => {
+        profileRestoreInFlight = null;
+      });
+      return profileRestoreInFlight;
+    };
+
+    const recoverSession = async (showLoginWhenMissing = false) => {
+      const cached = userRef.current ?? (await readStoredUser());
+      try {
+        const { data, error } = await supabase.auth.getSession();
+        if (disposed) return;
+        if (data.session) {
+          await restoreProfile(data.session, cached);
+        } else if (error && cached) {
+          // An offline/temporary refresh failure must keep the restored shell.
+          applyUser(cached);
+        } else if (showLoginWhenMissing && !error) {
+          await clearPersistedAuthentication();
+          applyUser(null);
+        }
+      } catch (error) {
+        // Temporary connectivity/startup errors must not log the employee out.
+        console.warn("Session recovery deferred:", error);
+      }
+    };
+
+    const bootstrap = async () => {
+      const [cached, metadata] = await Promise.all([
+        readStoredUser(),
+        readStoredAuthMetadata(),
+      ]);
+      if (
+        !disposed &&
+        cached &&
+        metadata?.is_logged_in &&
+        metadata.user_id === cached.id
+      ) {
+        // Render the previously authenticated application shell immediately.
+        // Token recovery and server validation continue without a login flash.
+        applyUser(cached);
+        setIsLoading(false);
+      }
+      try {
+        const { data, error } = await supabase.auth.getSession();
+        if (disposed) return;
+        if (data.session) {
+          const restored = await restoreProfile(data.session, cached);
+          if (!restored && !cached) applyUser(null);
+        } else if (error && cached) {
+          applyUser(cached);
+        } else {
+          await clearPersistedAuthentication();
+          applyUser(null);
+        }
+      } catch (error) {
+        if (cached) applyUser(cached);
+        console.warn("Auth startup recovery deferred:", error);
+      } finally {
+        if (!disposed) setIsLoading(false);
+      }
+    };
+
+    const { data: authListener } = supabase.auth.onAuthStateChange(
+      (event, session) => {
+        if (disposed) return;
+        if (event === "INITIAL_SESSION") return;
+        if (session && event === "TOKEN_REFRESHED") {
+          void persistSessionMetadata(session, userRef.current).catch(
+            () => undefined,
+          );
+        } else if (session) {
+          // Keep the callback synchronous to avoid holding Supabase's auth
+          // lock while querying the employee profile.
+          setTimeout(() => {
+            void restoreProfile(session, userRef.current);
+          }, 0);
+        } else if (event === "SIGNED_OUT") {
+          // The explicit logout flow verifies persisted auth before it changes
+          // navigation state. Unexpected sign-outs are rechecked after races
+          // settle.
+          if (!logoutRequestedRef.current) {
+            // Confirm a session is genuinely gone after refresh races settle.
+            setTimeout(() => void recoverSession(true), 250);
+          }
+        }
+      },
+    );
+
+    let appStateSubscription: { remove: () => void } | undefined;
+    let visibilityHandler: (() => void) | undefined;
+    let onlineHandler: (() => void) | undefined;
+    const deviceSessionHeartbeat = setInterval(
+      () => {
+        if (!userRef.current) return;
+        void DeviceSessionService.registerCurrent()
+          .then(async (result) => {
+            if (!result.revoked || disposed) return;
+            await invalidateSession();
+          })
+          .catch(() => undefined);
+      },
+      5 * 60 * 1000,
+    );
+
+    if (Platform.OS !== "web") {
+      if (AppState.currentState === "active") supabase.auth.startAutoRefresh();
+      appStateSubscription = AppState.addEventListener("change", (state) => {
+        if (state === "active") {
+          supabase.auth.startAutoRefresh();
+          void recoverSession();
+        } else {
+          supabase.auth.stopAutoRefresh();
+        }
+      });
+    } else if (typeof document !== "undefined") {
+      visibilityHandler = () => {
+        if (document.visibilityState === "visible") void recoverSession();
+      };
+      onlineHandler = () => void recoverSession();
+      document.addEventListener("visibilitychange", visibilityHandler);
+      window.addEventListener("online", onlineHandler);
+    }
+
+    void bootstrap();
+
+    return () => {
+      disposed = true;
+      mountedRef.current = false;
+      authListener.subscription.unsubscribe();
+      clearInterval(deviceSessionHeartbeat);
+      appStateSubscription?.remove();
+      if (Platform.OS !== "web") supabase.auth.stopAutoRefresh();
+      if (visibilityHandler) {
+        document.removeEventListener("visibilitychange", visibilityHandler);
+      }
+      if (onlineHandler) window.removeEventListener("online", onlineHandler);
+    };
+  }, [applyUser]);
+
+  const requestOTP = async (
+    phone: string,
+  ): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const normalizedPhone = phone.replace(/\D/g, "").slice(-10);
+      const { data, error } = await supabase.functions.invoke("otp-auth", {
+        body: { action: "request", phone: normalizedPhone },
+      });
+      if (error || !data?.success) {
+        return {
+          success: false,
+          error:
+            data?.message ||
+            (await getFunctionErrorMessage(error, "Unable to send OTP. Please try again.")),
+        };
+      }
+      return { success: true };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: await getFunctionErrorMessage(
+          error,
+          "Unable to send OTP. Please try again.",
+        ),
+      };
+    }
+  };
+
+  const verifyOTP = async (
+    phone: string,
+    otp: string,
+  ): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const normalizedPhone = phone.replace(/\D/g, "").slice(-10);
+      const { data, error } = await supabase.functions.invoke("otp-auth", {
+        body: { action: "verify", phone: normalizedPhone, otp: otp.trim() },
+      });
+      if (error || !data?.success || !data?.auth?.token_hash) {
+        return {
+          success: false,
+          error:
+            data?.message ||
+            (await getFunctionErrorMessage(error, "Invalid or expired OTP.")),
+        };
+      }
+
+      const { data: sessionData, error: sessionError } =
+        await supabase.auth.verifyOtp({
+          token_hash: data.auth.token_hash,
+          type: "magiclink",
+        });
+      if (sessionError || !sessionData.session) {
+        return {
+          success: false,
+          error: "Unable to establish a secure session. Please try again.",
+        };
+      }
+
+      const userData = profileToUser(data.profile);
+      applyUser(userData);
+      await persistentAuthStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify(userData),
+      );
+      await persistSessionMetadata(
+        sessionData.session,
+        userData,
+        new Date().toISOString(),
+      );
+      return { success: true };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: await getFunctionErrorMessage(error, "Invalid or expired OTP."),
+      };
+    }
+  };
+
+  const logout = async () => {
+    logoutRequestedRef.current = true;
+    let cleanupError: unknown = null;
+    try {
+      await DeviceSessionService.closeCurrent().catch(() => undefined);
+      await deactivateCurrentDevicePushToken().catch(() => undefined);
+      await Promise.all([
+        stopNativeTracking().catch(() => undefined),
+        clearOfflineLocationQueue().catch(() => undefined),
+        CurrentLocationVisitService.clearQueueForLogout().catch(
+          () => undefined,
+        ),
+      ]);
+      await supabase.removeAllChannels();
+      const { error: signOutError } = await supabase.auth.signOut({
+        scope: "local",
+      });
+      if (signOutError) {
+        // Manual logout must still remove the local credential when the auth
+        // provider cannot be reached. The stable storage key is cleared below.
+        console.warn("Provider sign-out was deferred:", signOutError);
+      }
+    } catch (error) {
+      console.error("Logout failed:", error);
+      cleanupError = error;
+    } finally {
+      try {
+        await clearPersistedAuthentication();
+      } catch (error) {
+        cleanupError = cleanupError ?? error;
+      }
+      applyUser(null);
+      logoutRequestedRef.current = false;
+    }
+    if (cleanupError) throw cleanupError;
+  };
+
+  const updateUser = async (data: Partial<User>) => {
+    if (!user) throw new Error("An authenticated profile is required.");
+    const previous = user;
+    const updated = { ...previous, ...data };
+    const { data: responseData, error } = await supabase.rpc(
+      "rpc_update_my_profile",
+      {
+        p_values: {
+          name: updated.name,
+          ...(updated.avatar ? { avatar: updated.avatar } : {}),
+        },
+      },
+    );
+    const response = firstRpcRow<any>(responseData);
+    if (error || response?.success !== true) {
+      throw new Error(
+        error?.message || "Server did not confirm the profile update.",
+      );
+    }
+    applyUser(updated);
+    await persistentAuthStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+  };
+
+  return (
+    <AuthContext.Provider
+      value={{
+        user,
+        isLoading,
+        isAuthenticated: !!user,
+        authState: isLoading
+          ? "loading"
+          : user
+            ? "authenticated"
+            : "unauthenticated",
+        requestOTP,
+        verifyOTP,
+        logout,
+        updateUser,
+        isDevMode: false,
+        isAdmin: isAdminRole(user?.role),
+        isHR: isHRRole(user?.role),
+        isHRD: canAccessHRPanelRole(user?.role),
+      }}
+    >
+      {children}
+    </AuthContext.Provider>
+  );
+}
+
+export function useAuth() {
+  const context = useContext(AuthContext);
+  if (!context) throw new Error("useAuth must be used inside AuthProvider");
+  return context;
+}
+
+/** True for SYSTEM_ADMIN, ADMIN, HR, HRD. */
+export function useCanAccessHRPanel() {
+  const { isAdmin, isHR } = useAuth();
+  return isAdmin || isHR;
+}

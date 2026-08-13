@@ -1,0 +1,14 @@
+{
+  "version": "1.2.0",
+  "androidVersionCode": 9,
+  "buildId": "20260810.1",
+  "requiredBackendSchemaVersion": "20260810000000",
+  "requiredEdgeFunctionVersions": {
+    "biometric-attendance-sync": "20260803.1",
+    "otp-auth": "20260731.1",
+    "field-visit-evidence-upload": "20260805.1",
+    "smartoffice-proxy": "20260801.1",
+    "biometric-punch-webhook": "20260803.1",
+    "notification-dispatch": "20260810.1"
+  }
+}

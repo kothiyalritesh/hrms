@@ -1,0 +1,7 @@
+Sanitized historical issue note:
+
+- A legacy client-side SmartOffice request returned HTTP 500.
+- SmartOffice access has since moved behind authenticated Edge Functions.
+- Operational URLs and credentials were removed from this note.
+- Raw biometric logs remain visible to administrators and employee-code matches
+  are persisted through a protected server operation.

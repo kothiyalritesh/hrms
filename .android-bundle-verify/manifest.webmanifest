@@ -1,0 +1,16 @@
+{
+  "name": "Bop Realty HRMS",
+  "short_name": "Bop HRMS",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#6D1B6D",
+  "icons": [
+    {
+      "src": "./icon.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

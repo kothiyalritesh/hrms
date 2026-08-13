@@ -1,0 +1,21 @@
+env: load .env.local .env
+env: export EXPO_PUBLIC_GOOGLE_MAPS_API_KEY EXPO_PUBLIC_SUPABASE_ANON_KEY EXPO_PUBLIC_SUPABASE_URL EXPO_PUBLIC_LOCATION_RPC_ENABLED
+Starting project at D:\download\RealtyHRM-fixed\RealtyHRM-fixed
+Starting Metro Bundler
+
+warning: Bundler cache is empty, rebuilding (this may take a minute)
+Waiting on http://localhost:8081
+Logs for your project will appear below.
+Web Bundled 17744ms index.js (1242 modules)
+Web Bundled 1265ms index.js (1 module)
+Web Bundled 98ms index.js (1 module)
+Web Bundled 79ms index.js (1 module)
+› Detected a change in metro.config.js. Restart the server to see the new results.
+Web Bundled 10579ms screens\AttendanceScreen.tsx (859 modules)
+Web Bundled 15887ms index.js (1242 modules)
+Web  INFO  %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+Web  LOG  Running application "main" with appParams:
+ {"hydrate": undefined, "rootTag": "#root"} 
+Development-level warnings: ON.
+Performance optimizations: OFF.
+Web  WARN  props.pointerEvents is deprecated. Use style.pointerEvents

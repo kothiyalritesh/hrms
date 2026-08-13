@@ -1,0 +1,8 @@
+﻿          ? employees.filter((e) =>
+              e.name.toLowerCase().includes(search.toLowerCase()) ||
+              (e.phone ?? "").includes(search) ||
+              (e.employee_number ?? "").toLowerCase().includes(search.toLowerCase()) ||
+              e.role_name.toLowerCase().includes(search.toLowerCase())
+            )
+          : employees;
+        return filtered.length === 0 ? (

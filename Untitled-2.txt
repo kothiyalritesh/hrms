@@ -1,0 +1,8 @@
+IN MATCHIG USER BY NAME AND NUMBER FROM ATTENDENCE FROM SMART OFFICE AND EMPLOYEE IN OUR SYSTEM WE GET
+Web LOG ✓ Total records in file: 5916
+Web LOG ✓ System employees (active): 349
+Web LOG ✓ Duplicates skipped: 0
+Web LOG ✓ Final matched count: 4182
+Web LOG ✗ Unmatched (no system user): 1734
+Web LOG Match breakdown: {"exact": 3043, "partial": 1139}
+Web LOG ======================== HOW COME THIS IS POSSIBLE WHEN WE HAVE 187 MEMEBERS ONLY CHACK AGAIN FOR DUPLICATES AND ALL
