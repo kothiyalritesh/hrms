@@ -18,6 +18,7 @@ import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { ScreenScrollView } from "@/components/ScreenScrollView";
 import { ThemedText } from "@/components/ThemedText";
 import { useTheme } from "@/hooks/useTheme";
+import { useScreenRefresh } from "@/hooks/useScreenRefresh";
 import { useAuth } from "@/contexts/AuthContext";
 import { Spacing, BorderRadius, Colors, Shadows } from "@/constants/theme";
 import Spacer from "@/components/Spacer";
@@ -205,7 +206,7 @@ export default function DashboardScreen({ navigation }: DashboardScreenProps) {
   const insets = useSafeAreaInsets();
   const { health: trackingHealth } = useLocationTracking();
 
-  const [refreshing, setRefreshing] = useState(false);
+  
   const [todayAttendance, setTodayAttendance] = useState<any>(null);
   const [pendingTasks, setPendingTasks] = useState<Task[]>([]);
   const [dashboardLoadError, setDashboardLoadError] = useState<string | null>(
@@ -1037,7 +1038,7 @@ export default function DashboardScreen({ navigation }: DashboardScreenProps) {
       <View style={[styles.body, isWeb && styles.bodyWeb]}>
         <Spacer height={Spacing.lg} />
 
-        {isCheckedIn && !isCheckedOut && trackingHealth.warning ? (
+        {isCheckedIn && !isCheckedOut && trackingHealth.warning && Platform.OS !== "web" ? (
           <TouchableOpacity
             style={{
               flexDirection: "row",

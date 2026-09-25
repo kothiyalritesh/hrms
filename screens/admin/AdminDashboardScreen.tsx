@@ -12,6 +12,7 @@ import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { ScreenScrollView } from "@/components/ScreenScrollView";
 import { ThemedText } from "@/components/ThemedText";
 import { useTheme } from "@/hooks/useTheme";
+import { useScreenRefresh } from "@/hooks/useScreenRefresh";
 import { Spacing, BorderRadius, Colors } from "@/constants/theme";
 import Spacer from "@/components/Spacer";
 import { useAuth } from "@/contexts/AuthContext";
@@ -127,7 +128,7 @@ function ActionCard({ icon, label, desc, accent, onPress }: ActionCardProps) {
 export default function AdminDashboardScreen({ navigation }: Props) {
   const { theme } = useTheme();
   const { user, isHR, isHRD } = useAuth();
-  const [refreshing, setRefreshing] = useState(false);
+  
   const [loading, setLoading] = useState(true);
   const [hasLoaded, setHasLoaded] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
