@@ -50,7 +50,13 @@ export default function ReportsStackNavigator() {
       <Stack.Screen name="ReportsActivity" component={Activity} options={{ headerTitle: "Activity Analysis" }} />
       <Stack.Screen name="ReportsTracking" component={Tracking} options={{ headerTitle: "Live Tracking Report" }} />
       <Stack.Screen name="ReportsGps" component={Gps} options={{ headerTitle: "GPS and Suspicious Attendance" }} />
+      <Stack.Screen name="ReportsIntelligence" component={Intelligence} options={{ headerTitle: "Attendance Intelligence" }} />
+      <Stack.Screen name="ReportsCheckInLogs" component={CheckInLogs} options={{ headerTitle: "Check-In Logs" }} />
+      <Stack.Screen name="ReportsLeaveBalance" component={LeaveBalance} options={{ headerTitle: "Leave Balance" }} />
+      <Stack.Screen name="ReportsTeamHierarchy" component={TeamHierarchy} options={{ headerTitle: "Team Hierarchy" }} />
+      <Stack.Screen name="ReportsAuditLogs" component={AuditLogs} options={{ headerTitle: "Audit Logs" }} />
       <Stack.Screen name="ReportsDownloads" component={Advanced} initialParams={{ initialSection: "Exports" }} options={{ headerTitle: "Download Centre" }} />
     </Stack.Navigator>
   );
 }
+

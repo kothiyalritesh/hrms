@@ -87,6 +87,16 @@ const SmartOfficeIntegrationScreen = lazyScreen(() =>
     default: module.SmartOfficeSecureSyncScreen,
   })),
 );
+const PermissionsManagerScreen = lazyScreen(() =>
+  import('@/screens/admin/PermissionsManagerScreen')
+);
+const SiteVisitObserverScreen = lazyScreen(() =>
+  import('@/screens/admin/SiteVisitObserverScreen')
+);
+const InTransitScreen = lazyScreen(() =>
+  import('@/screens/admin/InTransitScreen')
+);
+
 const SmartOfficeEmployeeImport = lazyScreen(() =>
   import("@/screens/admin/SmartOfficeEmployeeImport").then((module) => ({
     default: module.SmartOfficeEmployeeImport,
@@ -230,6 +240,10 @@ export default function AdminStackNavigator() {
       <Stack.Screen name="AttendanceCalendar" component={AttendanceCalendarScreen} options={{ headerTitle: "Weekly Offs & Holidays" }} />
       <Stack.Screen name="AttendanceRegularization" component={AttendanceRegularizationScreen} options={{ headerTitle: "Attendance Regularization" }} />
       <Stack.Screen name="AdvancedAttendanceReport" component={AdvancedAttendanceReportScreen} options={{ headerTitle: "Advanced Attendance Report" }} />
-    </Stack.Navigator>
+      <Stack.Screen name="PermissionsManager" component={PermissionsManagerScreen} options={{ headerTitle: "Permissions Manager" }} />
+      <Stack.Screen name="SiteVisitObserver" component={SiteVisitObserverScreen} options={{ headerTitle: "Site Visit Observer" }} />
+      <Stack.Screen name="InTransit" component={InTransitScreen} options={{ headerTitle: "In Transit Monitor" }} />
+      </Stack.Navigator>
   );
 }
+

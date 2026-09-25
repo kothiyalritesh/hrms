@@ -9,6 +9,7 @@ import { LOCATION_RPC_ENABLED } from "@/services/location/capabilities";
 import {
   advanceJourney,
   classifyLocationQuality,
+  haversineDistanceM,
 } from "@/services/location/geo";
 import { refreshRouteProgress } from "@/services/location/route.service";
 import {
@@ -209,6 +210,30 @@ async function processLocation(locationObject: Location.LocationObject) {
   if (qualityStatus === "RELIABLE") {
     config.lastSuccessfulLocationAt = location.capturedAt;
     config.lastAccuracyM = location.accuracy;
+    
+    // Evaluate Office Geofence (200m rule) if tracking regular attendance
+    if (!config.destination && config.baseLatitude && config.baseLongitude && config.officeId) {
+      const distanceToOffice = haversineDistanceM(
+        location.latitude,
+        location.longitude,
+        config.baseLatitude,
+        config.baseLongitude,
+      );
+      if (distanceToOffice > config.officeRadiusM) {
+        // Trigger Geofence Violation Backend State Machine
+        await supabase.rpc("rpc_ingest_location_observation", {
+          p_user_id: config.userId,
+          p_client_event_id: location.clientEventId,
+          p_latitude: location.latitude,
+          p_longitude: location.longitude,
+          p_accuracy_m: location.accuracy ?? 0,
+          p_detected_at: location.capturedAt,
+          p_event_source: "BACKGROUND_TRACKING",
+          p_geofence_type: "OFFICE",
+          p_geofence_id: config.officeId,
+        }).catch(() => null);
+      }
+    }
   }
   await writeActiveTrackingConfig(config);
 }
@@ -289,38 +314,38 @@ function getLocationOptions(
         ? Location.Accuracy.High
         : Location.Accuracy.Balanced,
     timeInterval: arrived || attendanceOnly
-      ? 60_000
+      ? 900_000 // 15 mins
       : nearDestination
-        ? 12_000
+        ? 30_000
         : farDestination
-          ? 30_000
+          ? 300_000
           : distantDestination
-            ? 60_000
+            ? 900_000
             : 120_000,
     distanceInterval: arrived || attendanceOnly
-      ? 50
+      ? 200 // 200m radius rule
       : nearDestination
-        ? 15
+        ? 50
         : farDestination
-          ? 50
+          ? 500
           : distantDestination
-            ? 100
+            ? 1000
             : 100,
     deferredUpdatesDistance: arrived || attendanceOnly
-      ? 50
+      ? 200
       : nearDestination
-        ? 15
+        ? 50
         : farDestination
-          ? 50
+          ? 500
           : 100,
     deferredUpdatesInterval: arrived || attendanceOnly
-      ? 60_000
+      ? 900_000
       : nearDestination
-        ? 12_000
+        ? 30_000
         : farDestination
-          ? 30_000
+          ? 300_000
           : distantDestination
-            ? 60_000
+            ? 900_000
             : 120_000,
     showsBackgroundLocationIndicator: true,
     pausesUpdatesAutomatically: false,
@@ -328,7 +353,7 @@ function getLocationOptions(
     foregroundService: {
       notificationTitle: "BOP HRMS - Location tracking active",
       notificationBody:
-        "Your location is being shared for your active attendance session. Tap to view tracking status.",
+        "Location checked every 15 minutes or 200m movement for attendance compliance.",
       notificationColor: "#6D1B6D",
       killServiceOnDestroy: false,
     },

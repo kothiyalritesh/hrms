@@ -32,6 +32,7 @@ Push-Location -LiteralPath $workspaceRoot
 try {
   # Dynamic Expo config embeds release.config.json. Metro's cache can otherwise
   # reuse an older Constants manifest even when the release manifest changed.
+  $env:EXPO_PUBLIC_WEB_BASE_PATH = '/HRMS/'
   & npx expo export --platform web --clear
   if ($LASTEXITCODE -ne 0) {
     throw "Expo web export failed with exit code $LASTEXITCODE"
@@ -101,3 +102,6 @@ try {
 } finally {
   Pop-Location
 }
+
+
+

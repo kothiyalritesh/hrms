@@ -496,14 +496,37 @@ export default function AdminDashboardScreen({ navigation }: Props) {
             onPress={() => navigation.navigate("SmartOfficeImportedData")}
           />
           {isHRD && (
-            <ActionCard
-              icon="settings"
-              label="Office Settings"
-              desc="Offices, geofences and attendance rules"
-              accent="#7C3AED"
-              onPress={() => navigation.navigate("OfficeSettings")}
+              <>
+              <ActionCard
+                icon="shield"
+              label="Permissions Manager"
+              desc="Role-based access control"
+              accent="#8B5CF6"
+              onPress={() => navigation.navigate("PermissionsManager")}
             />
-          )}
+            <ActionCard
+              icon="eye"
+              label="Site Visit Observer"
+              desc="Monitor field visits"
+              accent="#10B981"
+              onPress={() => navigation.navigate("SiteVisitObserver")}
+            />
+            <ActionCard
+              icon="map"
+              label="In Transit Monitor"
+              desc="Track employee commutes"
+              accent="#F59E0B"
+              onPress={() => navigation.navigate("InTransit")}
+            />
+            <ActionCard
+                icon="settings"
+                label="Office Settings"
+                desc="Offices, geofences and attendance rules"
+                accent="#7C3AED"
+                onPress={() => navigation.navigate("OfficeSettings")}
+              />
+              </>
+            )}
           {isHRD && (
             <ActionCard
               icon="map-pin"
@@ -693,3 +716,5 @@ const s = StyleSheet.create({
     justifyContent: "center",
   },
 });
+
+

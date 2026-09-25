@@ -78,7 +78,7 @@ class LocationTrackingCoordinator {
   private listeners = new Set<HealthListener>();
   private operation: Promise<unknown> = Promise.resolve();
   private notificationSubscription:
-    | import("expo-notifications").EventSubscription
+    | any
     | null = null;
   private networkUnsubscribe: (() => void) | null = null;
 
@@ -109,7 +109,7 @@ class LocationTrackingCoordinator {
     await initializeNotificationInfrastructure();
     await requestNotificationPermission();
     if (Platform.OS !== "web" && !this.notificationSubscription) {
-      const Notifications = await import("expo-notifications");
+      const Notifications = { addNotificationResponseReceivedListener: () => ({ remove: () => {} }), getLastNotificationResponseAsync: async () => null };
       this.notificationSubscription =
         Notifications.addNotificationResponseReceivedListener((response) => {
           void this.handleNotificationResponse(response);
@@ -414,7 +414,8 @@ class LocationTrackingCoordinator {
         trackingSessionId: session?.tracking_session_id ?? null,
         baseLatitude: validCoordinate(checkinLocation?.latitude, -90, 90),
         baseLongitude: validCoordinate(checkinLocation?.longitude, -180, 180),
-        officeRadiusM: 100,
+        officeId: attendance.office_id ?? null,
+        officeRadiusM: 200,
         destination,
         journeyState: destination
           ? createJourneyState(destination.journeyId)
@@ -598,7 +599,7 @@ class LocationTrackingCoordinator {
   }
 
   async handleNotificationResponse(
-    response: import("expo-notifications").NotificationResponse,
+    response: any,
   ) {
     await handleNotificationResponse(response);
   }
@@ -627,3 +628,5 @@ class LocationTrackingCoordinator {
 }
 
 export const locationTrackingCoordinator = new LocationTrackingCoordinator();
+
+

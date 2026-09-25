@@ -1,0 +1,108 @@
+env: load .env.local .env
+env: export EXPO_PUBLIC_GOOGLE_MAPS_API_KEY EXPO_PUBLIC_SUPABASE_ANON_KEY EXPO_PUBLIC_SUPABASE_URL EXPO_PUBLIC_LOCATION_RPC_ENABLED
+
+Using (experimental) base path: /HRMS
+Starting Metro Bundler
+
+warning: Bundler cache is empty, rebuilding (this may take a minute)
+| (node:10980) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+| (Use `node --trace-warnings ...` to show where the warning was created)
+| (node:10980) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+| (Use `node --trace-warnings ...` to show where the warning was created)
+| (node:10980) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+| (Use `node --trace-warnings ...` to show where the warning was created)
+Web Bundled 50784ms index.js (1496 modules)
+
+› Assets (32):
+assets\images\icon.36918e6dee96e5c1c458f28ff1b87260.png (386KB)
+assets\images\logo.f41186b2f05eb480f6ed2abf78ad77fb.png (21KB)
+node_modules\@expo\vector-icons\build\vendor\react-native-vector-icons\Fonts\AntDesign.3f78af31cca60105799838a1a7a59fbd.ttf (130KB)
+node_modules\@expo\vector-icons\build\vendor\react-native-vector-icons\Fonts\Entypo.31b5ffea3daddc69dd01a1f3d6cf63c5.ttf (66KB)
+node_modules\@expo\vector-icons\build\vendor\react-native-vector-icons\Fonts\EvilIcons.140c53a7643ea949007aa9a282153849.ttf (13KB)
+node_modules\@expo\vector-icons\build\vendor\react-native-vector-icons\Fonts\Feather.ca4b48e04dc1ce10bfbddb262c8b835f.ttf (56KB)
+node_modules\@expo\vector-icons\build\vendor\react-native-vector-icons\Fonts\FontAwesome.b06871f281fee6b241d60582ae9369b9.ttf (166KB)
+node_modules\@expo\vector-icons\build\vendor\react-native-vector-icons\Fonts\FontAwesome5_Brands.3b89dd103490708d19a95adcae52210e.ttf (134KB)
+node_modules\@expo\vector-icons\build\vendor\react-native-vector-icons\Fonts\FontAwesome5_Regular.1f77739ca9ff2188b539c36f30ffa2be.ttf (34KB)
+node_modules\@expo\vector-icons\build\vendor\react-native-vector-icons\Fonts\FontAwesome5_Solid.605ed7926cf39a2ad5ec2d1f9d391d3d.ttf (203KB)
+node_modules\@expo\vector-icons\build\vendor\react-native-vector-icons\Fonts\FontAwesome6_Brands.56c8d80832e37783f12c05db7c8849e2.ttf (209KB)
+node_modules\@expo\vector-icons\build\vendor\react-native-vector-icons\Fonts\FontAwesome6_Regular.370dd5af19f8364907b6e2c41f45dbbf.ttf (68KB)
+node_modules\@expo\vector-icons\build\vendor\react-native-vector-icons\Fonts\FontAwesome6_Solid.adec7d6f310bc577f05e8fe06a5daccf.ttf (424KB)
+node_modules\@expo\vector-icons\build\vendor\react-native-vector-icons\Fonts\Fontisto.b49ae8ab2dbccb02c4d11caaacf09eab.ttf (314KB)
+node_modules\@expo\vector-icons\build\vendor\react-native-vector-icons\Fonts\Foundation.e20945d7c929279ef7a6f1db184a4470.ttf (57KB)
+node_modules\@expo\vector-icons\build\vendor\react-native-vector-icons\Fonts\Ionicons.b4eb097d35f44ed943676fd56f6bdc51.ttf (390KB)
+node_modules\@expo\vector-icons\build\vendor\react-native-vector-icons\Fonts\MaterialCommunityIcons.6e435534bd35da5fef04168860a9b8fa.ttf (1.3MB)
+node_modules\@expo\vector-icons\build\vendor\react-native-vector-icons\Fonts\MaterialIcons.4e85bc9ebe07e0340c9c4fc2f6c38908.ttf (357KB)
+node_modules\@expo\vector-icons\build\vendor\react-native-vector-icons\Fonts\Octicons.871378c6eab492a3e689a9385dc45a12.ttf (69KB)
+node_modules\@expo\vector-icons\build\vendor\react-native-vector-icons\Fonts\SimpleLineIcons.d2285965fe34b05465047401b8595dd0.ttf (54KB)
+node_modules\@expo\vector-icons\build\vendor\react-native-vector-icons\Fonts\Zocial.1681f34aaca71b8dfb70756bca331eb2.ttf (26KB)
+node_modules\@react-navigation\elements\lib\module\assets\back-icon-mask.0a328cd9c1afd0afe8e3b1ec5165b1b4.png (653B)
+node_modules\@react-navigation\elements\lib\module\assets\back-icon.35ba0eaec5a4f5ed12ca16fabeae451d.png (207B)
+node_modules\@react-navigation\elements\lib\module\assets\clear-icon.c94f6478e7ae0cdd9f15de1fcb9e5e55.png (4 variations | 425B)
+node_modules\@react-navigation\elements\lib\module\assets\close-icon.808e1b1b9b53114ec2838071a7e6daa7.png (4 variations | 235B)
+node_modules\@react-navigation\elements\lib\module\assets\search-icon.286d67d3f74808a60a78d3ebf1a5fb57.png (928B)
+
+› web bundles (42):
+_expo/static/js/web/__common-755bf1ebc1c14e8ee9e4fcfdbb1bd19e.js (584KB)
+_expo/static/js/web/__expo-metro-runtime-f32bf4eb0c1047573018696744221cd1.js (10KB)
+_expo/static/js/web/ActivityAnalysisScreen-06a19d8a3aedbf3fb278e631ad50f559.js (14KB)
+_expo/static/js/web/ActivityLoggingScreen-37d139384823e713015d83d932ee77f3.js (14KB)
+_expo/static/js/web/AdvancedAttendanceReportScreen-895aee17d9cb269f13991f8e0e3db350.js (37KB)
+_expo/static/js/web/attendance-import-4d4589d5d3e28fbbe3f4fc665044df0e.js (15KB)
+_expo/static/js/web/AttendanceCalendarScreen-ca7a629db531f62201b6e939ff33cb74.js (12KB)
+_expo/static/js/web/AttendanceControlScreenNew-1f483eb5269bc08d141ffa7b4daa43e9.js (80KB)
+_expo/static/js/web/AttendanceIntelligenceScreen-7243d6354613a1fecd23317b02a8b2e6.js (578KB)
+_expo/static/js/web/AttendanceRegularizationScreen-f5058538d9d98a9f14a7e59a872fce4a.js (8.7KB)
+_expo/static/js/web/AttendanceScreen-3617358d2f0df6073a45270c6dcff681.js (39KB)
+_expo/static/js/web/AuditLogsScreen-891515582adcc5950eea8e419280777f.js (5.7KB)
+_expo/static/js/web/BiometricUserMatchScreen-a5ba88b1a7f888df4a1032ac07e1120e.js (18KB)
+_expo/static/js/web/CheckInLogsScreen-dcc91ac352d918535b574598c139a089.js (13KB)
+_expo/static/js/web/EventManagementScreen-62e3e8e6fb17f760b1da93d842de0951.js (22KB)
+_expo/static/js/web/FieldVisitAdminScreen-28e8b4b7a71cd42f3bb549fefdb7d7fc.js (33KB)
+_expo/static/js/web/FieldVisitScreen-8b2d9d7f965ece82b8fa82265bf0eb47.js (63KB)
+_expo/static/js/web/index-052df76f85efd3d6b548a03420324940.js (2.5MB)
+_expo/static/js/web/LeaveBalanceScreen-a955fe4c2d03b6d84d9fe070772e57c2.js (13KB)
+_expo/static/js/web/LeaveManagementScreen-317ca757e8a6cdcca477f05f6452f856.js (14KB)
+_expo/static/js/web/LeaveScreen-f7efbc4d19d728aea5f6ddd00b1112e7.js (13KB)
+_expo/static/js/web/LiveTrackingScreen-8fe2666694674016e9824c0df4fe9a3f.js (34KB)
+_expo/static/js/web/LocationTrackingSetupScreen-ee09c2a9e6989d771fac8f564b6fd954.js (8.9KB)
+_expo/static/js/web/medianBridge-a635e1a573e1f1f736e468ee86c84959.js (1.7KB)
+_expo/static/js/web/MyActivityLogsScreen-f3c5497b94c873fda9b76557d746d343.js (8.5KB)
+_expo/static/js/web/MyTeamScreen-e8d205b02699f1a4c95fd0fa4f8446e6.js (27KB)
+_expo/static/js/web/NotificationManagementScreen-6f51244005773e500dd9d74e5ad705f3.js (6KB)
+_expo/static/js/web/NotificationsScreen-e6aaddf7848fdfd99241c196a7f557cc.js (7.6KB)
+_expo/static/js/web/OfficeSettingsScreen-1c961f35ede949481cf3fd17445d7cca.js (11KB)
+_expo/static/js/web/RaiseTicketScreen-98dc0614f1076da7929eee6b46c9b952.js (9.1KB)
+_expo/static/js/web/SiteSettingsScreen-bb85f5d16561616b4edb763b3e9a8b59.js (7.3KB)
+_expo/static/js/web/SmartOfficeEmployeeImport-2d020b35d880a6aabdc8565f062671df.js (23KB)
+_expo/static/js/web/SmartOfficeImportedData-d62bf1bf8458f6c46ff1db7721a46aad.js (19KB)
+_expo/static/js/web/SmartOfficeSecureSyncScreen-a2358dbe2d27863eedea484ae87f49d4.js (4.2KB)
+_expo/static/js/web/SuspiciousAttendanceScreen-2226b1d83aba36bfcd638ded6ac82447.js (4.6KB)
+_expo/static/js/web/TaskProjectControlScreen-a47159fd8bf7ecaf4ed27d0ace774910.js (12KB)
+_expo/static/js/web/TasksScreen-9e51a1f759d25f6e55641c1439ec5b36.js (20KB)
+_expo/static/js/web/TeamHierarchyScreen-ade15d02c27df4bf879410e3aa7a3c2a.js (39KB)
+_expo/static/js/web/TicketManagementScreen-7606904fea4e2a2e07f07ea0070cfcad.js (12KB)
+_expo/static/js/web/TVDisplayScreen-3c4a02db2411b107e329234463c1bec4.js (23KB)
+_expo/static/js/web/UpcomingBirthdaysScreen-33c4bea3854715457d0c4215b5c7ac6b.js (3.7KB)
+_expo/static/js/web/UserManagementScreen-0a437b879707561ce32651a2b5c6297c.js (40KB)
+
+› Files (3):
+favicon.ico (15KB)
+index.html (1.4KB)
+metadata.json (49B)
+
+Exported: dist
+Created D:\download\RealtyHRM-fixed\RealtyHRM-fixed\bop-hrms-deploy.zip
+Archive layout for configured web base path '/HRMS/':
+  /HRMS/index.html
+  /HRMS/favicon.ico
+  /HRMS/manifest.webmanifest
+  /HRMS/sw.js
+  /HRMS/icon.png
+  /HRMS/_expo/...
+  /HRMS/assets/...
+  /HRMS/.htaccess (nested-route SPA fallback for Apache)
+Created D:\download\RealtyHRM-fixed\RealtyHRM-fixed\bop-hrms-backend.zip (migrations, Edge Functions, and release checklist)
+Ready to upload: bop-hrms-deploy.zip
+Extract it in public_html so that /HRMS/index.html and /HRMS/_expo/ are side by side.
+Production archive is ready: D:\download\RealtyHRM-fixed\RealtyHRM-fixed\bop-hrms-deploy.zip
+Upload it to public_html and extract it to create public_html/HRMS/.

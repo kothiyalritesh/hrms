@@ -9,11 +9,6 @@
     "runtimeVersion": {
       "policy": "appVersion"
     },
-    "updates": {
-      "url": "https://u.expo.dev/49f3f4fa-06cd-45ed-b80e-cec0d93bf6a9",
-      "checkAutomatically": "ON_LOAD",
-      "fallbackToCacheTimeout": 0
-    },
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
@@ -77,18 +72,6 @@
           "isAndroidBackgroundLocationEnabled": true,
           "isAndroidForegroundServiceEnabled": true,
           "androidForegroundServiceIcon": "./assets/images/android-icon-monochrome.png"
-        }
-      ],
-      [
-        "expo-notifications",
-        {
-          "icon": "./assets/images/android-icon-monochrome.png",
-          "color": "#6D1B6D",
-          "defaultChannel": "hrms_manager_updates",
-          "sounds": [
-            "./assets/sounds/arrival_ping.wav"
-          ],
-          "enableBackgroundRemoteNotifications": true
         }
       ],
       [

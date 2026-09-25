@@ -12,7 +12,7 @@ import {
 } from "react-native";
 import Constants from "expo-constants";
 import * as FileSystem from "expo-file-system/legacy";
-import * as Notifications from "expo-notifications";
+
 import * as Sharing from "expo-sharing";
 import * as Updates from "expo-updates";
 import { WebView } from "react-native-webview";
@@ -157,7 +157,7 @@ export default function AndroidHrmsShell({
     };
   }, []);
 
-  const forwardNotificationResponse = useCallback(
+  const Notifications = { NotificationResponse: null, clearLastNotificationResponseAsync: async () => {}, addNotificationReceivedListener: () => ({ remove: () => {} }), getLastNotificationResponseAsync: async () => null, addNotificationResponseReceivedListener: () => ({ remove: () => {} }) }; const forwardNotificationResponse = useCallback(
     (response: Notifications.NotificationResponse) => {
       const identifier = response.notification.request.identifier;
       const key = `${identifier}:${response.actionIdentifier}`;
@@ -184,7 +184,7 @@ export default function AndroidHrmsShell({
         }),
       );
     });
-    const opened = Notifications.addNotificationResponseReceivedListener(
+    const opened = { addNotificationResponseReceivedListener: () => ({ remove: () => {} }) }.addNotificationResponseReceivedListener(
       forwardNotificationResponse,
     );
     void Notifications.getLastNotificationResponseAsync().then((response) => {
@@ -527,3 +527,5 @@ const styles = StyleSheet.create({
   },
   retryText: { color: "#FFFFFF", fontWeight: "800", fontSize: 15 },
 });
+
+

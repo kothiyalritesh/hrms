@@ -1,0 +1,1999 @@
+[
+  {
+    "file": "services/activity-analysis.service.ts",
+    "exports": [
+      "ActivityLog",
+      "ActivityAnalysis",
+      "ActivityAnalysisService"
+    ],
+    "tables": [],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "analyzeActivity(activity: ActivityLog)",
+      "if(qualityCheck.isLowQuality)",
+      "extractEntities( notes: string, locationName: string, )",
+      "for(let i = 0; i < words.length - 1; i++)",
+      "if(!hasCompanyName)",
+      "if(currentRun.length)",
+      "if(properNameRuns.length > 0)",
+      "if(locationType === \"site\")",
+      "if(destination && locationType === \"others\")",
+      "if(locationType === \"office\")",
+      "detectLowQualityEntry( notes: string, locationName: string, )",
+      "if(notesClean.length < 10)",
+      "if(notesClean === locationClean && notesClean.length > 0)",
+      "if(wordCount < 4)",
+      "if(!hasBusinessIndicator && wordCount < 6)",
+      "analyzeActivities(activities: ActivityLog[])",
+      "getActivityAnalytics( userId?: string, dateRange?: { start: string; end: string }, )"
+    ]
+  },
+  {
+    "file": "services/activity.service.ts",
+    "exports": [
+      "calculateAverageConfidence",
+      "ActivityService"
+    ],
+    "tables": [
+      "activity_logs"
+    ],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "calculateAverageConfidence( rows: Array<{ confidence_score: number | null }>, )",
+      "createActivity( activity: Omit<ActivityLog, \"id\" | \"created_at\">, )",
+      "catch(error)",
+      "getUserActivities( userId: string, options?: { startDate?: string; endDate?: string; page?: number; pageSize?: number; activityType?: string; }, )",
+      "if(options?.startDate)",
+      "if(options?.endDate)",
+      "if(options?.activityType)",
+      "getAllActivities(options?: { userId?: string; startDate?: string; endDate?: string; activityType?: string; limit?: number; })",
+      "if(options?.userId)",
+      "if(options?.limit)",
+      "updateActivity( id: string, updates: Partial<ActivityLog>, )",
+      "if(updates.notes || updates.locationType || updates.locationName)",
+      "if(existingActivity)",
+      "getDailyEmployeeLogs(options?: { date?: string; userId?: string; })",
+      "catch(err)",
+      "deleteActivity(id: string)",
+      "getActivityAnalytics(options?: { userId?: string; startDate?: string; endDate?: string; })",
+      "if(error || !data)",
+      "if(client)"
+    ]
+  },
+  {
+    "file": "services/attendance-control.classification.ts",
+    "exports": [
+      "AttendanceEvidenceGroup",
+      "AttendanceEvidenceRow",
+      "classifyAttendanceEvidence",
+      "attendanceEmptyStateCopy"
+    ],
+    "tables": [],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "classifyAttendanceEvidence( row: AttendanceEvidenceRow, rawBiometricPunchCount = 0, )",
+      "attendanceEmptyStateCopy(status: string | null | undefined)"
+    ]
+  },
+  {
+    "file": "services/attendance-fraud.service.ts",
+    "exports": [
+      "AttendanceLocationEvidence",
+      "AttendanceFraudService"
+    ],
+    "tables": [],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": []
+  },
+  {
+    "file": "services/attendance-import.service.ts",
+    "exports": [
+      "AttendanceRecord",
+      "EmployeeMatchResult",
+      "AttendanceImportResult",
+      "attendanceImportService"
+    ],
+    "tables": [
+      "smartoffice_device_logs",
+      "attendance_logs",
+      "profiles"
+    ],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "parseExcelFile(file: File)",
+      "if(cellCount > 1_000_000)",
+      "for(let c = 3; c <= range.e.c; c++)",
+      "if(!dateCols.length)",
+      "if(hasMatrixDateWithoutYear && detectedYear === null)",
+      "for(let r = 1; r <= range.e.r; r++)",
+      "for(const { col, label, iso } of dateCols)",
+      "catch(err: any)",
+      "downloadNormalizedExcel(records: AttendanceRecord[], filename = 'attendance_normalized.xlsx')",
+      "fmtISTTime(iso: string | null)",
+      "for(const r of records)",
+      "if(r.status === 'Present')",
+      "for(const [code, agg] of empMap)",
+      "_resolveCheckoutType(row: any)",
+      "_detectYear(ws: any, range: any)",
+      "_parseHeaderDate(header: string, year: number | null)",
+      "parseInt(m[3])",
+      "_parseAttendanceCell(raw: string)",
+      "_calcHours(cin: string, cout: string, status: AttendanceRecord['status'])",
+      "_hmsToSecs(hms: string)",
+      "_parseFlatFormat(ws: any, range: any)",
+      "matchEmployees(records: AttendanceRecord[])",
+      "for(const rec of records)",
+      "if(key)",
+      "for(const emp of systemEmployees)",
+      "if(recs?.length)",
+      "importAttendance( results: EmployeeMatchResult[], context: { batchId: string; sourceFileHash: string }, )",
+      "for(const result of toImport)",
+      "for(const rec of result.records)",
+      "for(const [date, recs] of byDate)",
+      "if(!employeeCode)",
+      "push(`${result.systemEmployee.name} (${date})",
+      "if(lastPunchOut && lastPunchOut !== firstIn)",
+      "if(secureRows.length > 5_000)",
+      "parseTimeStr(t: string)",
+      "parseDate(dateStr: string)",
+      "manualMatch(employeeCode: string, _employeeName: string, userId: string)"
+    ]
+  },
+  {
+    "file": "services/attendance-regularization.service.ts",
+    "exports": [
+      "AttendanceRegularizationService"
+    ],
+    "tables": [],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "verifiedRpc( functionName: | \"rpc_request_attendance_regularization\" | \"rpc_review_attendance_regularization\", parameters: Record<string, unknown>, )",
+      "if(response?.success !== true)"
+    ]
+  },
+  {
+    "file": "services/attendance.service.ts",
+    "exports": [
+      "distanceMetres",
+      "GeoFenceError",
+      "EarlyCheckoutError",
+      "NoActiveSessionError",
+      "AttendancePolicy",
+      "CheckoutResult",
+      "CheckinResult",
+      "OfficeLocation",
+      "NearestOfficeMatch",
+      "effectiveOfficeRadius",
+      "AttendanceService"
+    ],
+    "tables": [
+      "offices",
+      "attendance_logs",
+      "attendance_audit_logs",
+      "attendance_policies"
+    ],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "distanceMetres( lat1: number, lon1: number, lat2: number, lon2: number, )",
+      "effectiveOfficeRadius(office: OfficeLocation)",
+      "constructor( public readonly distanceMetres: number, public readonly radiusMetres: number, public readonly officeName: string, )",
+      "constructor( workedMinutes: number, requiredMinimum: number, attendanceId: string, )",
+      "constructor()",
+      "if(!row || typeof row !== \"object\")",
+      "getReminderSchedule()",
+      "if(!row?.checkin_time || !row?.checkout_time)",
+      "getActiveOffices()",
+      "getAllowedOffices(userId: string)",
+      "if(policyError)",
+      "if(!policy?.office_id)",
+      "findNearestOffice( offices: OfficeLocation[], location: { latitude: number; longitude: number }, )",
+      "for(const office of offices)",
+      "if(!nearest || distance < nearest.distanceMetres)",
+      "getToday(userId: string)",
+      "getStalePreviousDaySession(userId: string)",
+      "getPolicy(userId: string)",
+      "if(error)",
+      "if(!policy)",
+      "if(result.success && !result.checkout_time)",
+      "undoCheckout(params: { userId: string; attendanceId: string; undoToken: string; })",
+      "getAuditLogs(attendanceId: string)",
+      "getAllPolicies()",
+      "updatePolicy(policyId: string, updates: Record<string, any>)",
+      "if(response.success !== true || response.id !== policyId)",
+      "checkOut({ userId, location, }: { userId: string; location?: { latitude: number; longitude: number }; })",
+      "if(location.mocked)",
+      "if(accuracy > 100)",
+      "if(!nearest)",
+      "if(nearest.distanceMetres + accuracy > radius)",
+      "if(!result.success && !result.existing)",
+      "if(!result.checkin_time)",
+      "if(!confirmed.data?.checkin_time)",
+      "updateAllAttendanceWarnings()",
+      "catch(err: any)"
+    ]
+  },
+  {
+    "file": "services/attendanceIntelligence/analytics.service.ts",
+    "exports": [
+      "AttendanceAnalyticsService"
+    ],
+    "tables": [],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "for(const f of facts)",
+      "if(f.status === \"PRESENT\")",
+      "if(f.worked_hours !== null && f.worked_hours > 0)",
+      "if(f.status === \"PRESENT_MISSING_OUT\")",
+      "if(f.status === \"ABSENT\")",
+      "if(f.status === \"NO_SOURCE_DATA\")",
+      "if(f.status === \"APPROVED_LEAVE\")",
+      "if(f.status === \"HOLIDAY\")",
+      "if(f.status === \"WEEKLY_OFF\")",
+      "if(f.status === \"DATA_EXCEPTION\")",
+      "if(f.is_late)",
+      "if(f.source_count > 0 || f.status === \"HOLIDAY\" || f.status === \"WEEKLY_OFF\" || f.status === \"APPROVED_LEAVE\")",
+      "round(totalLateMins / totalLate)",
+      "for(const emp of employees)",
+      "if(healthyCount + watchCount + concernCount + criticalCount === 0 && totalEmployees > 0)",
+      "if(uniqueDates.length >= 4)",
+      "computeDailyTrends(facts: AttendanceFact[])",
+      "for(const d of dates)",
+      "for(const f of dayFacts)",
+      "computeEmployee360( employeeId: string, facts: AttendanceFact[], employees: CanonicalEmployee[], )",
+      "for(const f of empFacts)",
+      "computeTeamIntelligence(facts: AttendanceFact[], employees: CanonicalEmployee[])",
+      "for(const t of teams)",
+      "for(const f of teamFacts)",
+      "computeOfficeIntelligence(facts: AttendanceFact[], employees: CanonicalEmployee[])",
+      "for(const off of offices)",
+      "for(const f of offFacts)",
+      "computeDepartmentIntelligence(facts: AttendanceFact[], employees: CanonicalEmployee[])",
+      "for(const dpt of depts)",
+      "for(const f of dptFacts)"
+    ]
+  },
+  {
+    "file": "services/attendanceIntelligence/anomalyDetection.service.ts",
+    "exports": [
+      "AttendanceAnomalyEngine"
+    ],
+    "tables": [],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "detectAnomalies( facts: AttendanceFact[], employees: CanonicalEmployee[], )",
+      "for(const f of facts)",
+      "if(f.first_in)",
+      "if(cluster.length >= 4)",
+      "for(const f of empFacts)",
+      "if(f.missing_out)",
+      "if(f.is_late)",
+      "if(f.worked_hours && f.worked_hours > 14.0)",
+      "if(f.status === \"PRESENT\" && f.worked_hours && f.worked_hours > 0 && f.worked_hours < 2.0 && !f.leave_flag)",
+      "if(f.conflict_flag)",
+      "if(auto2359Count >= 2)",
+      "if(missingOutCount >= 3)",
+      "if(lateCount >= 5)",
+      "if(!emp?.raw_employee_id)"
+    ]
+  },
+  {
+    "file": "services/attendanceIntelligence/askAttendance.service.ts",
+    "exports": [
+      "AskAttendanceEngine"
+    ],
+    "tables": [],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "queryAttendance( userQuery: string, facts: AttendanceFact[], employees: CanonicalEmployee[], )",
+      "for(const f of facts)",
+      "if(lateFacts.length >= lateThreshold)",
+      "for(const f of empFacts)",
+      "if(f.status === \"ABSENT\")",
+      "if(f.status !== \"HOLIDAY\" && f.status !== \"WEEKLY_OFF\")",
+      "if(maxStreak >= 3)"
+    ]
+  },
+  {
+    "file": "services/attendanceIntelligence/attendanceFact.service.ts",
+    "exports": [
+      "AttendanceFactEngine"
+    ],
+    "tables": [
+      "attendance_logs",
+      "smartoffice_device_logs",
+      "leave_requests",
+      "holiday_calendar",
+      "weekly_off_rules",
+      "field_visits"
+    ],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "computeAttendanceFacts( startDate: string, endDate: string, forceRefresh = false, config?: FactEngineConfig, )",
+      "if( !forceRefresh && isConfigSame && this.cachedFacts.length > 0 && this.currentPeriod.start === startDate && this.currentPeriod.end === endDate )",
+      "if(employees.length === 0)",
+      "for(const a of attLogs)",
+      "for(const b of bioLogs)",
+      "slice(0, 10)",
+      "trim()",
+      "if(cleanDt.length >= 10)",
+      "if(!timeOnly)",
+      "for(const fv of fvLogs)",
+      "if(dateOnly && dateOnly >= startDate && dateOnly <= endDate)",
+      "for(const emp of employees)",
+      "for(const d of dateList)",
+      "if(appRecord)",
+      "if(appRecord.checkin_time)",
+      "if(appRecord.checkout_time)",
+      "if(bioRecord)",
+      "if(!firstInTime && bioRecord.first)",
+      "if(firstInTime && bioRecord.first)",
+      "if(bioInSec < appInSec)",
+      "if(!lastOutTime && bioRecord.last && bioRecord.last !== bioRecord.first)",
+      "if(lastOutTime && bioRecord.last)",
+      "if(bioOutSec > appOutSec)",
+      "if(fvRecord)",
+      "if(!firstInTime && fvRecord.checkin_time)",
+      "if(isHoliday)",
+      "if(isWeeklyOff)",
+      "if(leaveItem)",
+      "if(firstInTime && lastOutTime)",
+      "if(firstInTime && !lastOutTime)",
+      "if(!firstInTime && lastOutTime)",
+      "if(durationEval.status === \"ANOMALY\")",
+      "if(lateEval.is_late && lateEval.late_minutes > 60)",
+      "getFact(employeeId: string, date: string)",
+      "getCachedFacts()"
+    ]
+  },
+  {
+    "file": "services/attendanceIntelligence/employeeMaster.service.ts",
+    "exports": [
+      "EmployeeMasterService"
+    ],
+    "tables": [
+      "profiles",
+      "offices"
+    ],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "loadCanonicalMaster()",
+      "for(const off of rawOffices)",
+      "if(managerIds.length)",
+      "for(const m of mgrRows || [])",
+      "for(const p of rawProfiles)",
+      "get(p.office_id)",
+      "slice(0, 10)",
+      "resolveEmployee(rawId?: string | null, rawName?: string | null)",
+      "normalizeNameKey(rawName)",
+      "if(candidates.length === 1)",
+      "getAllEmployees()"
+    ]
+  },
+  {
+    "file": "services/attendanceIntelligence/exceptionCenter.service.ts",
+    "exports": [
+      "ExceptionCenterService"
+    ],
+    "tables": [],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "extractExceptionsFromFacts(facts: AttendanceFact[])",
+      "for(const f of facts)",
+      "if(f.missing_out)",
+      "if(f.missing_in)",
+      "if(f.conflict_flag)",
+      "if(f.hours_status === \"NEGATIVE_DURATION\")",
+      "if(f.anomaly_flag && f.anomaly_types.length > 0)",
+      "resolveException( exceptionId: string, newStatus: ExceptionStatus, resolverName: string, resolutionNotes: string, )",
+      "if(item)",
+      "getExceptionsList()"
+    ]
+  },
+  {
+    "file": "services/attendanceIntelligence/index.ts",
+    "exports": [],
+    "tables": [],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": []
+  },
+  {
+    "file": "services/attendanceIntelligence/insights.service.ts",
+    "exports": [
+      "AttendanceInsightEngine"
+    ],
+    "tables": [],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "generateInsights( facts: AttendanceFact[], employees: CanonicalEmployee[], kpis: WorkforceKPIs, )",
+      "if(kpis.attendance_rate >= 90)",
+      "if(topLateTeam && topLateTeam.late_marks > 0 && kpis.total_late_arrivals > 0)",
+      "if(kpis.total_missing_punches > 0)",
+      "for(const f of facts)",
+      "for(const f of empFacts)",
+      "if(f.status === \"ABSENT\")",
+      "if(f.status !== \"HOLIDAY\" && f.status !== \"WEEKLY_OFF\")",
+      "if(maxStreak >= 5)",
+      "if(chronicAbsentStaff.length > 0)",
+      "if(kpis.average_hours_per_present_day > 0)"
+    ]
+  },
+  {
+    "file": "services/attendanceIntelligence/normalization.ts",
+    "exports": [
+      "cleanStr",
+      "toTitleCase",
+      "normalizeNameKey",
+      "normalizeTeamHead",
+      "normalizeOfficeName",
+      "normalizeDepartmentName",
+      "ParsedTime",
+      "parseTimeStr",
+      "calculateWorkDuration",
+      "evaluateLateArrival",
+      "generateDateRange",
+      "formatDateLabel"
+    ],
+    "tables": [],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "cleanStr(val: any)",
+      "toTitleCase(val: string)",
+      "normalizeNameKey(name: string)",
+      "normalizeTeamHead(rawHead: string | null | undefined)",
+      "normalizeOfficeName(rawOffice: string | null | undefined)",
+      "normalizeDepartmentName(rawDept: string | null | undefined, rawTeamHead?: string)",
+      "parseTimeStr(timeVal: any)",
+      "calculateWorkDuration( inTime: string | null | undefined, outTime: string | null | undefined, validate2359 = true, )",
+      "evaluateLateArrival( inTime: string | null | undefined, shiftStart = \"10:30:00\", graceMinutes = 0, )",
+      "generateDateRange(startDate: string, endDate: string)",
+      "formatDateLabel(isoDate: string)",
+      "match(/^(\\d{1,2})",
+      "parseInt(match[3], 10)",
+      "toUpperCase()",
+      "if(!parsedIn || !parsedOut)",
+      "if(validate2359)",
+      "if(diffSeconds < 0)",
+      "if(hours > 16.0)",
+      "if(parsedIn.total_seconds > thresholdSeconds)",
+      "while(curr <= end)"
+    ]
+  },
+  {
+    "file": "services/attendanceIntelligence/reconciliation.service.ts",
+    "exports": [
+      "AttendanceReconciliationEngine"
+    ],
+    "tables": [],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "runReconciliation( facts: AttendanceFact[], employees: CanonicalEmployee[], kpis: WorkforceKPIs, )",
+      "for(const emp of employees)"
+    ]
+  },
+  {
+    "file": "services/attendanceIntelligence/snapshot.service.ts",
+    "exports": [
+      "AttendanceSnapshotService"
+    ],
+    "tables": [],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "getSnapshotHistory()"
+    ]
+  },
+  {
+    "file": "services/attendanceIntelligence/types.ts",
+    "exports": [
+      "SourceName",
+      "AttendanceStatus",
+      "HealthScoreCategory",
+      "ExceptionSeverity",
+      "ExceptionStatus",
+      "AnomalyType",
+      "UserRole",
+      "RawSourceRecord",
+      "CanonicalEmployee",
+      "AttendanceFact",
+      "HealthScoreBreakdown",
+      "HealthDistribution",
+      "PeriodDelta",
+      "FactEngineConfig",
+      "WorkforceKPIs",
+      "DailyTrendPoint",
+      "EmployeeIntelligenceProfile",
+      "TeamIntelligenceSummary",
+      "OfficeIntelligenceSummary",
+      "DepartmentIntelligenceSummary",
+      "AttendanceException",
+      "AttendanceAnomaly",
+      "ReconciliationCheckResult",
+      "AIInsight",
+      "AskAttendanceResponse",
+      "OfficialReportSnapshot",
+      "GlobalAttendanceFilters",
+      "SavedDashboardView",
+      "AttendanceAuditLog"
+    ],
+    "tables": [],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": []
+  },
+  {
+    "file": "services/biometric-sync-secure.service.ts",
+    "exports": [
+      "BiometricSyncStatus",
+      "PendingBiometricSync",
+      "biometricSyncService"
+    ],
+    "tables": [],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "readPendingValue()",
+      "if(Platform.OS === \"web\" && typeof window !== \"undefined\")",
+      "if(legacy)",
+      "writePendingValue(value: string)",
+      "clearPendingValue()",
+      "publish(next: BiometricSyncStatus)",
+      "getPendingRequest()",
+      "if( !value?.requestId || !value.fromDate || !value.toDate || !value.createdAt )",
+      "savePendingRequest(value: PendingBiometricSync)",
+      "confirmRequest( pending: PendingBiometricSync, statusOnly = false, )",
+      "if(error || data?.error)",
+      "runRange( fromDate: string, toDate: string, knownBusinessDate?: string, )",
+      "catch(error: any)",
+      "recoverPendingRequest()",
+      "runNow()",
+      "start()",
+      "stop()"
+    ]
+  },
+  {
+    "file": "services/business-clock.service.ts",
+    "exports": [
+      "BusinessClock",
+      "BusinessClockService"
+    ],
+    "tables": [],
+    "rpcs": [
+      "get_business_clock"
+    ],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "get(force = false)",
+      "if(error)",
+      "if(!row?.now || !row?.date || row?.timezone !== \"Asia/Kolkata\")",
+      "catch(error: any)",
+      "getDate(force = false)"
+    ]
+  },
+  {
+    "file": "services/canonical-attendance.service.ts",
+    "exports": [
+      "AttendanceSource",
+      "CanonicalAttendanceDay",
+      "CanonicalAttendanceService",
+      "withAttendanceV2Aliases"
+    ],
+    "tables": [],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "withAttendanceV2Aliases(row: CanonicalAttendanceDay)",
+      "list(start: string, end: string, maximum = 20_000)",
+      "for(let offset = 0; offset < maximum; offset += PAGE_SIZE)",
+      "listDay(workDate: string)"
+    ]
+  },
+  {
+    "file": "services/current-location-visit.service.ts",
+    "exports": [
+      "PhotoSource",
+      "VerificationStatus",
+      "EvidencePhoto",
+      "CurrentLocationSubmission",
+      "QueuedCurrentLocationSubmission",
+      "SubmissionResult",
+      "createUuid",
+      "validateFreshLocation",
+      "CurrentLocationVisitService"
+    ],
+    "tables": [
+      "field_visits",
+      "field-visit-evidence"
+    ],
+    "rpcs": [],
+    "hasFetch": true,
+    "todos": [],
+    "signatures": [
+      "createUuid()",
+      "validateFreshLocation(location: GPSCoords)",
+      "authenticatedSession(forceRefresh = false)",
+      "refreshSession()",
+      "if(!session || expiresSoon)",
+      "if(!session?.access_token)",
+      "if(verificationError || !verified.user)",
+      "authorizationHeaders(accessToken: string)",
+      "confirmedSubmissionResult( value: any, expectedVisitId: string, expectedSourceVisitId: string, requireBusinessSuccess: boolean, )",
+      "removeUncommittedPhoto(photoPath: string | null)",
+      "integrityMaterial(value: CurrentLocationSubmission)",
+      "integrityHash(value: CurrentLocationSubmission)",
+      "hashPhotoBytes(uri: string)",
+      "metresBetween( a: { latitude: number; longitude: number }, b: { latitude: number; longitude: number }, )",
+      "if(location.mocked)",
+      "uploadPhoto( submission: CurrentLocationSubmission, userId: string, initialAccessToken: string, )",
+      "if(transientFailure)",
+      "if(responseStatus === 401)",
+      "if(error)",
+      "if(context && typeof context.clone === \"function\")",
+      "submit( submission: CurrentLocationSubmission, )",
+      "if(existingError)",
+      "if(existing)",
+      "if( existing.id !== submission.sourceVisitId && existing.source_field_visit_id !== submission.sourceVisitId )",
+      "if(recentError)",
+      "if(nearDuplicate)",
+      "catch(cleanupError: any)",
+      "catch(confirmationError)",
+      "if(!committedError && committed)",
+      "enqueue(submission: CurrentLocationSubmission)",
+      "if(Platform.OS === \"web\")",
+      "if( submission.photo && FileSystem.documentDirectory )",
+      "if(submission.photo.uri !== localUri)",
+      "if(durable.photo)",
+      "if(!photoHash)",
+      "getQueue()",
+      "clearQueueForLogout()",
+      "retryQueue()",
+      "for(const item of queue)",
+      "if(item.photo)",
+      "if(currentHash !== item.offlineIntegrityHash || !photoMatches)",
+      "catch(error: any)",
+      "getSignedEvidenceUrl(path: string)",
+      "review( visitId: string, decision: Exclude<VerificationStatus, \"PENDING\">, notes?: string, )"
+    ]
+  },
+  {
+    "file": "services/dashboard-summary.service.ts",
+    "exports": [
+      "DashboardSummaryService"
+    ],
+    "tables": [],
+    "rpcs": [
+      "rpc_employee_dashboard_summary",
+      "rpc_admin_dashboard_summary"
+    ],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "getEmployee(userId: string, force = false)",
+      "if(employeePending && employeeCacheUserId === userId)",
+      "getAdmin(force = false)",
+      "if(summary?.success !== true)",
+      "invalidateEmployee(userId: string)",
+      "invalidateAdmin()"
+    ]
+  },
+  {
+    "file": "services/device-session.service.ts",
+    "exports": [
+      "UserDeviceSession",
+      "DeviceSessionService"
+    ],
+    "tables": [
+      "user_device_sessions"
+    ],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "identifier()",
+      "registerCurrent()",
+      "listMine()",
+      "revoke(sessionId: string)",
+      "if(result?.success !== true)",
+      "closeCurrent()"
+    ]
+  },
+  {
+    "file": "services/event.service.ts",
+    "exports": [
+      "Event",
+      "EventAttendee",
+      "EventAttendanceAction",
+      "EventAnnouncement",
+      "CreateEventParams",
+      "EventAudienceEmployee",
+      "EventAudienceTeam",
+      "EventAudienceDepartment",
+      "EventAudienceOptions",
+      "EventAudienceSelection",
+      "EventCheckInResult",
+      "EventCheckOutResult",
+      "EventService"
+    ],
+    "tables": [
+      "events",
+      "event_announcements",
+      "event_participants",
+      "event_checkins",
+      "event_admin_summary"
+    ],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "getUpcomingEvents()",
+      "getAnnouncements(userId: string)",
+      "acknowledgeEvent(eventId: string, userId: string)",
+      "if(!result?.success)",
+      "if(!result.acknowledged_at)",
+      "getEventsAvailableForCheckIn(userId: string)",
+      "getEventsAvailableForAttendance( userId: string, )",
+      "getAllEvents()",
+      "getAudienceOptions()",
+      "createEvent(params: CreateEventParams)",
+      "if(!result?.success || !result.event?.id)",
+      "deleteEvent(eventId: string)",
+      "getEventAttendees(eventId: string)",
+      "hasCheckedIn(eventId: string, userId: string)",
+      "checkInToEvent({ eventId, location, }: { eventId: string; location: GPSCoords; })",
+      "checkOutFromEvent({ eventId, location, }: { eventId: string; location: GPSCoords; })",
+      "if(!result.checkout_time)"
+    ]
+  },
+  {
+    "file": "services/field-visit.service.ts",
+    "exports": [
+      "FieldVisit",
+      "FieldVisitService"
+    ],
+    "tables": [
+      "location_tracking",
+      "attendance_logs",
+      "field_visits"
+    ],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "collapseCurrentLocationSubmissions( visits: FieldVisit[], )",
+      "for(const visit of visits)",
+      "if(visit.source_field_visit_id)",
+      "confirmedVisitMutation( data: unknown, expected: { visitId?: string; status: FieldVisit[\"status\"]; timestamp?: \"checkin_time\" | \"checkout_time\"; }, )",
+      "if(response?.success === false)",
+      "catch(err)",
+      "catch(confirmationError)",
+      "getTodayVisits( userId: string, )",
+      "getPendingVisits( userId: string, )",
+      "if( response?.success !== true || response?.visit_id !== visitId || response?.status !== \"CHECKED_IN\" || !response?.checkin_time )",
+      "checkOut( visitId: string, location: { latitude: number; longitude: number }, notes?: string, nearestOfficeId?: string, )",
+      "markMissed(visitId: string)",
+      "getAllVisitsForAdmin(options?: { date?: string; userId?: string; })"
+    ]
+  },
+  {
+    "file": "services/leave.service.ts",
+    "exports": [
+      "LeaveType",
+      "LeaveStatus",
+      "LeaveApplication",
+      "LeaveBalance",
+      "LeaveRpcResult",
+      "LeaveService"
+    ],
+    "tables": [
+      "leave_balance",
+      "leave_requests",
+      "profiles",
+      "holiday_calendar",
+      "weekly_off_rules"
+    ],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "getBusinessDate()",
+      "getBalance(userId: string)",
+      "getUserLeaves(userId: string)",
+      "cancel(requestId: string, userId: string)",
+      "getCalendar(userId: string, fromDate: string, toDate: string)",
+      "review( requestId: string, adminId: string, approve: boolean, notes?: string, )"
+    ]
+  },
+  {
+    "file": "services/location/attendanceLifecycle.ts",
+    "exports": [
+      "AttendanceLifecycleRecord",
+      "isOpenAttendance",
+      "isAuthoritativeCheckoutTransition"
+    ],
+    "tables": [],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "isOpenAttendance(record: AttendanceLifecycleRecord | null)",
+      "isAuthoritativeCheckoutTransition( previous: AttendanceLifecycleRecord, next: AttendanceLifecycleRecord, )"
+    ]
+  },
+  {
+    "file": "services/location/attendanceTrackingLifecycle.ts",
+    "exports": [
+      "startAttendanceTracking",
+      "stopAttendanceTracking",
+      "restoreAttendanceTracking"
+    ],
+    "tables": [],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "startAttendanceTracking(attendanceId: string)",
+      "stopAttendanceTracking( attendanceId: string, reason: string, )",
+      "restoreAttendanceTracking()"
+    ]
+  },
+  {
+    "file": "services/location/backgroundLocationTask.ts",
+    "exports": [
+      "LIVE_LOCATION_TASK",
+      "DESTINATION_GEOFENCE_TASK",
+      "readActiveTrackingConfig",
+      "writeActiveTrackingConfig",
+      "startNativeTracking",
+      "refreshNativeTrackingOptions",
+      "configureDestinationGeofences",
+      "stopNativeTracking"
+    ],
+    "tables": [],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "readActiveTrackingConfig()",
+      "writeActiveTrackingConfig( config: ActiveTrackingConfig | null, )",
+      "startNativeTracking(config: ActiveTrackingConfig)",
+      "refreshNativeTrackingOptions( config: ActiveTrackingConfig, )",
+      "configureDestinationGeofences( config: ActiveTrackingConfig, )",
+      "stopNativeTracking()",
+      "getProtectedValue(key: string)",
+      "if(Platform.OS === \"web\")",
+      "setProtectedValue(key: string, value: string | null)",
+      "setProtectedValue( ACTIVE_CONFIG_KEY, config ? JSON.stringify(config)",
+      "toTrackingLocation( location: Location.LocationObject, )",
+      "submitLocationToServer( config: ActiveTrackingConfig, location: TrackingLocation, qualityStatus: LocationQuality, distanceM: number | null, )",
+      "if(!error)",
+      "processLocation(locationObject: Location.LocationObject)",
+      "if(config.destination && config.journeyState)",
+      "if(preliminaryQuality === \"RELIABLE\")",
+      "for(const event of transition.events)",
+      "if(trackingDistanceM != null && trackingDistanceM <= 1_000)",
+      "if(trackingDistanceM != null && trackingDistanceM <= 5_000)",
+      "if(result.attendanceClosed)",
+      "if(qualityStatus === \"RELIABLE\")",
+      "handleTaskFailure()",
+      "if(error)",
+      "getLocationOptions( config: ActiveTrackingConfig, )",
+      "if(!alreadyStarted || !registered)",
+      "if(!config.destination)",
+      "if(running)",
+      "if(Platform.OS !== \"web\")",
+      "if(locationRunning)",
+      "if(geofenceRunning)"
+    ]
+  },
+  {
+    "file": "services/location/capabilities.ts",
+    "exports": [
+      "LOCATION_RPC_ENABLED"
+    ],
+    "tables": [],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": []
+  },
+  {
+    "file": "services/location/geo.ts",
+    "exports": [
+      "haversineDistanceM",
+      "createJourneyState",
+      "classifyLocationQuality",
+      "advanceJourney"
+    ],
+    "tables": [],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "haversineDistanceM( latitude1: number, longitude1: number, latitude2: number, longitude2: number, )",
+      "createJourneyState(journeyId: string)",
+      "classifyLocationQuality( location: TrackingLocation, previousReliableLocation: TrackingLocation | null, nowMs = Date.now()",
+      "advanceJourney( currentState: JourneyRuntimeState, destination: Destination, location: TrackingLocation, nowMs = Date.now()",
+      "if( location.accuracy == null || location.accuracy < 0 || location.accuracy > MAX_RELIABLE_ACCURACY_M )",
+      "if(previousReliableLocation)",
+      "if(elapsedSeconds >= 5)",
+      "if(travelledM / elapsedSeconds > MAX_PLAUSIBLE_SPEED_MPS)",
+      "if(quality !== \"RELIABLE\")",
+      "if(!wasInitialized)",
+      "if(distanceM <= destination.arrivalRadiusM)",
+      "if(isAboutToArrive)",
+      "if(isWithin1km)",
+      "if(!state.arrived)",
+      "if( !state.arrived && distanceM <= destination.arrivalRadiusM && isArrivalQuality )",
+      "if(wasInitialized)",
+      "if(state.arrivalConfirmations >= 2)",
+      "if(state.arrived && !state.departed && distanceM > departureBoundaryM)",
+      "if(state.departureConfirmations >= 2)",
+      "if(state.arrived && !state.departed)"
+    ]
+  },
+  {
+    "file": "services/location/LocationTrackingCoordinator.ts",
+    "exports": [
+      "locationTrackingCoordinator"
+    ],
+    "tables": [
+      "attendance_logs",
+      "field_visits"
+    ],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "androidApiLevel()",
+      "validCoordinate(value: unknown, minimum: number, maximum: number)",
+      "subscribe(listener: HealthListener)",
+      "publish(next: Partial<TrackingHealth>)",
+      "initialize(user: CoordinatorUser)",
+      "if(Platform.OS !== \"web\" && !this.notificationSubscription)",
+      "if(!this.networkUnsubscribe)",
+      "if(this.health.notificationsGranted)",
+      "dispose()",
+      "requiresBackgroundPermissionEducation()",
+      "requestRequiredPermissions(options?: { backgroundEducationAccepted?: boolean; })",
+      "if(Platform.OS === \"web\")",
+      "if(!foreground.granted)",
+      "if(foreground.granted)",
+      "if(this.user && this.health.notificationsGranted)",
+      "refreshHealth()",
+      "if(!precise)",
+      "if(!background.granted)",
+      "if(config && !taskActive)",
+      "parse(config.trackingStartedAt)",
+      "parse(config.lastSuccessfulLocationAt)",
+      "if(!warning && stale)",
+      "all([ stale ? notifyLocationProblem(\"location_stale\")",
+      "findOpenAttendance()",
+      "loadActiveDestination()",
+      "for(const visit of data ?? [])",
+      "startForAttendance(attendanceId: string)",
+      "if(!this.user || Platform.OS === \"web\")",
+      "createJourneyState(destination.journeyId)",
+      "stopForAttendance(attendanceId: string, reason: string)",
+      "if(error || !attendance?.checkout_time)",
+      "restoreIfRequired()",
+      "if(!attendance)",
+      "if(existing)",
+      "if(existing?.attendanceId && existing.attendanceId !== attendance.id)",
+      "updateActiveDestination(fieldVisitId: string)",
+      "if(!destination || destination.fieldVisitId !== fieldVisitId)",
+      "if(config.destination?.journeyId !== destination.journeyId)",
+      "if(AppState.currentState === \"active\")",
+      "clearActiveDestination()",
+      "if(nextDestination)",
+      "syncOfflineLocations()",
+      "for(const item of queue)",
+      "if(error)",
+      "if(permanentFailure)",
+      "if(result?.tracking_session_status === \"STOPPED\")",
+      "handleAppStateChange(state: AppStateStatus)",
+      "handleNotificationResponse( response: any, )",
+      "getTrackingHealth()",
+      "recordPermissionProblem(attendanceId: string)"
+    ]
+  },
+  {
+    "file": "services/location/notification.service.ts",
+    "exports": [
+      "isNotificationPermissionGranted",
+      "requestNotificationPermission",
+      "registerDevicePushToken",
+      "deactivateCurrentDevicePushToken",
+      "scheduleLocalNotification",
+      "scheduleGeofenceEntryNotification",
+      "scheduleGeofenceExitNotification",
+      "scheduleAttendanceReminder",
+      "scheduleAttendanceReminders",
+      "cancelAllAttendanceReminders",
+      "scheduleIdleReminder",
+      "cancelIdleReminder",
+      "initializeNotificationHandlers",
+      "initializeNotificationInfrastructure",
+      "notifyJourneyEvent",
+      "notifyLocationProblem",
+      "handleNotificationResponse"
+    ],
+    "tables": [],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "isNotificationPermissionGranted()",
+      "requestNotificationPermission()",
+      "registerDevicePushToken()",
+      "deactivateCurrentDevicePushToken()",
+      "scheduleLocalNotification(title: string, body: string, data?: any)",
+      "scheduleGeofenceEntryNotification(officeName: string)",
+      "scheduleGeofenceExitNotification(officeName: string)",
+      "scheduleAttendanceReminder(dateStr: string, timeStr: string, officeName: string, isCheckOut: boolean)",
+      "scheduleAttendanceReminders(dateStr: string, timeStr: string, officeName: string, isCheckOut: boolean)",
+      "cancelAllAttendanceReminders()",
+      "scheduleIdleReminder(idleMinutes: number)",
+      "cancelIdleReminder()",
+      "initializeNotificationHandlers()",
+      "initializeNotificationInfrastructure()",
+      "notifyJourneyEvent()",
+      "notifyLocationProblem()",
+      "handleNotificationResponse()"
+    ]
+  },
+  {
+    "file": "services/location/notification.service.web.ts",
+    "exports": [
+      "TRACKING_CHANNEL_ID",
+      "ARRIVAL_CHANNEL_ID",
+      "LOCATION_PROBLEMS_CHANNEL_ID",
+      "MANAGER_UPDATES_CHANNEL_ID",
+      "EVENT_NOTIFICATION_CHANNEL_ID",
+      "ATTENDANCE_NOTIFICATION_CHANNEL_ID",
+      "FIELD_VISIT_NOTIFICATION_CHANNEL_ID",
+      "LEAVE_NOTIFICATION_CHANNEL_ID",
+      "TASK_NOTIFICATION_CHANNEL_ID",
+      "ANNOUNCEMENT_NOTIFICATION_CHANNEL_ID",
+      "VISIT_NOTIFICATION_CATEGORY",
+      "PERMISSION_NOTIFICATION_CATEGORY",
+      "EVENT_NOTIFICATION_CATEGORY",
+      "ATTENDANCE_NOTIFICATION_CATEGORY",
+      "LEAVE_NOTIFICATION_CATEGORY",
+      "TASK_NOTIFICATION_CATEGORY",
+      "ANNOUNCEMENT_NOTIFICATION_CATEGORY",
+      "initializeNotificationInfrastructure",
+      "requestNotificationPermission",
+      "isNotificationPermissionGranted",
+      "notifyJourneyEvent",
+      "notifyLocationProblem",
+      "handleNotificationResponse",
+      "registerDevicePushToken",
+      "scheduleAttendanceReminders"
+    ],
+    "tables": [],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "initializeNotificationInfrastructure()",
+      "requestNotificationPermission()",
+      "isNotificationPermissionGranted()",
+      "notifyJourneyEvent( _event: JourneyEventType, _destination: Destination, _routeProgress?: unknown, )",
+      "notifyLocationProblem( _type: | \"gps_off\" | \"background_permission_revoked\" | \"precise_location_disabled\" | \"location_stale\", )",
+      "handleNotificationResponse(_response: unknown)",
+      "registerDevicePushToken(_userId: string)",
+      "scheduleAttendanceReminders(_schedule: { checkin_time: string; checkout_time: string; office_id: string; })"
+    ]
+  },
+  {
+    "file": "services/location/offline.ts",
+    "exports": [
+      "sortOfflinePings"
+    ],
+    "tables": [],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "sortOfflinePings(items: OfflineLocationPing[])"
+    ]
+  },
+  {
+    "file": "services/location/route.service.ts",
+    "exports": [
+      "computeDrivingRoute",
+      "refreshRouteProgress",
+      "decodeGooglePolyline"
+    ],
+    "tables": [],
+    "rpcs": [],
+    "hasFetch": true,
+    "todos": [],
+    "signatures": [
+      "computeDrivingRoute( origin: Coordinate, destination: Destination, includePolyline = false, )",
+      "refreshRouteProgress( existing: RouteProgress | null | undefined, location: TrackingLocation, destination: Destination, )",
+      "decodeGooglePolyline(encoded: string)",
+      "parseGoogleDuration(value: unknown)",
+      "ceil(seconds)",
+      "refreshIntervalMs(distanceM: number | null)",
+      "if(isSameJourney && existing)",
+      "while(index < encoded.length)",
+      "for(let coordinateIndex = 0; coordinateIndex < 2; coordinateIndex += 1)",
+      "push(result & 1 ? ~(result >> 1)"
+    ]
+  },
+  {
+    "file": "services/location/secureQueue.ts",
+    "exports": [
+      "enqueueOfflinePing",
+      "readOfflineQueue",
+      "removeOfflinePing",
+      "clearOfflineLocationQueue"
+    ],
+    "tables": [],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "enqueueOfflinePing(ping: OfflineLocationPing)",
+      "readOfflineQueue()",
+      "removeOfflinePing(clientEventId: string)",
+      "clearOfflineLocationQueue()",
+      "getIndex()",
+      "if(Platform.OS === \"web\")",
+      "filter((value)",
+      "setProtectedValue(key: string, value: string | null)",
+      "getProtectedValue(key: string)",
+      "while(index.length > MAX_QUEUE_SIZE)",
+      "sortOfflinePings( items.filter((item)"
+    ]
+  },
+  {
+    "file": "services/location/trackingDate.ts",
+    "exports": [
+      "getTrackingDateIST",
+      "isDestinationForToday"
+    ],
+    "tables": [],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "getTrackingDateIST(date: Date = new Date()",
+      "isDestinationForToday( destination: Destination | null | undefined, date: Date = new Date()"
+    ]
+  },
+  {
+    "file": "services/location/types.ts",
+    "exports": [
+      "JourneyStatus",
+      "LocationQuality",
+      "JourneyEventType",
+      "Destination",
+      "TrackingLocation",
+      "JourneyRuntimeState",
+      "RouteProgress",
+      "DrivingRoute",
+      "JourneyTransitionResult",
+      "ActiveTrackingConfig",
+      "TrackingHealth",
+      "OfflineLocationPing"
+    ],
+    "tables": [],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": []
+  },
+  {
+    "file": "services/mailchimp.service.ts",
+    "exports": [
+      "MailchimpService"
+    ],
+    "tables": [],
+    "rpcs": [],
+    "hasFetch": true,
+    "todos": [],
+    "signatures": [
+      "sendEmail( to: string, subject: string, htmlBody: string, )",
+      "catch(e)",
+      "addMemberToAudience( listId: string, email: string, firstName: string, lastName: string, )",
+      "if(!res.ok)",
+      "sendCampaign( listId: string, subject: string, htmlContent: string, fromName: string = \"RE HRMS\", fromEmail: string = \"noreply@rehrms.com\", )",
+      "if(!createRes.ok)",
+      "if(!contentRes.ok)",
+      "if(!sendRes.ok)",
+      "ping()",
+      "welcomeEmployee(name: string, phone: string, password: string)",
+      "Phone(Username)",
+      "leaveApproved( name: string, leaveType: string, startDate: string, endDate: string, )",
+      "leaveRejected(name: string, leaveType: string)",
+      "taskAssigned( name: string, taskTitle: string, dueDate: string, priority: string, )"
+    ]
+  },
+  {
+    "file": "services/nativeBridge/client.ts",
+    "exports": [
+      "nativeBridge"
+    ],
+    "tables": [],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "isAvailable()",
+      "install()",
+      "catch(error)",
+      "on(type: string, listener: EventListener)",
+      "receive(raw: unknown)",
+      "if(envelope.type === \"bridge.response\")"
+    ]
+  },
+  {
+    "file": "services/nativeBridge/protocol.ts",
+    "exports": [
+      "NATIVE_BRIDGE_VERSION",
+      "NATIVE_BRIDGE_NAME",
+      "NativeBridgeCommand",
+      "NativeBridgeRequest",
+      "NativeBridgeResponse",
+      "NativeBridgeEvent",
+      "NativeBridgeEnvelope",
+      "parseNativeBridgeRequest",
+      "bridgeResponse",
+      "bridgeEvent"
+    ],
+    "tables": [],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "parseNativeBridgeRequest(raw: string)",
+      "if(request.type !== \"file.shareBase64\" && raw.length > 64 * 1024)"
+    ]
+  },
+  {
+    "file": "services/notification.service.ts",
+    "exports": [
+      "NotificationService"
+    ],
+    "tables": [
+      "notifications"
+    ],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "getUnreadCount(userId: string)"
+    ]
+  },
+  {
+    "file": "services/office.service.ts",
+    "exports": [
+      "OfficeService"
+    ],
+    "tables": [
+      "offices"
+    ],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "getAllOffices()"
+    ]
+  },
+  {
+    "file": "services/otp.service.ts",
+    "exports": [
+      "generateTOTPCode",
+      "verifyTOTP",
+      "generateBackupCodes",
+      "useBackupCode",
+      "isOTPLocked",
+      "generateQRCodeURL",
+      "validateOTPSetup",
+      "OTPStats",
+      "getTimeUntilOTPChange",
+      "OTPAuditLog"
+    ],
+    "tables": [],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "generateTOTPCode( secret: string, timestamp: number = Date.now()",
+      "verifyTOTP( secret: string, token: string, window: number = 1, )",
+      "generateBackupCodes(count: number = 10)",
+      "useBackupCode( inputCode: string, availableCodes: string[], )",
+      "isOTPLocked( failedAttempts: number, lastFailureTime: Date | null, maxAttempts: number = 5, lockoutMinutes: number = 15, )",
+      "generateQRCodeURL( secret: string, email: string, appName: string = \"HRMS\", )",
+      "validateOTPSetup( secret: string | undefined, email: string | undefined, otpEnabled: boolean, )",
+      "getTimeUntilOTPChange()",
+      "for(let i = 0; i < count; i++)",
+      "generateRandomCode()",
+      "for(let i = 0; i < 3; i++)",
+      "for(let j = 0; j < 4; j++)",
+      "if(index === -1)",
+      "if(failedAttempts < maxAttempts)",
+      "if(!lastFailureTime)",
+      "if(!secret)",
+      "if(!email)",
+      "if(secret && secret.length < 16)"
+    ]
+  },
+  {
+    "file": "services/outbox/DurableWriteOutbox.ts",
+    "exports": [
+      "OutboxPriority",
+      "OutboxOperationType",
+      "OutboxStatus",
+      "OutboxItem",
+      "OutboxHandler",
+      "DurableWriteOutbox"
+    ],
+    "tables": [],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "registerHandler(operationType: OutboxOperationType, handler: OutboxHandler)",
+      "getPriorityForType(type: OutboxOperationType)",
+      "switch(type)",
+      "loadQueue()",
+      "if(this.memoryQueue !== null)",
+      "if(!raw)",
+      "catch(e)",
+      "persistQueue()",
+      "if(payloadStr.length > MAX_PAYLOAD_BYTES)",
+      "if(existing)",
+      "if(queue.length > MAX_QUEUE_SIZE)",
+      "for(let i = 0; i < queue.length && removed < excess; i++)",
+      "if(queue[i].status === \"SYNCED\")",
+      "if(__DEV__)",
+      "drain()",
+      "if(this.isDraining)",
+      "if(!isOnline)",
+      "while(hasMore)",
+      "if(item.status === \"FAILED\")",
+      "if(a.priority !== b.priority)",
+      "if(candidates.length === 0)",
+      "for(const item of candidates)",
+      "if(now - item.createdAt > MAX_OUTBOX_AGE_MS)",
+      "if(!handler)",
+      "catch(err: any)",
+      "if(!classification.isRetryable || item.attempts >= item.maxRetries)",
+      "moveToDeadLetter(item: OutboxItem, reason: string)",
+      "parse(raw)",
+      "if(deadLetterQueue.length > 200)",
+      "getQueue()",
+      "getDeadLetterQueue()",
+      "pruneSynced()"
+    ]
+  },
+  {
+    "file": "services/outbox/initOutbox.ts",
+    "exports": [
+      "initializeOutboxHandlers"
+    ],
+    "tables": [],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "initializeOutboxHandlers()"
+    ]
+  },
+  {
+    "file": "services/PermissionService.ts",
+    "exports": [
+      "PermissionScopeType",
+      "EffectivePermission",
+      "PermissionCache",
+      "PermissionService"
+    ],
+    "tables": [],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "restoreFromCache()",
+      "if(stored)",
+      "catch(e)",
+      "loadEffectivePermissions(userId: string)",
+      "if(error)",
+      "clearCache()",
+      "hasPermission(permissionKey: string, scopeType: PermissionScopeType = \"ALL\", scopeId: string | null = null)",
+      "verifyServerSide(permissionKey: string, targetResourceId: string | null = null)"
+    ]
+  },
+  {
+    "file": "services/predefined-site.service.ts",
+    "exports": [
+      "PredefinedSite",
+      "PredefinedSiteService"
+    ],
+    "tables": [
+      "predefined_sites"
+    ],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "haversineMetres( lat1: number, lon1: number, lat2: number, lon2: number )",
+      "getAll()",
+      "if(error)",
+      "distanceTo( site: PredefinedSite, userLat: number, userLon: number )",
+      "checkGeoFence( site: PredefinedSite, userLat: number, userLon: number )",
+      "findNearestSiteInRange( userLat: number, userLon: number )",
+      "for(const site of sites)",
+      "if(distanceM <= site.checkin_radius_m)",
+      "if(!nearest || distanceM < nearest.distanceM)"
+    ]
+  },
+  {
+    "file": "services/smartoffice.service.ts",
+    "exports": [
+      "SmartOfficeEmployee",
+      "SmartOfficeConfig",
+      "smartOfficeService"
+    ],
+    "tables": [
+      "profiles"
+    ],
+    "rpcs": [],
+    "hasFetch": true,
+    "todos": [],
+    "signatures": [
+      "tagDirectory( rows: any[], source: EmployeeDirectorySource, )",
+      "setConfig(config: SmartOfficeConfig)",
+      "request(url: URL)",
+      "if(error || !token)",
+      "testConnection()",
+      "slice(0, 5)",
+      "catch(error: any)",
+      "getEmployeeDetails(employeeCode?: string)",
+      "if(this.config.apiAccountName)",
+      "if(employeeCode)",
+      "if(!response.ok)",
+      "if(data && typeof data === \"object\")",
+      "getEmployeesFromDeviceLogs( employeeCode?: string, )",
+      "getAttendanceLogs( fromDate: string, toDate: string, employeeCode?: string, )",
+      "formatDate(date: Date)",
+      "getDeviceLogs( fromDate: string, toDate: string, saveToDatabase: boolean = false, )",
+      "saveDeviceLogsToDatabase( logs: any[], )",
+      "if(recordsToInsert.length)",
+      "syncEmployeeProfilesBatch(employeeData: any[])",
+      "if(profileError)",
+      "for(const row of normalized)",
+      "if(!rows.length)",
+      "syncEmployees()",
+      "autoMatchEmployees()",
+      "if(employeeError)",
+      "if(!localEmployees || localEmployees.length === 0)",
+      "for(const localEmp of localEmployees)",
+      "if(matches.length === 1)",
+      "if(code)",
+      "if(matches.length > 0)",
+      "if(mappings.length)",
+      "matchEmployee( localEmployeeId: string, smartofficeEmployeeCode: string, )",
+      "if(error)",
+      "syncAttendanceData( fromDate?: string, toDate?: string, )",
+      "Date(fromDate)",
+      "Date(toDate)",
+      "if(emp.smartoffice_employee_code)",
+      "for(const log of deviceLogs)",
+      "if(time < existing.checkin_time)",
+      "catch(recordError: any)",
+      "getAvailableEmployeeCodes()",
+      "catch(error)",
+      "bulkImportEmployees( employeeCodes: string[], )",
+      "for(const code of employeeCodes)",
+      "if(existingEmployee)",
+      "if(!existingByCode)",
+      "catch(empError: any)",
+      "getSyncStatus()",
+      "syncAllDeviceLogs( fromDate: string, toDate: string, )"
+    ]
+  },
+  {
+    "file": "services/sms.service.ts",
+    "exports": [
+      "SMSService"
+    ],
+    "tables": [],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "sendOTP(_phone: string, _otp: string)",
+      "sendTransactional( _phone: string, _message: string, _templateId: string, )"
+    ]
+  },
+  {
+    "file": "services/supabase.ts",
+    "exports": [
+      "SupabaseService"
+    ],
+    "tables": [
+      "attendance",
+      "tasks",
+      "notifications"
+    ],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "getAll(userId: string)",
+      "add(record: AttendanceRecord & { user_id: string })",
+      "getTodayRecord(userId: string)",
+      "getByStatus(userId: string, status: Task[\"status\"])",
+      "getUnreadCount(userId: string)",
+      "signIn(email: string, password: string)",
+      "getCurrentUser()"
+    ]
+  },
+  {
+    "file": "services/support-ticket.service.ts",
+    "exports": [
+      "TicketCategory",
+      "TicketPriority",
+      "TicketStatus",
+      "SupportTicket",
+      "SupportTicketService"
+    ],
+    "tables": [
+      "profiles",
+      "support_tickets"
+    ],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "getAdminHRRecipients()",
+      "createTicket(data: { userId: string; title: string; description: string; category: TicketCategory; priority: TicketPriority; })",
+      "if(!result.error)",
+      "getMyTickets(userId: string)",
+      "getAllTickets()",
+      "updateTicketStatus( ticketId: string, status: TicketStatus, resolutionNotes?: string )"
+    ]
+  },
+  {
+    "file": "services/task.service.ts",
+    "exports": [
+      "TaskService"
+    ],
+    "tables": [
+      "tasks"
+    ],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "getPending(userId: string, limit: number = 3)"
+    ]
+  },
+  {
+    "file": "services/tracking-admin.service.ts",
+    "exports": [
+      "TrackingAdminService"
+    ],
+    "tables": [],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "reviewFraudEvent(eventId: string, notes?: string)",
+      "resolveAlert(alertId: string)",
+      "requestPings(targetUserIds: string[])"
+    ]
+  },
+  {
+    "file": "services/transit-warning.service.ts",
+    "exports": [
+      "TransitWarningService"
+    ],
+    "tables": [],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "save(warningId: string | null, values: Record<string, unknown>)"
+    ]
+  },
+  {
+    "file": "services/tv-occupancy.ts",
+    "exports": [
+      "TvAttendanceEvidence",
+      "TvAttendanceClassification",
+      "classifyTvAttendance"
+    ],
+    "tables": [],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "classifyTvAttendance( row: TvAttendanceEvidence, )"
+    ]
+  },
+  {
+    "file": "services/whatsapp.service.ts",
+    "exports": [
+      "WhatsAppService"
+    ],
+    "tables": [],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "serverOnlyWarning()",
+      "sendTicketOpen(_phone: string, _userName: string, _category: string)",
+      "sendTicketClosed(_phone: string, _userName: string, _category: string)",
+      "broadcastTicketOpen(_recipients: { phone: string; name: string }[], _category: string)",
+      "broadcastTicketClosed(_recipients: { phone: string; name: string }[], _category: string)"
+    ]
+  },
+  {
+    "file": "supabase/functions/auto-end-time/index.ts",
+    "exports": [],
+    "tables": [],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "json(body: unknown, status = 200)",
+      "if(request.method === \"OPTIONS\")",
+      "if(!supabaseUrl || !serviceRoleKey)",
+      "if(request.method === \"POST\")",
+      "if(body?.target_date)",
+      "if(!targetDate)",
+      "if(rpcError)"
+    ]
+  },
+  {
+    "file": "supabase/functions/biometric-attendance-sync/index.ts",
+    "exports": [],
+    "tables": [
+      "profiles",
+      "biometric_sync_requests",
+      "biometric_import_batches",
+      "biometric_sync_state"
+    ],
+    "rpcs": [],
+    "hasFetch": true,
+    "todos": [],
+    "signatures": [
+      "isValidDateOnly(value: string)",
+      "dayNumber(value: string)",
+      "confirmedResponseFromBatch( batch: any, fromDate: string, toDate: string, )",
+      "if(result.edge_response?.success === true)",
+      "toISTTimestamp(value: string)",
+      "extractLogs(body: any)",
+      "fetchAllMappedProfiles(admin: any)",
+      "for(let from = 0; from < 100_000; from += pageSize)",
+      "if(request.method === \"OPTIONS\")",
+      "if(request.method !== \"POST\")",
+      "if(requestBody?.action === \"version\")",
+      "if(!supabaseUrl || !anonKey || !serviceRoleKey)",
+      "if(!isCron)",
+      "if(!userData.user)",
+      "String( requestBody?.requestId ?? (isCron ? crypto.randomUUID()",
+      "if(requestLookupError)",
+      "if( existingRequest?.status === \"COMMITTED\" && existingRequest.response?.success === true )",
+      "if(batchLookupError)",
+      "if(existingBatch)",
+      "if(existingBatch.source !== requestedSource)",
+      "if(existingBatch.status === \"APPLIED\")",
+      "if( recovered.insertedPunches + recovered.duplicatePunches + recovered.rejectedPunches !== recovered.submittedPunches )",
+      "if(requestBody?.action === \"status\")",
+      "if(!existingRequest)",
+      "parse(existingRequest.updated_at)",
+      "eq(\"request_id\", requestId)",
+      "if(requestMutation.error)",
+      "if(claimError)",
+      "if(!claimed)",
+      "if(!response.ok)",
+      "if(body?.status === false)",
+      "for(const employee of employees ?? [])",
+      "if(code)",
+      "for(const [code, profileIds] of profileIdsByCode)",
+      "for(const log of logs)",
+      "if(!userId)",
+      "if(!existing)",
+      "if(rawPunchRows.length)",
+      "if( rawIngestResult?.success !== true || rawIngestResult?.transaction_status !== \"COMMITTED\" )",
+      "if(deviceRows.length)",
+      "catch(error)"
+    ]
+  },
+  {
+    "file": "supabase/functions/biometric-manual-import/index.ts",
+    "exports": [],
+    "tables": [
+      "profiles"
+    ],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "if(request.method === \"OPTIONS\")",
+      "if(request.method !== \"POST\")",
+      "if(!supabaseUrl || !anonKey || !serviceRoleKey)",
+      "if(!userData.user)",
+      "catch(error)"
+    ]
+  },
+  {
+    "file": "supabase/functions/biometric-punch-webhook/index.ts",
+    "exports": [],
+    "tables": [],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "response(body: unknown, status = 200)",
+      "punchRows(body: any)",
+      "if(body?.action === \"version\")",
+      "if(!expectedSecret || suppliedSecret !== expectedSecret)",
+      "for(const punch of punches)",
+      "if(error)",
+      "if(result?.success !== true || result?.transaction_status !== \"COMMITTED\")"
+    ]
+  },
+  {
+    "file": "supabase/functions/daily-checkin-alert/index.ts",
+    "exports": [],
+    "tables": [
+      "profiles",
+      "attendance_logs",
+      "leave_requests"
+    ],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "json(body: unknown, status = 200)",
+      "if(request.method === \"OPTIONS\")",
+      "if(!supabaseUrl || !serviceRoleKey)",
+      "if(empError)",
+      "if(attError)",
+      "if(leaveError)",
+      "for(const emp of missingEmployees)",
+      "catch(notifErr)"
+    ]
+  },
+  {
+    "file": "supabase/functions/field-visit-evidence-upload/index.ts",
+    "exports": [],
+    "tables": [
+      "field_visits",
+      "field-visit-evidence"
+    ],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "if(body?.action === \"version\")",
+      "if(body?.action !== \"delete_orphan\")",
+      "if(!authenticated)",
+      "catch(error)",
+      "accessToken(req: Request)",
+      "authenticate(req: Request, url: string, serviceRole: string)"
+    ]
+  },
+  {
+    "file": "supabase/functions/geofence-notification-worker/index.ts",
+    "exports": [],
+    "tables": [
+      "device_push_tokens",
+      "notification_outbox"
+    ],
+    "rpcs": [],
+    "hasFetch": true,
+    "todos": [],
+    "signatures": [
+      "if(!record || record.status !== 'PENDING')",
+      "if(tokenError || !tokens || tokens.length === 0)",
+      "if(!response.ok)",
+      "catch(err)"
+    ]
+  },
+  {
+    "file": "supabase/functions/notification-dispatch/index.ts",
+    "exports": [],
+    "tables": [
+      "notification_push_deliveries",
+      "device_push_tokens",
+      "notification_push_outbox",
+      "hrms_audit_events"
+    ],
+    "rpcs": [],
+    "hasFetch": true,
+    "todos": [],
+    "signatures": [
+      "json(body: unknown, status = 200)",
+      "retryAt(attempts: number)",
+      "validExpoToken(token: string)",
+      "processReceipts(admin: any)",
+      "for(let offset = 0; offset < pending.length; offset += 300)",
+      "for(const row of batch)",
+      "if(receipt.details?.error === \"DeviceNotRegistered\")",
+      "for(const outboxId of outboxIds)",
+      "dispatchRow(admin: any, candidate: OutboxRow)",
+      "if( candidate.event_type === \"attendance_checkin_reminder\" || candidate.event_type === \"attendance_checkout_reminder\" )",
+      "if(stale)",
+      "if(!tokens.length)",
+      "for(let index = 0; index < tokens.length; index += 1)",
+      "if(ticket?.details?.error === \"DeviceNotRegistered\")",
+      "if(sent > 0 && candidate.event_type === \"event_announcement\")",
+      "if( !projectKey || authorization !== `Bearer ${projectKey}` || suppliedApiKey !== projectKey )",
+      "if(body?.action === \"version\")",
+      "catch(dispatchError)",
+      "update({ status: \"FAILED\", last_error: dispatchError instanceof Error ? dispatchError.message.slice(0, 1000)"
+    ]
+  },
+  {
+    "file": "supabase/functions/otp-auth/index.ts",
+    "exports": [],
+    "tables": [
+      "otp_login_challenges",
+      "profiles",
+      "system_admin_login_credentials"
+    ],
+    "rpcs": [],
+    "hasFetch": true,
+    "todos": [],
+    "signatures": [
+      "slice(2)",
+      "hashOtp(phone: string, otp: string, salt: string)",
+      "createAuthSession(db: any, profile: any, phone: string)",
+      "if(!existingAuth.user)",
+      "if(body?.action === \"version\")",
+      "if(action === \"request\")",
+      "if(isSystemAdmin)",
+      "if(!sms.ok)",
+      "if(action === \"verify\")",
+      "if(suppliedOtpHash !== expectedOtpHash)",
+      "catch(error)"
+    ]
+  },
+  {
+    "file": "supabase/functions/revoke-user-auth/index.ts",
+    "exports": [],
+    "tables": [
+      "profiles",
+      "user_permissions"
+    ],
+    "rpcs": [],
+    "hasFetch": false,
+    "todos": [],
+    "signatures": [
+      "json(body: unknown, status = 200)",
+      "if(request.method === \"OPTIONS\")",
+      "if(request.method !== \"POST\")",
+      "if(!supabaseUrl || !serviceRoleKey)",
+      "if(!token)",
+      "if(callerError || !callerUser)",
+      "if(!perm)",
+      "if(!targetUserId)",
+      "catch(err: any)"
+    ]
+  },
+  {
+    "file": "supabase/functions/send-event-notifications/index.ts",
+    "exports": [],
+    "tables": [
+      "events",
+      "event_announcements",
+      "device_push_tokens",
+      "event_push_delivery_log"
+    ],
+    "rpcs": [],
+    "hasFetch": true,
+    "todos": [],
+    "signatures": [
+      "if(request.method !== \"POST\")",
+      "if(!supabaseUrl || !serviceRoleKey)",
+      "if(!eventId && !recipientUserId)",
+      "if(eventId)",
+      "if(error || !data)",
+      "if(eventIds.length)",
+      "if(!events.length)",
+      "if(recipientUserId)",
+      "if(tokenError || !tokens?.length)",
+      "for(const announcement of announcements ?? [])",
+      "for(const event of events)",
+      "for(const token of tokens)",
+      "if(!claimed.length)",
+      "for(let offset = 0; offset < claimed.length; offset += MAX_EXPO_BATCH)",
+      "if(ticket?.details?.error === \"DeviceNotRegistered\")"
+    ]
+  },
+  {
+    "file": "supabase/functions/send-journey-notifications/index.ts",
+    "exports": [],
+    "tables": [
+      "journey_events",
+      "profiles",
+      "field_visits",
+      "escalation_matrix",
+      "device_push_tokens",
+      "push_delivery_log"
+    ],
+    "rpcs": [],
+    "hasFetch": true,
+    "todos": [],
+    "signatures": [
+      "if(request.method !== \"POST\")",
+      "if(!webhookSecret || suppliedSecret !== webhookSecret)",
+      "if(!supabaseUrl || !serviceRoleKey)",
+      "if(!journeyEventId)",
+      "if(eventError || !event)",
+      "filter((id)",
+      "for(const token of tokens)",
+      "if(!error)",
+      "if(!claimedTokens.length)"
+    ]
+  },
+  {
+    "file": "supabase/functions/smartoffice-proxy/index.ts",
+    "exports": [],
+    "tables": [
+      "profiles"
+    ],
+    "rpcs": [],
+    "hasFetch": true,
+    "todos": [],
+    "signatures": [
+      "json(body: unknown, status: number)",
+      "if(request.method === \"OPTIONS\")",
+      "if(request.method === \"POST\")",
+      "if(body?.action === \"version\")",
+      "if(request.method !== \"GET\")",
+      "if(!supabaseUrl || !anonKey || !serviceRoleKey)",
+      "if(!smartOfficeUrl || !smartOfficeApiKey)",
+      "if(error)",
+      "if(accessToken !== serviceRoleKey)",
+      "if(authError || !authData.user)",
+      "for(const key of [\"FromDate\", \"ToDate\", \"EmployeeCode\"])",
+      "if(smartOfficeAccount && endpoint !== \"/api/v2/WebAPI/GetDeviceLogs\")"
+    ]
+  }
+]

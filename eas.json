@@ -36,7 +36,7 @@
         "EXPO_PUBLIC_LOCATION_RPC_ENABLED": "true"
       },
       "android": {
-        "buildType": "app-bundle"
+        "buildType": "apk"
       }
     }
   },

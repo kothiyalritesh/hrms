@@ -1,3 +1,4 @@
+import * as SplashScreen from "expo-splash-screen";
 import React, { useEffect, useState } from "react";
 import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import NetInfo from "@react-native-community/netinfo";
@@ -227,14 +228,7 @@ function WebAppShell() {
 
   const applyUpdate = () => {
     if (!waitingRegistration) return;
-    if (
-      typeof window !== "undefined" &&
-      !window.confirm(
-        "Save any open form first. Reload now to install the HRMS update?",
-      )
-    ) {
-      return;
-    }
+    
     waitingRegistration.waiting?.postMessage({ type: "SKIP_WAITING" });
   };
 
@@ -399,6 +393,7 @@ function FullHrmsApp() {
 }
 
 export default function App() {
+  useEffect(() => { SplashScreen.hideAsync().catch(() => {}); }, []);
   const [useBundledAndroidApp, setUseBundledAndroidApp] = useState(false);
   // Android is intentionally a small native capability host. The browser and
   // iOS builds retain the full bundled application. Android follows the
@@ -478,3 +473,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
 });
+
+
+
+
