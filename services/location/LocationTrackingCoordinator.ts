@@ -414,8 +414,7 @@ class LocationTrackingCoordinator {
         trackingSessionId: session?.tracking_session_id ?? null,
         baseLatitude: validCoordinate(checkinLocation?.latitude, -90, 90),
         baseLongitude: validCoordinate(checkinLocation?.longitude, -180, 180),
-        officeId: attendance.office_id ?? null,
-        officeRadiusM: 200,
+        officeRadiusM: 100,
         destination,
         journeyState: destination
           ? createJourneyState(destination.journeyId)

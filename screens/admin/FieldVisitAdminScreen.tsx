@@ -9,6 +9,7 @@ import { ThemedText } from "@/components/ThemedText";
 import { ThemedView } from "@/components/ThemedView";
 import { supabase } from "@/lib/supabase";
 import MarkedLocationReviewPanel from "@/components/MarkedLocationReviewPanel";
+import LocationTimelineModal, { PingPoint } from "@/components/LocationTimelineModal";
 import { BusinessClockService } from "@/services/business-clock.service";
 import {
   addBusinessDays,
@@ -55,7 +56,7 @@ const PRESETS = [
 ];
 
 // ── Detail Modal ──────────────────────────────────────────────────────────────
-function DetailModal({ visit, onClose }: { visit: any; onClose: () => void }) {
+function DetailModal({ visit, onClose, openTimeline }: { visit: any; onClose: () => void; openTimeline?: (uid: string, name: string, date: string) => void }) {
   if (!visit) return null;
   const sc = STATUS_COLOR[visit.status] || STATUS_COLOR.PENDING;
 

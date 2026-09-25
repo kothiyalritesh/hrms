@@ -89,7 +89,6 @@ export interface ActiveTrackingConfig {
   trackingSessionId: string | null;
   baseLatitude: number | null;
   baseLongitude: number | null;
-  officeId: string | null;
   officeRadiusM: number;
   destination: Destination | null;
   journeyState: JourneyRuntimeState | null;
