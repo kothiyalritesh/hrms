@@ -23,6 +23,7 @@ import { Spacing, BorderRadius, Colors, Shadows } from "@/constants/theme";
 import Spacer from "@/components/Spacer";
 import { supabase } from "@/lib/supabase";
 import { AttendanceService } from "@/services/attendance.service";
+import GeofenceReasonModal from "@/components/modals/GeofenceReasonModal";
 import { OfficeService } from "@/services/office.service";
 import * as Location from "expo-location";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -223,6 +224,7 @@ export default function DashboardScreen({ navigation }: DashboardScreenProps) {
   const [attendanceLoading, setAttendanceLoading] = useState(false);
   const [showAttendanceCheckout, setShowAttendanceCheckout] = useState(false);
   const [pendingVisits, setPendingVisits] = useState(0);
+  const [geofenceEvent, setGeofenceEvent] = useState<{ id: string; distance: number } | null>(null);
   const [checkInMsg, setCheckInMsg] = useState<{
     type: "success" | "error";
     text: string;

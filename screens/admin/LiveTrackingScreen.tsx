@@ -644,7 +644,7 @@ export default function LiveTrackingScreen() {
     authoritativeClockMs = authoritativeNowMs;
     const [alertRes, meetRes, officeRes, attRes, pingRes, canonicalRes] = await Promise.all([
       supabase.from("location_alerts")
-        .select("id,user_id,alert_type,message,distance_m,resolved,created_at,escalation_level,escalated_at,profiles(name)")
+        .select("id,user_id,alert_type,message,distance_m,resolved,created_at,escalation_level,escalated_at,metadata,profiles(name)")
         .eq("resolved", false)
         .order("escalation_level", { ascending: false })
         .order("created_at", { ascending: false })
@@ -936,13 +936,37 @@ export default function LiveTrackingScreen() {
   };
 
   const resolveAlert = async (id: string) => {
+      try {
+        const { error } = await TrackingAdminService.resolveAlert(id);
+        if (error) throw error;
+        setAlerts((prev) => prev.filter((a) => a.id !== id));
+      } catch (error: any) {
+        Alert.alert(
+          "Alert not resolved",
+          error?.message || "The server did not confirm this action.",
+        );
+      }
+    };
+    
+  const resolveWithAction = async (alertId: string, action: "APPROVED" | "REJECTED", eventId?: string) => {
     try {
-      const { error } = await TrackingAdminService.resolveAlert(id);
-      if (error) throw error;
-      setAlerts((prev) => prev.filter((a) => a.id !== id));
+      if (eventId) {
+        // It's a geofence alert, use the credit score engine
+        const { error } = await supabase.rpc("rpc_resolve_geofence_violation", {
+          p_event_id: eventId,
+          p_resolution: action,
+          p_notes: "Resolved by admin from Live Tracking",
+        });
+        if (error) throw error;
+      }
+      // Also dismiss the alert card
+      const { error: alertError } = await TrackingAdminService.resolveAlert(alertId);
+      if (alertError) throw alertError;
+      
+      setAlerts((prev) => prev.filter((a) => a.id !== alertId));
     } catch (error: any) {
       Alert.alert(
-        "Alert not resolved",
+        "Action Failed",
         error?.message || "The server did not confirm this action.",
       );
     }
