@@ -439,8 +439,12 @@ export default function AttendanceControlScreenNew() {
       setWarningUpdateError(err?.message || "Attendance warnings could not be recalculated.");
     }
     
-    const [canonicalRows, offRes, empRes] = await Promise.all([
+    const [canonicalRows, attLogRes, offRes, empRes] = await Promise.all([
       CanonicalAttendanceService.list(s, e),
+        fetchAllPages<any>((from, to) =>
+          supabase.from("attendance_logs").select("user_id, date, office_id")
+            .gte("date", s).lte("date", e).order("user_id").order("id").range(from, to)
+        ),
       fetchAllPages<any>((from, to) =>
         supabase.from("offices").select("id, name")
           .eq("is_active", true).order("id").range(from, to),
@@ -457,6 +461,11 @@ export default function AttendanceControlScreenNew() {
     const punchMap: Record<string, { first: string; last: string | null }> = {};
     const allPunchesMap: Record<string, string[]> = {};
     try {
+      const attOfficeMap = new Map<string, string>();
+      for (const a of (attLogRes?.data || [])) {
+        attOfficeMap.set(a.user_id + '_' + a.date, a.office_id);
+      }
+      
       const deviceRes = await fetchAllPages<any>((from, to) =>
         supabase.from("smartoffice_device_logs")
           .select("id, user_id, log_date_only, log_time")
@@ -503,6 +512,7 @@ export default function AttendanceControlScreenNew() {
       distance_from_office: r.distance_from_office_m,
       employee_name: toTitleCase(r.employee_name ?? ''),
       office_name: r.office_name ?? '',
+        punch_office_id: attOfficeMap.get(r.user_id + '_' + r.work_date) || r.office_id,
       attendance_type: r.presence_source,
       smartoffice_imported: r.first_in_source === 'BIOMETRIC',
       biometric_punches: [r.biometric_first_in, r.biometric_last_punch_evidence].filter(Boolean),
@@ -511,6 +521,14 @@ export default function AttendanceControlScreenNew() {
     if (employeeFilter) data = data.filter((r: any) => r.user_id === employeeFilter);
     setRecords(data);
     setOffices(offRes.data || []);
+      const officeNameMap = new Map((offRes.data || []).map(o => [o.id, o.name]));
+      data = data.map(r => {
+        if (r.punch_office_id && r.punch_office_id !== r.office_id) {
+          r.office_name = officeNameMap.get(r.punch_office_id) || r.office_name;
+          r.office_id = r.punch_office_id;
+        }
+        return r;
+      });
     setEmployees((empRes.data || []).map((p: any) => ({ ...p, name: toTitleCase(p.name) })));
     setLoading(false);
     // Also load raw biometric device logs for the Biometric Logs tab
