@@ -310,6 +310,7 @@ const linking = {
               LeaveManagement: "leaves",
               TaskProjectControl: "tasks-projects",
               NotificationManagement: "notifications",
+                AdminDeviceSessions: "duplicate-devices",
               OfficeSettings: "offices",
               SiteSettings: "sites",
               AuditLogs: "audit",

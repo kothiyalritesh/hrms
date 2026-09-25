@@ -519,6 +519,13 @@ export default function AdminDashboardScreen({ navigation }: Props) {
               onPress={() => navigation.navigate("InTransit")}
             />
             <ActionCard
+              icon="smartphone"
+              label="Duplicate Devices"
+              desc="Detect buddy punching"
+              accent="#EF4444"
+              onPress={() => navigation.navigate("AdminDeviceSessions")}
+            />
+            <ActionCard
                 icon="settings"
                 label="Office Settings"
                 desc="Offices, geofences and attendance rules"
