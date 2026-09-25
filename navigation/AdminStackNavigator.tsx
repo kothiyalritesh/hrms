@@ -13,6 +13,7 @@ export type AdminStackParamList = {
   LeaveManagement: undefined;
   TaskProjectControl: undefined;
   NotificationManagement: undefined;
+  AdminDeviceSessions: undefined;
   OfficeSettings: undefined;
   SiteSettings: undefined;
   AuditLogs: undefined;
@@ -63,6 +64,7 @@ const UserManagementScreen = lazyScreen(() => import("@/screens/admin/UserManage
 const LeaveManagementScreen = lazyScreen(() => import("@/screens/admin/LeaveManagementScreen"));
 const TaskProjectControlScreen = lazyScreen(() => import("@/screens/admin/TaskProjectControlScreen"));
 const NotificationManagementScreen = lazyScreen(() => import("@/screens/admin/NotificationManagementScreen"));
+const AdminDeviceSessionsScreen = lazyScreen(() => import("@/screens/admin/AdminDeviceSessionsScreen"));
 const OfficeSettingsScreen = lazyScreen(() => import("@/screens/admin/OfficeSettingsScreen"));
 const SiteSettingsScreen = lazyScreen(() => import("@/screens/admin/SiteSettingsScreen"));
 const AuditLogsScreen = lazyScreen(() => import("@/screens/admin/AuditLogsScreen"));
