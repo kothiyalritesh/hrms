@@ -171,7 +171,7 @@ export class AttendanceAnomalyEngine {
           anomaly_type: "CHRONIC_LATE_ARRIVAL",
           severity: "MEDIUM",
           confidence: 0.92,
-          evidence: `${lateCount} late arrivals recorded against 10:30 AM shift start`,
+          evidence: `${lateCount} late arrivals recorded against 10:32 AM shift start`,
           explanation: "Persistent punctuality delay observed across multiple consecutive weeks.",
           action_recommendation: "Schedule punctuality review meeting with Department Head.",
           created_at: new Date().toISOString(),

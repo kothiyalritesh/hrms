@@ -77,7 +77,7 @@ export interface CanonicalEmployee {
   joining_date?: string | null;
   exit_date?: string | null;
   shift_name: string;
-  shift_start: string; // e.g. "10:30:00"
+  shift_start: string; // e.g. "10:32:00"
   shift_end: string;   // e.g. "18:30:00"
   grace_minutes: number;
   match_status: "MATCHED_BY_ID" | "MATCHED_BY_NAME" | "UNRESOLVED";
@@ -107,7 +107,7 @@ export interface AttendanceFact {
   leave_type?: string | null;   // CL, SL, PL, WFH
 
   // Punctuality
-  expected_in: string;          // e.g. "10:30:00"
+  expected_in: string;          // e.g. "10:32:00"
   is_late: boolean;
   late_minutes: number;
 

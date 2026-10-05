@@ -1,3 +1,4 @@
+import { getBusinessDateIST } from "@/utils/businessDate";
 ﻿/**
  * ATTENDANCE INTELLIGENCE PLATFORM — DATA CLEANING & NORMALIZATION ENGINE
  * Preserves raw input values while computing deterministic canonical representations.
@@ -183,7 +184,7 @@ export function generateDateRange(startDate: string, endDate: string): string[] 
   const end = new Date(endDate + "T00:00:00Z");
 
   while (curr <= end) {
-    dates.push(curr.toISOString().slice(0, 10));
+    dates.push(getBusinessDateIST(curr));
     curr.setUTCDate(curr.getUTCDate() + 1);
   }
   return dates;

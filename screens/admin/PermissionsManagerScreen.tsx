@@ -80,20 +80,26 @@ export default function PermissionsManagerScreen() {
     }
   }, [activeTarget]);
 
-  const handleToggleAllow = async (permKey: string, isAllowed: boolean, permObj?: any) => {
+  const handleToggleAllow = async (permKey: string, isAllowed: boolean) => {
     if (!activeTarget) return;
 
     if (isAllowed) {
-      // Open config modal instead of defaulting to GLOBAL
-      if (permObj) openConfig(permObj, null);
+      // Default to GLOBAL allow if flipping switch
+      const { data, error } = await supabase.rpc("admin_grant_permission", {
+        p_user_id: activeTarget.id,
+        p_permission: permKey,
+        p_scope: "GLOBAL",
+        p_scope_id: null
+      });
+      if (error) { console.error("[PermissionsManager] RPC error:", error.message); Alert.alert("Permission Error", error.message); }
     } else {
       const { error } = await supabase.rpc("admin_revoke_permission", {
         p_user_id: activeTarget.id,
         p_permission: permKey
       });
       if (error) { console.error("[PermissionsManager] RPC error:", error.message); Alert.alert("Permission Error", error.message); }
-      loadTargetPermissions(activeTarget.id);
     }
+    loadTargetPermissions(activeTarget.id);
   };
 
   const openConfig = (p: any, existingGrant: any) => {
@@ -244,7 +250,7 @@ export default function PermissionsManagerScreen() {
                           
                           <Switch 
                             value={isAllowed} 
-                            onValueChange={(val) => handleToggleAllow(perm.permission_key, val, perm)} 
+                            onValueChange={(val) => handleToggleAllow(perm.permission_key, val)} 
                             trackColor={{ false: theme.border, true: theme.primary + "80" }}
                             thumbColor={isAllowed ? theme.primary : "#f4f3f4"}
                           />

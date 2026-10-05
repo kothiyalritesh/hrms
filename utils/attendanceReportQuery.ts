@@ -1,3 +1,4 @@
+import { getBusinessDateIST } from "@/utils/businessDate";
 export type AttendanceReportFilters = {
   office: string;
   team: string;
@@ -171,7 +172,7 @@ export function parseAttendanceReportQuery(
   } else if (/\byesterday\b/.test(query)) {
     const date = new Date(`${businessDate}T00:00:00Z`);
     date.setUTCDate(date.getUTCDate() - 1);
-    result.start = result.end = date.toISOString().slice(0, 10);
+    result.start = result.end = getBusinessDateIST(date);
   } else if (/\btoday\b/.test(query)) {
     result.start = result.end = businessDate;
   }

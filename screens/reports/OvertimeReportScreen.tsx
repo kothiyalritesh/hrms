@@ -13,6 +13,7 @@ import { ThemedText } from "@/components/ThemedText";
 import { useTheme } from "@/hooks/useTheme";
 import { BorderRadius, Colors, Spacing } from "@/constants/theme";
 import { supabase } from "@/lib/supabase";
+import { getBusinessDateIST } from "@/utils/businessDate";
 
 type CompOffStatus = "PENDING" | "APPROVED" | "USED" | "EXPIRED" | "REJECTED";
 
@@ -39,7 +40,7 @@ interface CompOffRow {
   created_at: string;
 }
 
-const toIso = (d: Date) => d.toISOString().slice(0, 10);
+const toIso = (d: Date) => getBusinessDateIST(d);
 const ALL_STATUSES: CompOffStatus[] = ["PENDING", "APPROVED", "USED", "EXPIRED", "REJECTED"];
 
 function formatDate(d: string | null) {

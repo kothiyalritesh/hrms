@@ -53,7 +53,7 @@ export class AskAttendanceEngine {
 
       return {
         query: userQuery,
-        answer: `Identified ${results.length} employees with ${lateThreshold} or more late arrivals (> 10:30 AM Shift Start). Top delayed employee is ${results[0]?.employee_name || 'N/A'} with ${results[0]?.late_count || 0} late arrivals.`,
+        answer: `Identified ${results.length} employees with ${lateThreshold} or more late arrivals (> 10:32 AM Shift Start). Top delayed employee is ${results[0]?.employee_name || 'N/A'} with ${results[0]?.late_count || 0} late arrivals.`,
         summary_metrics: {
           "Threshold Applied": `${lateThreshold}+ Late Arrivals`,
           "Employees Count": results.length,

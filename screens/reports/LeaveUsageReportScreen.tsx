@@ -13,6 +13,7 @@ import { ThemedText } from "@/components/ThemedText";
 import { useTheme } from "@/hooks/useTheme";
 import { BorderRadius, Colors, Spacing } from "@/constants/theme";
 import { supabase } from "@/lib/supabase";
+import { getBusinessDateIST } from "@/utils/businessDate";
 
 const LEAVE_TYPE_COLORS: Record<string, string> = {
   casual: "#6366F1", sick: "#EF4444", earned: "#10B981",
@@ -51,7 +52,7 @@ interface LeaveRow {
   employee?: { name?: string; employee_number?: string; office_id?: string; office?: { name?: string } };
 }
 
-const toIso = (d: Date) => d.toISOString().slice(0, 10);
+const toIso = (d: Date) => getBusinessDateIST(d);
 const TYPES = ["all", "casual", "sick", "earned", "wfh", "comp_off"];
 const STATUSES = ["all", "pending", "approved", "rejected"];
 

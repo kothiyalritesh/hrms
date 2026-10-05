@@ -45,6 +45,7 @@ import { AttendanceReconciliationEngine } from "@/services/attendanceIntelligenc
 import { AttendanceInsightEngine } from "@/services/attendanceIntelligence/insights.service";
 import { AskAttendanceEngine } from "@/services/attendanceIntelligence/askAttendance.service";
 import { AttendanceSnapshotService } from "@/services/attendanceIntelligence/snapshot.service";
+import { getBusinessDateIST } from "@/utils/businessDate";
 
 // ── SIMPLIFIED PRIMARY NAVIGATION ──────────────────────────────────────────
 type PrimaryNav = "OVERVIEW" | "WORKFORCE" | "ATTENDANCE" | "PERFORMANCE" | "EXCEPTIONS" | "INSIGHTS" | "REPORTS" | "ADMIN";
@@ -94,7 +95,7 @@ export default function AttendanceIntelligenceScreen() {
   const [aiResponse, setAiResponse] = useState<AskAttendanceResponse | null>(null);
 
   // Policy Config State
-  const [configShiftStart, setConfigShiftStart] = useState("10:30:00");
+  const [configShiftStart, setConfigShiftStart] = useState("10:32:00");
   const [configGraceMins, setConfigGraceMins] = useState("0");
   const [configValidate2359, setConfigValidate2359] = useState(true);
 
@@ -114,7 +115,7 @@ export default function AttendanceIntelligenceScreen() {
           e,
           true,
           {
-            shift_start: configShiftStart || "10:30:00",
+            shift_start: configShiftStart || "10:32:00",
             grace_minutes: parseInt(configGraceMins, 10) || 0,
             filter_2359: configValidate2359,
           },
@@ -137,7 +138,7 @@ export default function AttendanceIntelligenceScreen() {
   const handleSelectPreset = (preset: DatePreset) => {
     setDatePreset(preset);
     const today = new Date();
-    const todayStr = today.toISOString().slice(0, 10);
+    const todayStr = getBusinessDateIST(today);
 
     let newStart = startDate;
     let newEnd = endDate;
@@ -153,11 +154,11 @@ export default function AttendanceIntelligenceScreen() {
       const day = d.getDay();
       const diff = d.getDate() - day + (day === 0 ? -6 : 1);
       d.setDate(diff);
-      newStart = d.toISOString().slice(0, 10);
+      newStart = getBusinessDateIST(d);
       newEnd = todayStr;
     } else if (preset === "THIS_MONTH") {
       const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
-      newStart = firstDay.toISOString().slice(0, 10);
+      newStart = getBusinessDateIST(firstDay);
       newEnd = todayStr;
     }
 
@@ -1677,7 +1678,7 @@ export default function AttendanceIntelligenceScreen() {
                       style={styles.configInput}
                       value={configShiftStart}
                       onChangeText={setConfigShiftStart}
-                      placeholder="10:30:00"
+                      placeholder="10:32:00"
                     />
                   </View>
 

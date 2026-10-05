@@ -131,7 +131,7 @@ export class AttendanceReconciliationEngine {
     results.push({
       check_id: "CHK-08",
       check_name: "Late Arrival Marks Reconciliation",
-      description: "Reconciles late arrivals (> 10:30 AM Shift Start) against facts.",
+      description: "Reconciles late arrivals (> 10:32 AM Shift Start) against facts.",
       expected_value: factsLateCount,
       actual_value: kpis.total_late_arrivals,
       difference: Math.abs(factsLateCount - kpis.total_late_arrivals),

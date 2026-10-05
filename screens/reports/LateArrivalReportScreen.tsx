@@ -17,7 +17,7 @@ import { ModuleErrorBoundary } from "@/components/ModuleErrorBoundary";
 import { formatHrmsTime, parseHrmsTimestamp } from "@/utils/attendanceTimestamp";
 import { getBusinessDateIST } from "@/utils/businessDate";
 
-const toIso = (d: Date) => d.toISOString().slice(0, 10);
+const toIso = (d: Date) => getBusinessDateIST(d);
 
 interface LateRow {
   user_id: string;
@@ -30,15 +30,15 @@ interface LateRow {
   late_threshold?: string | null;
 }
 
-function minutesLate(firstIn: string | null, threshold: string | null = "09:30:00"): number {
+function minutesLate(firstIn: string | null, threshold: string | null = "10:32:00"): number {
   if (!firstIn) return 0;
   try {
     const actual = parseHrmsTimestamp(firstIn);
-    const [h, m] = (threshold || "09:30:00").split(":").map(Number);
+    const [h, m] = (threshold || "10:32:00").split(":").map(Number);
     const istHours = Number(new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Kolkata", hour: "numeric", hourCycle: "h23" }).format(actual));
     const istMinutes = Number(new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Kolkata", minute: "numeric" }).format(actual));
     const actualTotalMin = istHours * 60 + istMinutes;
-    const expectedTotalMin = (h || 9) * 60 + (m || 30);
+    const expectedTotalMin = (h || 10) * 60 + (m || 32);
     const diff = actualTotalMin - expectedTotalMin;
     return diff > 0 ? diff : 0;
   } catch {
@@ -222,7 +222,7 @@ function LateArrivalReportScreenInner() {
               </View>
               <View style={{ flexDirection: "row", gap: Spacing.lg, marginTop: 4 }}>
                 <ThemedText type="caption" style={{ color: theme.textSecondary }}>Check-in: <ThemedText style={{ color: Colors.light.error, fontWeight: "700" }}>{formatTime(r.first_in)}</ThemedText></ThemedText>
-                <ThemedText type="caption" style={{ color: theme.textSecondary }}>Expected: <ThemedText style={{ fontWeight: "700" }}>{r.late_threshold ? (r.late_threshold.slice(0, 5)) : "09:30"}</ThemedText></ThemedText>
+                <ThemedText type="caption" style={{ color: theme.textSecondary }}>Expected: <ThemedText style={{ fontWeight: "700" }}>{r.late_threshold ? (r.late_threshold.slice(0, 5)) : "10:32"}</ThemedText></ThemedText>
               </View>
             </View>
           ))}

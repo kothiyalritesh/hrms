@@ -98,7 +98,7 @@ export class EmployeeMasterService {
         employment_status: "ACTIVE",
         joining_date: p.created_at ? p.created_at.slice(0, 10) : null,
         shift_name: "Standard Morning Shift",
-        shift_start: "10:30:00",
+        shift_start: "10:32:00",
         shift_end: "18:30:00",
         grace_minutes: 0,
         match_status: rawId ? "MATCHED_BY_ID" : "MATCHED_BY_NAME",

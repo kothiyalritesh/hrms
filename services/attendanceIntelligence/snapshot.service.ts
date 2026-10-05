@@ -6,6 +6,7 @@
 import { AttendanceFact, CanonicalEmployee, OfficialReportSnapshot, WorkforceKPIs } from "./types";
 import { AttendanceAnalyticsService } from "./analytics.service";
 import { AttendanceReconciliationEngine } from "./reconciliation.service";
+import { getBusinessDateIST } from "@/utils/businessDate";
 
 export class AttendanceSnapshotService {
   private static snapshotStore: OfficialReportSnapshot[] = [];
@@ -26,7 +27,7 @@ export class AttendanceSnapshotService {
 
     const recStatus = hasFail ? "FAILED" : hasWarn ? "PASSED_WITH_WARNINGS" : "VERIFIED_PASS";
 
-    const dateKey = new Date().toISOString().slice(0, 10);
+    const dateKey = getBusinessDateIST();
     const countToday = this.snapshotStore.filter((s) => s.generated_at.startsWith(dateKey)).length + 1;
     const snapshotId = `ATT-${dateKey.replace(/-/g, "")}-${String(countToday).padStart(3, "0")}`;
 

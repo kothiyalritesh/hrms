@@ -33,7 +33,7 @@ export const PERMISSIONS = {
 
 export type PermissionKey = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
 
-export type PermissionScope = "GLOBAL" | "DEPARTMENT" | "OFFICE" | "TEAM" | "SELF";
+export type PermissionScope = "GLOBAL" | "DEPARTMENT" | "BRANCH" | "TEAM" | "SELF";
 
 export interface ScopedPermission {
   permission: string;
@@ -187,25 +187,39 @@ export function PermissionsProvider({ children }: { children: ReactNode }) {
       if (perms.length === 0) return false;
 
       return perms.some((p) => {
-        if (p.scope === "GLOBAL") return true;
+        // If GLOBAL with no multidimensional restrictions, allow access
+        if (p.scope === "GLOBAL" && !p.office_id && !p.department && !p.team_lead_id) {
+          return true;
+        }
 
-        if (p.scope === "OFFICE" && p.scope_id && p.scope_id === targetUser.office_id) return true;
+        // Office check
+        if (p.office_id && p.office_id !== targetUser.office_id) {
+          return false;
+        }
 
+        // Department check
         if (
-          p.scope === "DEPARTMENT" &&
-          p.scope_id &&
-          p.scope_id.trim().toLowerCase() === (targetUser.department ?? "").trim().toLowerCase()
-        ) return true;
+          p.department &&
+          p.department.trim().toLowerCase() !== (targetUser.department ?? "").trim().toLowerCase()
+        ) {
+          return false;
+        }
 
+        // Team Lead check (target is the leader or reports to the leader)
         if (
-          p.scope === "TEAM" &&
-          p.scope_id &&
-          (targetUser.id === p.scope_id || targetUser.reports_to === p.scope_id)
-        ) return true;
+          p.team_lead_id &&
+          targetUser.id !== p.team_lead_id &&
+          targetUser.reports_to !== p.team_lead_id
+        ) {
+          return false;
+        }
 
-        if (p.scope === "SELF" && currentUserId && targetUser.id === currentUserId) return true;
+        // Legacy scope checks
+        if (p.scope === "SELF" && currentUserId && targetUser.id !== currentUserId) {
+          return false;
+        }
 
-        return false;
+        return true;
       });
     },
     [scopedPermissions, currentUserId],
@@ -260,10 +274,18 @@ export async function adminGrantPermission(
 
   let scope: PermissionScope = "GLOBAL";
   let sanitizedScopeId: string | null = null;
+  let officeId: string | null = null;
+  let department: string | null = null;
+  let teamLeadId: string | null = null;
+  let teamName: string | null = null;
 
   if (typeof scopeOrOptions === "object" && scopeOrOptions !== null) {
     scope = scopeOrOptions.scope || "GLOBAL";
     sanitizedScopeId = scopeOrOptions.scopeId?.trim() || null;
+    officeId = scopeOrOptions.officeId?.trim() || null;
+    department = scopeOrOptions.department?.trim() || null;
+    teamLeadId = scopeOrOptions.teamLeadId?.trim() || null;
+    teamName = scopeOrOptions.teamName?.trim() || null;
   } else if (typeof scopeOrOptions === "string") {
     scope = scopeOrOptions;
     sanitizedScopeId = legacyScopeId?.trim() || null;
@@ -274,6 +296,10 @@ export async function adminGrantPermission(
     p_permission: permission.trim(),
     p_scope: scope,
     p_scope_id: sanitizedScopeId,
+    
+    
+    
+    
   });
   if (error) return { success: false, error: error.message };
   const result = Array.isArray(data) ? data[0] : data;
@@ -304,6 +330,10 @@ export async function adminListAllPermissions(): Promise<
     permission: string;
     scope: PermissionScope;
     scope_id: string | null;
+    office_id: string | null;
+    department: string | null;
+    team_lead_id: string | null;
+    team_name: string | null;
     granted_at: string;
     granted_by: string | null;
   }>

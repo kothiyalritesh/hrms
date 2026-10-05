@@ -299,7 +299,7 @@ function SiteVisitObserverScreenContent() {
             onPress={() => {
               const y = new Date();
               y.setDate(y.getDate() - 1);
-              const yStr = y.toISOString().split("T")[0];
+              const yStr = getBusinessDateIST(y);
               setSelectedDate(yStr);
               setSelectedEmployee(null);
               setSelectedVisit(null);

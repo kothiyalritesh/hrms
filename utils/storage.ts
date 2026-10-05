@@ -1,5 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Platform } from "react-native";
+import { getBusinessDateIST } from "@/utils/businessDate";
 
 const STORAGE_KEYS = {
   ATTENDANCE: "@hrms_attendance",
@@ -197,7 +198,7 @@ export const AttendanceStorage = {
   },
   async getTodayRecord(): Promise<AttendanceRecord | null> {
     const records = await this.getAll();
-    const today = new Date().toISOString().split("T")[0];
+    const today = getBusinessDateIST();
     return records.find((r) => r.date === today) || null;
   },
 };

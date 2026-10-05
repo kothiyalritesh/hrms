@@ -38,7 +38,7 @@ export function formatDate(input: string | number | Date | null | undefined, fal
   });
 }
 
-/** Standard date + time: "5 Jun 2026, 10:30 AM". */
+/** Standard date + time: "5 Jun 2026, 10:32 AM". */
 export function formatDateTime(input: string | number | Date | null | undefined, fallback = "—"): string {
   const d = toDate(input);
   if (!d) return fallback;
@@ -50,7 +50,7 @@ export function formatDateTime(input: string | number | Date | null | undefined,
   return `${formatDate(d)}, ${time}`;
 }
 
-/** Time only: "10:30 AM". */
+/** Time only: "10:32 AM". */
 export function formatTime(input: string | number | Date | null | undefined, fallback = "—"): string {
   const d = toDate(input);
   if (!d) return fallback;

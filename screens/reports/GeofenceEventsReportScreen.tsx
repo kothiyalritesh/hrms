@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator }
 import { supabase } from "@/lib/supabase";
 import { MaterialIcons } from "@expo/vector-icons";
 import { Colors } from "@/constants/theme";
+import { getBusinessDateIST } from "@/utils/businessDate";
 
 export default function GeofenceEventsReportScreen() {
   const [data, setData] = useState([]);
@@ -19,8 +20,8 @@ export default function GeofenceEventsReportScreen() {
     startDate.setDate(startDate.getDate() - 30); // Default last 30 days
 
     const { data: reportData, error } = await supabase.rpc("rpc_geofence_report", {
-      p_start_date: startDate.toISOString().split("T")[0],
-      p_end_date: endDate.toISOString().split("T")[0],
+      p_start_date: getBusinessDateIST(startDate),
+      p_end_date: getBusinessDateIST(endDate),
       p_user_id: null,
       p_status: null,
       p_review_status: null,

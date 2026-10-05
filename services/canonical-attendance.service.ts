@@ -92,10 +92,7 @@ export const CanonicalAttendanceService = {
           official_first_in: c.effective_checkin,
           official_last_out: c.effective_checkout,
           attendance_status: c.effective_status,
-          is_late:
-            c.app_first_in && c.late_checkin_time
-              ? c.app_first_in >= c.late_checkin_time
-              : false,
+          is_late: c.is_late ?? false,
           check_in_office_id: c.check_in_office_id ?? c.office_id,
           check_in_office_name: c.check_in_office_name ?? c.office_name,
           attendance_source:
@@ -140,7 +137,7 @@ export const CanonicalAttendanceService = {
         official_first_in: c.effective_checkin,
         official_last_out: c.effective_checkout,
         attendance_status: c.effective_status,
-        is_late: c.app_first_in && c.late_checkin_time ? c.app_first_in >= c.late_checkin_time : false,
+        is_late: c.is_late ?? false,
         check_in_office_id: c.check_in_office_id ?? c.office_id,
         check_in_office_name: c.check_in_office_name ?? c.office_name,
         attendance_source: c.attendance_source ?? (c.biometric_first_in ? 'BIOMETRIC' : 'APP'),
