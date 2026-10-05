@@ -21,6 +21,7 @@ export default function ActiveJourneyCard({
   const mapRef = useRef<HTMLDivElement>(null);
   const [nativeShell, setNativeShell] = useState(() => nativeBridge.isAvailable());
   const [mapFailed, setMapFailed] = useState(false);
+  const [distanceText, setDistanceText] = useState<string | null>(null);
 
   useEffect(() => {
     const refresh = () => setNativeShell(nativeBridge.isAvailable());
@@ -39,7 +40,8 @@ export default function ActiveJourneyCard({
       return;
     }
     let disposed = false;
-    let directionsRenderer: any = null;
+      let directionsRenderer: any = null;
+      let activeWatchId: number | undefined = undefined;
 
     void loadGoogleMaps()
       .then(async (maps) => {
@@ -66,56 +68,83 @@ export default function ActiveJourneyCard({
         });
         setMapFailed(false);
 
+        
         if (!navigator.geolocation) return;
-        navigator.geolocation.getCurrentPosition(
+        
+        let originMarker: any = null;
+        let routeDrawn = false;
+        
+        activeWatchId = navigator.geolocation.watchPosition(
           (position) => {
             if (disposed) return;
             const origin = {
               lat: position.coords.latitude,
               lng: position.coords.longitude,
             };
-            const service = new maps.DirectionsService();
-            new AdvancedMarkerElement({
-              map,
-              position: origin,
-              title: "Current location",
-            });
-            directionsRenderer = new maps.DirectionsRenderer({
-              map,
-              suppressMarkers: true,
-              polylineOptions: { strokeColor: "#6D1B6D", strokeWeight: 5 },
-            });
-            service.route(
-              {
-                origin,
-                destination,
-                travelMode: maps.TravelMode.DRIVING,
-              },
-              (result: any, status: string) => {
-                if (disposed) return;
-                if (status === "OK" && result) {
-                  directionsRenderer.setDirections(result);
-                  return;
-                }
-                const bounds = new maps.LatLngBounds();
-                bounds.extend(origin);
-                bounds.extend(destination);
-                new maps.Polyline({
-                  map,
-                  path: [origin, destination],
-                  strokeColor: "#6D1B6D",
-                  strokeWeight: 4,
-                });
-                map.fitBounds(bounds, 48);
-              },
-            );
+            
+            if (!originMarker) {
+              originMarker = new AdvancedMarkerElement({
+                map,
+                position: origin,
+                title: "Current location",
+              });
+            } else {
+              originMarker.position = origin;
+            }
+
+            // Calculate distance using haversine if geometry lib isn't loaded
+            const R = 6371; // km
+            const dLat = (destination.lat - origin.lat) * Math.PI / 180;
+            const dLon = (destination.lng - origin.lng) * Math.PI / 180;
+            const a = 
+              Math.sin(dLat/2) * Math.sin(dLat/2) +
+              Math.cos(origin.lat * Math.PI / 180) * Math.cos(destination.lat * Math.PI / 180) * 
+              Math.sin(dLon/2) * Math.sin(dLon/2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            const distance = R * c;
+            setDistanceText(distance < 1 ? `${Math.round(distance * 1000)} m away` : `${distance.toFixed(2)} km away`);
+
+            if (!routeDrawn) {
+              routeDrawn = true;
+              const service = new maps.DirectionsService();
+              directionsRenderer = new maps.DirectionsRenderer({
+                map,
+                suppressMarkers: true,
+                polylineOptions: { strokeColor: "#6D1B6D", strokeWeight: 5 },
+              });
+              service.route(
+                {
+                  origin,
+                  destination,
+                  travelMode: maps.TravelMode.DRIVING,
+                },
+                (result: any, status: string) => {
+                  if (disposed) return;
+                  if (status === "OK" && result) {
+                    directionsRenderer.setDirections(result);
+                    if (result.routes[0]?.legs[0]?.distance?.text) {
+                      setDistanceText(result.routes[0].legs[0].distance.text + " away");
+                    }
+                    return;
+                  }
+                  const bounds = new maps.LatLngBounds();
+                  bounds.extend(origin);
+                  bounds.extend(destination);
+                  new maps.Polyline({
+                    map,
+                    path: [origin, destination],
+                    strokeColor: "#6D1B6D",
+                    strokeWeight: 4,
+                  });
+                  map.fitBounds(bounds, 48);
+                },
+              );
+            }
           },
-          () => {
-            // The destination map remains useful when current-location access
-            // is unavailable or the user declines the browser prompt.
-          },
-          { enableHighAccuracy: true, timeout: 15_000, maximumAge: 30_000 },
+          () => {},
+          { enableHighAccuracy: true, timeout: 15_000, maximumAge: 5_000 },
         );
+
       })
       .catch(() => {
         if (!disposed) setMapFailed(true);
@@ -124,6 +153,7 @@ export default function ActiveJourneyCard({
     return () => {
       disposed = true;
       directionsRenderer?.setMap(null);
+      if (activeWatchId !== undefined) navigator.geolocation.clearWatch(activeWatchId);
     };
   }, [
     fallbackDestination?.journeyId,
@@ -143,8 +173,13 @@ export default function ActiveJourneyCard({
   return (
     <View style={styles.card}>
       <ThemedText style={styles.title}>
-        Route to {fallbackDestination.name}
-      </ThemedText>
+          Route to {fallbackDestination.name}
+        </ThemedText>
+        {distanceText && (
+          <ThemedText style={{ color: "#6D1B6D", fontWeight: "600", marginBottom: 8, fontSize: 14 }}>
+            {distanceText} (Live)
+          </ThemedText>
+        )}
 
       {mapFailed ? (
         <iframe

@@ -1,0 +1,129 @@
+# 🎯 ATTENDANCE CONTROL - EXACT COMMANDS TO RUN
+
+## ⚡ FASTEST FIX (30 seconds)
+
+```bash
+# From project root directory, run:
+node seed_attendance_local.js
+```
+
+Then:
+1. Refresh the Attendance Control screen
+2. Done! ✅
+
+---
+
+## 🔍 IF YOU WANT TO CHECK FIRST
+
+```bash
+# Check current database state
+node check_local_db.js
+```
+
+This will show:
+- ✅ Number of employees
+- ✅ Number of offices  
+- ✅ Attendance records for today
+- ✅ RPC status
+- ✅ Recommendations
+
+---
+
+## 🗄️ IF YOU PREFER SQL
+
+1. Open: https://localhost:54321 (Supabase Dashboard)
+2. Go to: SQL Editor
+3. Create new query
+4. Copy entire contents of: `scripts/QUICK_SEED_ATTENDANCE.sql`
+5. Paste into editor
+6. Click "Run"
+7. Done! ✅
+
+---
+
+## 🔄 IF YOU NEED TO RESET
+
+```sql
+-- Delete today's records
+DELETE FROM attendance_logs
+WHERE date = (CURRENT_DATE AT TIME ZONE 'Asia/Kolkata')::text;
+```
+
+Then run the seed script again.
+
+---
+
+## ✅ VERIFICATION
+
+After running the seed script, you should see:
+
+```
+✅ Inserted batch 1 (10 records)
+✅ Inserted batch 2 (10 records)
+
+📊 Sample records for 2026-09-25:
+
+1. John Doe
+   Office: Noida
+   Check-in: 09:15
+   Check-out: 18:30
+   Status: CHECKED_OUT
+
+2. Jane Smith
+   Office: Lucknow
+   Check-in: 09:45
+   Check-out: 17:45
+   Status: CHECKED_OUT
+
+✅ Total records created for 2026-09-25: 20
+
+🎉 Attendance data seeded successfully!
+💡 Refresh the Attendance Control screen to see the data.
+```
+
+---
+
+## 🚨 TROUBLESHOOTING
+
+### Error: "No active employees found"
+```bash
+# Create employees first in the app, then run seed script
+```
+
+### Error: "No active offices found"
+```bash
+# Create offices first in the app, then run seed script
+```
+
+### Error: "ENOENT: no such file or directory"
+```bash
+# Make sure you're in the project root directory
+cd /path/to/RealtyHRM-fixed
+node seed_attendance_local.js
+```
+
+### Still no data showing?
+```bash
+# Run diagnostic
+node check_local_db.js
+
+# Hard refresh browser
+Ctrl+Shift+R (Windows)
+Cmd+Shift+R (Mac)
+```
+
+---
+
+## 📞 SUPPORT
+
+If issues persist:
+1. Run: `node check_local_db.js`
+2. Share the output
+3. Check browser console (F12)
+4. Verify Supabase connection
+
+---
+
+## ✨ THAT'S IT!
+
+Your Attendance Control screen will now show today's attendance data. 🎉

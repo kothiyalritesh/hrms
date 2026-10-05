@@ -432,12 +432,10 @@ export default function DashboardScreen({ navigation }: DashboardScreenProps) {
     };
   }, [user?.id, isFocused, loadData]);
 
-  const onRefresh = async () => {
-    setRefreshing(true);
+  const { refreshing, onRefresh } = useScreenRefresh(async () => {
     if (user?.id) DashboardSummaryService.invalidateEmployee(user.id);
     await loadData(true);
-    setRefreshing(false);
-  };
+  });
 
   const acknowledgeEvent = async (announcement: EventAnnouncement) => {
     if (!user?.id || announcement.acknowledgedAt) return;
@@ -594,7 +592,6 @@ export default function DashboardScreen({ navigation }: DashboardScreenProps) {
   };
 
   const handleAttendanceToggle = async () => {
-    console.log("handleAttendanceToggle called");
     if (!user?.id) {
       showAlert("Error", "You must be logged in.");
       return;
@@ -606,8 +603,6 @@ export default function DashboardScreen({ navigation }: DashboardScreenProps) {
       );
       return;
     }
-    console.log("User ID:", user.id);
-    console.log("isCheckedIn:", isCheckedIn, "isCheckedOut:", isCheckedOut);
 
     if (isCheckedIn && isCheckedOut) {
       showAlert(
@@ -914,17 +909,40 @@ export default function DashboardScreen({ navigation }: DashboardScreenProps) {
               {toTitleCase(user?.name) || "User"}
             </ThemedText>
             <ThemedText type="caption" style={styles.roleText}>
-              {toTitleCase(user?.role?.replace(/_/g, " "))}
-            </ThemedText>
+                {toTitleCase(user?.role?.replace(/_/g, " "))}
+              </ThemedText>
+              <ThemedText type="caption" style={{ color: "rgba(255,255,255,0.8)", fontSize: 11, marginTop: 4 }}>
+                Updated just now
+              </ThemedText>
           </View>
           <Pressable
-            style={({ pressed }) => [
-              styles.bellBtn,
-              { opacity: pressed ? 0.7 : 1 },
-            ]}
-            onPress={() => navigation.navigate("Notifications")}
-            accessibilityLabel="Notifications"
-          >
+              style={({ pressed }) => [
+                {
+                  flexDirection: "row",
+                  alignItems: "center",
+                  borderWidth: 1,
+                  borderColor: "rgba(255,255,255,0.4)",
+                  borderRadius: 20,
+                  paddingHorizontal: 12,
+                  paddingVertical: 6,
+                  marginRight: 12,
+                  opacity: pressed ? 0.7 : 1,
+                }
+              ]}
+              onPress={onRefresh}
+            >
+              <Feather name="refresh-ccw" size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
+              <ThemedText style={{ color: "#FFFFFF", fontSize: 12, fontWeight: "600" }}>Refresh</ThemedText>
+            </Pressable>
+            
+            <Pressable
+              style={({ pressed }) => [
+                styles.bellBtn,
+                { opacity: pressed ? 0.7 : 1 },
+              ]}
+              onPress={() => navigation.navigate("Notifications")}
+              accessibilityLabel="Notifications"
+            >
             <Feather name="bell" size={20} color="#FFFFFF" />
             {unreadNotifications > 0 ? (
               <View style={styles.badge}>
@@ -941,7 +959,6 @@ export default function DashboardScreen({ navigation }: DashboardScreenProps) {
         {/* Check-In Button */}
         <Pressable
           onPress={() => {
-            console.log("Check-in button pressed");
             if (isOpenEventAttendance) setShowEventPicker(true);
             else handleAttendanceToggle();
           }}

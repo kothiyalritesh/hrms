@@ -12,14 +12,18 @@ import {
 import Feather from "@expo/vector-icons/Feather";
 import { useFocusEffect } from "@react-navigation/native";
 import { ThemedText } from "@/components/ThemedText";
+import { ModuleErrorBoundary } from "@/components/ModuleErrorBoundary";
+import { useTheme } from "@/hooks/useTheme";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
 import { AttendanceRegularizationService } from "@/services/attendance-regularization.service";
 import { firstRpcRow } from "@/utils/supabaseRpc";
 import { formatHrmsDateTime } from "@/utils/attendanceTimestamp";
+import { usePermissions } from "@/hooks/usePermissions";
 
 type Status = "PENDING" | "APPROVED" | "REJECTED";
-export default function AttendanceRegularizationScreen() {
+function AttendanceRegularizationScreenContent() {
+  const { theme } = useTheme();
   const { user } = useAuth();
   const [rows, setRows] = useState<any[]>([]);
   const [filter, setFilter] = useState<Status>("PENDING");
@@ -30,6 +34,7 @@ export default function AttendanceRegularizationScreen() {
     null,
   );
   const [notes, setNotes] = useState("");
+  const { getScopedPermission, hasPermission } = usePermissions();
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -44,6 +49,7 @@ export default function AttendanceRegularizationScreen() {
             p_status: filter,
             p_offset: offset,
             p_limit: pageSize,
+              p_office_id: (getScopedPermission('attendance.approve')?.scope === 'GLOBAL' || hasPermission('SYSTEM_ADMIN')) ? null : getScopedPermission('attendance.approve')?.scope_id,
           },
         );
         if (error) throw error;
@@ -114,8 +120,8 @@ export default function AttendanceRegularizationScreen() {
     }
   };
   return (
-    <View style={styles.container}>
-      <View style={styles.filters}>
+    <View style={[styles.container, { backgroundColor: theme.backgroundRoot }]}>
+      <View style={[styles.filters, { backgroundColor: theme.backgroundDefault }]}>
         {(["PENDING", "APPROVED", "REJECTED"] as Status[]).map((value) => (
           <Pressable
             key={value}
@@ -135,7 +141,7 @@ export default function AttendanceRegularizationScreen() {
         <ActivityIndicator color="#6D1B6D" style={{ marginTop: 40 }} />
       ) : (
         <ScrollView contentContainerStyle={styles.wrap}>
-          <ThemedText style={styles.title}>
+          <ThemedText style={[styles.title, { color: theme.text }]}>
             Attendance Regularization
           </ThemedText>
           {loadError ? (
@@ -156,24 +162,24 @@ export default function AttendanceRegularizationScreen() {
           ) : rows.length === 0 ? (
             <View style={styles.empty}>
               <Feather name="check-circle" size={36} color="#9CA3AF" />
-              <ThemedText style={styles.muted}>
+              <ThemedText style={[styles.muted, { color: theme.textSecondary }]}>
                 No {filter.toLowerCase()} requests
               </ThemedText>
             </View>
           ) : (
             rows.map((row) => (
-              <View key={row.id} style={styles.card}>
+              <View key={row.id} style={[styles.card, { backgroundColor: theme.backgroundDefault }]}>
                 <View style={styles.cardTop}>
                   <View style={{ flex: 1 }}>
-                    <ThemedText style={styles.name}>
+                    <ThemedText style={[styles.name, { color: theme.text }]}>
                       {row.profiles?.name || "Unknown employee"}
                     </ThemedText>
-                    <ThemedText type="caption" style={styles.muted}>
+                    <ThemedText type="caption" style={[styles.muted, { color: theme.textSecondary }]}>
                       {row.profiles?.employee_number || ""}
                     </ThemedText>
                   </View>
-                  <View style={styles.badge}>
-                    <ThemedText type="caption" style={styles.badgeText}>
+                  <View style={[styles.badge, { backgroundColor: theme.primary + "15" }]}>
+                    <ThemedText type="caption" style={[styles.badgeText, { color: theme.primary }]}>
                       {row.request_type.replaceAll("_", " ")}
                     </ThemedText>
                   </View>
@@ -225,15 +231,15 @@ export default function AttendanceRegularizationScreen() {
                 <ThemedText type="small" style={styles.line}>
                   Team: {row.team_name || "Unassigned"} · Office: {row.office_name || "Unassigned"}
                 </ThemedText>
-                <View style={styles.reasonBox}>
-                  <ThemedText type="caption" style={styles.muted}>
+                <View style={[styles.reasonBox, { backgroundColor: theme.backgroundSecondary }]}>
+                  <ThemedText type="caption" style={[styles.muted, { color: theme.textSecondary }]}>
                     EMPLOYEE REASON
                   </ThemedText>
                   <ThemedText>{row.reason}</ThemedText>
                 </View>
                 {row.review_notes ? (
-                  <View style={styles.reasonBox}>
-                    <ThemedText type="caption" style={styles.muted}>
+                  <View style={[styles.reasonBox, { backgroundColor: theme.backgroundSecondary }]}>
+                    <ThemedText type="caption" style={[styles.muted, { color: theme.textSecondary }]}>
                       HR NOTES
                     </ThemedText>
                     <ThemedText>{row.review_notes}</ThemedText>
@@ -268,21 +274,21 @@ export default function AttendanceRegularizationScreen() {
         animationType="fade"
         onRequestClose={() => setModal(null)}
       >
-        <View style={styles.overlay}>
-          <View style={styles.modal}>
-            <ThemedText style={styles.title}>
+        <View style={[styles.overlay, { backgroundColor: "rgba(0,0,0,0.5)" }]}>
+          <View style={[styles.modal, { backgroundColor: theme.backgroundDefault }]}>
+            <ThemedText style={[styles.title, { color: theme.text }]}>
               {modal?.approve
                 ? "Approve regularization"
                 : "Reject regularization"}
             </ThemedText>
-            <ThemedText style={styles.muted}>
+            <ThemedText style={[styles.muted, { color: theme.textSecondary }]}>
               {modal?.row?.profiles?.name} · {modal?.row?.attendance_logs?.date}
             </ThemedText>
             <ThemedText type="small" style={styles.notesLabel}>
               HR notes {modal?.approve ? "" : "*"}
             </ThemedText>
             <TextInput
-              style={styles.input}
+              style={[styles.input, { color: theme.text, borderColor: theme.border, backgroundColor: theme.backgroundRoot }]}
               multiline
               value={notes}
               onChangeText={setNotes}
@@ -293,7 +299,7 @@ export default function AttendanceRegularizationScreen() {
             />
             <View style={styles.actions}>
               <Pressable
-                style={[styles.button, styles.cancel]}
+                style={[styles.button, styles.cancel, { backgroundColor: theme.backgroundSecondary }]}
                 onPress={() => setModal(null)}
               >
                 <ThemedText>Cancel</ThemedText>
@@ -404,3 +410,11 @@ const styles = StyleSheet.create({
   },
   cancel: { backgroundColor: "#F3F4F6" },
 });
+
+export default function AttendanceRegularizationScreen() {
+  return (
+    <ModuleErrorBoundary moduleName="Attendance Regularization">
+      <AttendanceRegularizationScreenContent />
+    </ModuleErrorBoundary>
+  );
+}

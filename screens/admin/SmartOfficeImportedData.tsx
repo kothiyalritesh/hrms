@@ -159,11 +159,11 @@ export function SmartOfficeImportedData() {
         <View style={styles.section}>
           <ThemedText style={styles.sectionTitle}>Statistics</ThemedText>
           <View style={styles.statsRow}>
-            <View style={styles.statBox}>
+            <View style={[styles.statBox, { backgroundColor: theme.backgroundSecondary }]}>
               <ThemedText style={styles.statNumber}>{stats.users}</ThemedText>
               <ThemedText style={styles.statLabel}>Imported Users</ThemedText>
             </View>
-            <View style={styles.statBox}>
+            <View style={[styles.statBox, { backgroundColor: theme.backgroundSecondary }]}>
               <ThemedText style={styles.statNumber}>{stats.logs}</ThemedText>
               <ThemedText style={styles.statLabel}>Device Logs</ThemedText>
             </View>
@@ -242,8 +242,7 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 16,
     borderRadius: 12,
-    backgroundColor: Colors.light.backgroundSecondary,
-    alignItems: "center",
+        alignItems: "center",
   },
   statNumber: {
     fontSize: 28,

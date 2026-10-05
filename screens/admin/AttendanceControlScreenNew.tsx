@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect } from "react";
 import {
   StyleSheet, View, FlatList, Pressable,
-  Alert, TextInput, TouchableOpacity, ScrollView, Text, Modal,
+  Alert, TextInput, TouchableOpacity, ScrollView, Text, Modal, Platform,
 } from "react-native";
 import Feather from "@expo/vector-icons/Feather";
 import { useFocusEffect } from "@react-navigation/native";
@@ -17,6 +17,7 @@ import LocationTimelineModal, {
 import { biometricSyncService } from "@/services/biometric-sync-secure.service";
 import { useNavigation } from "@react-navigation/native";
 import { AttendanceService } from "@/services/attendance.service";
+import { usePermissions } from "@/hooks/usePermissions";
 import { useAuth } from "@/contexts/AuthContext";
 import { BusinessClockService } from "@/services/business-clock.service";
 import {
@@ -152,7 +153,11 @@ export default function AttendanceControlScreenNew() {
   const [activePreset, setActivePreset] = useState("Today");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
-  const [officeFilter, setOfficeFilter] = useState("");
+  const { getScopedPermission, hasPermission } = usePermissions();
+  const perm = getScopedPermission('attendance.view');
+  const isGlobal = perm?.scope === 'GLOBAL' || hasPermission('SYSTEM_ADMIN');
+  const forcedOfficeId = isGlobal ? null : perm?.scope_id || "NOT_ALLOWED";
+  const [officeFilter, setOfficeFilter] = useState(forcedOfficeId || "");
   const [employeeFilter, setEmployeeFilter] = useState("");
   const [expandedDates, setExpandedDates] = useState<Set<string>>(new Set());
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
@@ -440,7 +445,7 @@ export default function AttendanceControlScreenNew() {
     }
     
     const [canonicalRows, attLogRes, offRes, empRes] = await Promise.all([
-      CanonicalAttendanceService.list(s, e),
+      CanonicalAttendanceService.list(s, e, 20_000, forcedOfficeId ? { office_id: forcedOfficeId } : undefined),
         fetchAllPages<any>((from, to) =>
           supabase.from("attendance_logs").select("user_id, date, office_id")
             .gte("date", s).lte("date", e).order("user_id").order("id").range(from, to)
@@ -458,12 +463,13 @@ export default function AttendanceControlScreenNew() {
     if (empRes.error) throw empRes.error;
 
     // Preserve the last valid reconciliation map if the biometric source fails.
-    const punchMap: Record<string, { first: string; last: string | null }> = {};
+    const officeMap = new Map<string, string>();
+      const punchMap: Record<string, { first: string; last: string | null }> = {};
     const allPunchesMap: Record<string, string[]> = {};
     try {
-      const attOfficeMap = new Map<string, string>();
+      
       for (const a of (attLogRes?.data || [])) {
-        attOfficeMap.set(a.user_id + '_' + a.date, a.office_id);
+        officeMap.set(a.user_id + '_' + a.date, a.office_id);
       }
       
       const deviceRes = await fetchAllPages<any>((from, to) =>
@@ -512,7 +518,7 @@ export default function AttendanceControlScreenNew() {
       distance_from_office: r.distance_from_office_m,
       employee_name: toTitleCase(r.employee_name ?? ''),
       office_name: r.office_name ?? '',
-        punch_office_id: attOfficeMap.get(r.user_id + '_' + r.work_date) || r.office_id,
+        punch_office_id: officeMap.get(r.user_id + '_' + r.work_date) || r.office_id,
       attendance_type: r.presence_source,
       smartoffice_imported: r.first_in_source === 'BIOMETRIC',
       biometric_punches: [r.biometric_first_in, r.biometric_last_punch_evidence].filter(Boolean),
@@ -520,7 +526,7 @@ export default function AttendanceControlScreenNew() {
     if (officeFilter) data = data.filter((r: any) => r.office_id === officeFilter);
     if (employeeFilter) data = data.filter((r: any) => r.user_id === employeeFilter);
     setRecords(data);
-    setOffices(offRes.data || []);
+    setOffices((offRes.data || []).filter(o => !forcedOfficeId || o.id === forcedOfficeId));
       const officeNameMap = new Map((offRes.data || []).map(o => [o.id, o.name]));
       data = data.map(r => {
         if (r.punch_office_id && r.punch_office_id !== r.office_id) {
@@ -2682,7 +2688,7 @@ export default function AttendanceControlScreenNew() {
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                     <View style={{ flex: 1 }}>
                       <ThemedText style={[s.empName, { color: textColor }]}>{item.employee_name}</ThemedText>
-                      <ThemedText style={[s.meta, { color: theme.textSecondary }]}>{item.office_name}</ThemedText>
+                      <ThemedText style={[s.meta, { color: theme.textSecondary }]}>{(item as any).check_in_office_name ?? item.office_name}</ThemedText>
                       <View style={{ flexDirection: 'row', gap: 10, marginTop: 6, flexWrap: 'wrap' }}>
                         <View style={s.timeChip}>
                           <Feather name="log-in" size={11} color="#10B981" />
@@ -2878,7 +2884,7 @@ export default function AttendanceControlScreenNew() {
                               {/* Employee name + office header */}
                               <View style={{ paddingHorizontal: 12, paddingTop: 10, paddingBottom: 6 }}>
                                 <ThemedText style={[s.empName, { color: textColor }]}>{item.employee_name}</ThemedText>
-                                <ThemedText style={[s.meta, { color: theme.textSecondary }]}>{item.office_name}</ThemedText>
+                                <ThemedText style={[s.meta, { color: theme.textSecondary }]}>{(item as any).check_in_office_name ?? item.office_name}</ThemedText>
                               </View>
                               {/* Left / Right split */}
                               <View style={{ flexDirection: 'row', borderTopWidth: 1, borderTopColor: theme.backgroundRoot }}>
@@ -2956,7 +2962,7 @@ export default function AttendanceControlScreenNew() {
                               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                                 <View style={{ flex: 1 }}>
                                   <ThemedText style={[s.empName, { color: textColor }]}>{item.employee_name}</ThemedText>
-                                  <ThemedText style={[s.meta, { color: theme.textSecondary }]}>{item.office_name}</ThemedText>
+                                  <ThemedText style={[s.meta, { color: theme.textSecondary }]}>{(item as any).check_in_office_name ?? item.office_name}</ThemedText>
                                   <View style={{ gap: 4, marginTop: 6 }}>
                                     <View style={[s.sourceRow, { backgroundColor: '#7C3AED12' }]}>
                                       <Feather name="cpu" size={10} color="#7C3AED" />
@@ -3012,15 +3018,25 @@ export default function AttendanceControlScreenNew() {
                             <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 10 }}>
                               <View style={{ flex: 1 }}>
                                 <ThemedText style={[s.empName, { color: textColor }]}>{item.employee_name}</ThemedText>
-                                <ThemedText style={[s.meta, { color: theme.textSecondary }]}>{item.office_name || 'Office not assigned'}</ThemedText>
+                                <ThemedText style={[s.meta, { color: theme.textSecondary }]}>{(item as any).check_in_office_name ?? (item.office_name || 'Office not assigned')}</ThemedText>
                                 <ThemedText style={[s.timeText, { color: textColor, marginTop: 6 }]}>
                                   {item.first_in_source || item.attendance_type || 'Verified'} · {fmt(item.checkin_time)}
                                 </ThemedText>
                               </View>
-                              <View style={[s.statusBadge, { backgroundColor: '#2563EB20' }]}>
-                                <ThemedText style={[s.statusText, { color: '#2563EB' }]}>{attendanceStatusLabel(item, today)}</ThemedText>
+                              
+                                <View style={[s.statusBadge, { backgroundColor: '#2563EB20' }]}>
+                                  <ThemedText style={[s.statusText, { color: '#2563EB' }]}>{attendanceStatusLabel(item, today)}</ThemedText>
+                                </View>
                               </View>
-                            </View>
+                              {((item as any).active_site_name || (item as any).active_field_visit_name) && (
+                                <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}>
+                                  <View style={[s.statusBadge, { backgroundColor: '#8B5CF620', flexDirection: 'row', alignItems: 'center', gap: 4 }]}>
+                                    <Feather name="map-pin" size={10} color="#8B5CF6" />
+                                    <ThemedText style={[s.statusText, { color: '#8B5CF6' }]}>Site: {(item as any).active_site_name || (item as any).active_field_visit_name}</ThemedText>
+                                  </View>
+                                </View>
+                              )}
+
                           </View>
                         ))}
                       </View>
@@ -3040,7 +3056,7 @@ export default function AttendanceControlScreenNew() {
                               <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 10 }}>
                                 <View style={{ flex: 1 }}>
                                   <ThemedText style={[s.empName, { color: textColor }]}>{item.employee_name}</ThemedText>
-                                  <ThemedText style={[s.meta, { color: theme.textSecondary }]}>{item.office_name || 'Office not assigned'}</ThemedText>
+                                  <ThemedText style={[s.meta, { color: theme.textSecondary }]}>{(item as any).check_in_office_name ?? (item.office_name || 'Office not assigned')}</ThemedText>
                                   <ThemedText style={{ fontSize: 11, color: theme.textSecondary, marginTop: 5 }}>{emptyState.detail}</ThemedText>
                                 </View>
                                 <View style={[s.statusBadge, { backgroundColor: `${accent}20` }]}>
@@ -3233,8 +3249,9 @@ const s = StyleSheet.create({
     gap: 10,
     paddingVertical: 16,
     borderRadius: 14,
-    elevation: 6,
-    boxShadow: "0 3px 6px rgba(0,0,0,0.2)",
+    ...(Platform.OS === "web"
+      ? { boxShadow: "0 3px 6px rgba(0,0,0,0.2)" }
+      : { elevation: 6 }),
   },
   stickyDownloadText: {
     color: "#fff",

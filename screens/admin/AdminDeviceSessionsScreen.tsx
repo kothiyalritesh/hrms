@@ -99,7 +99,7 @@ export default function AdminDeviceSessionsScreen() {
                         {row.employee_name}
                       </ThemedText>
                       <ThemedText style={{ fontSize: 12, color: theme.textSecondary }}>
-                        {row.employee_number ? Emp ID: \ A  : ""}
+                        {row.employee_number ? `Emp ID: ${row.employee_number} - ` : ""}
                         Last used: {new Date(row.last_used).toLocaleDateString()}
                       </ThemedText>
                     </View>

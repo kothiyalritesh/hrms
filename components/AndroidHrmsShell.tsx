@@ -1,3 +1,4 @@
+import * as Notifications from 'expo-notifications';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -74,8 +75,8 @@ const BRIDGE_BOOTSTRAP = `
 (function () {
   Object.defineProperty(window, "__BOP_NATIVE_SHELL__", {
     value: Object.freeze({
-      bridge: ${JSON.stringify(NATIVE_BRIDGE_NAME)},
-      version: ${NATIVE_BRIDGE_VERSION},
+      bridge: \"bop.hrms.native\",
+      version: 1,
       platform: "android"
     }),
     writable: false,
@@ -113,7 +114,7 @@ export default function AndroidHrmsShell({
           "The hosted HRMS took longer than 7 seconds. Opening the built-in HRMS.",
         );
       }
-    }, 7_000);
+    }, 30_000);
     return () => clearTimeout(startupTimer);
   }, [onUseBundledApp, reloadKey]);
 
@@ -157,7 +158,7 @@ export default function AndroidHrmsShell({
     };
   }, []);
 
-  const Notifications = { NotificationResponse: null, clearLastNotificationResponseAsync: async () => {}, addNotificationReceivedListener: () => ({ remove: () => {} }), getLastNotificationResponseAsync: async () => null, addNotificationResponseReceivedListener: () => ({ remove: () => {} }) }; const forwardNotificationResponse = useCallback(
+  const forwardNotificationResponse = useCallback(
     (response: Notifications.NotificationResponse) => {
       const identifier = response.notification.request.identifier;
       const key = `${identifier}:${response.actionIdentifier}`;
@@ -184,7 +185,7 @@ export default function AndroidHrmsShell({
         }),
       );
     });
-    const opened = { addNotificationResponseReceivedListener: () => ({ remove: () => {} }) }.addNotificationResponseReceivedListener(
+    const opened = Notifications.addNotificationResponseReceivedListener(
       forwardNotificationResponse,
     );
     void Notifications.getLastNotificationResponseAsync().then((response) => {
@@ -290,7 +291,8 @@ export default function AndroidHrmsShell({
         }
         case "auth.clearSession":
           locationTrackingCoordinator.dispose();
-          await supabase.auth.signOut({ scope: "local" });
+          // FIXED: Removed supabase.auth.signOut({ scope: "local" }); 
+          // The web app handles its own session. Native shouldn't nuke it here.
           return { authenticated: false };
         case "notifications.getPermission":
           return { granted: await isNotificationPermissionGranted() };
@@ -444,7 +446,7 @@ export default function AndroidHrmsShell({
           onOpenWindow={(event) => {
             const target = event.nativeEvent.targetUrl;
             if (isAllowedHrmsUrl(target)) webViewRef.current?.injectJavaScript(
-              `window.location.assign(${JSON.stringify(target)}); true;`,
+              `window.location.assign(decodeURIComponent("${encodeURIComponent(target)}")); true;`,
             );
             else void Linking.openURL(target).catch(() => undefined);
           }}
@@ -460,8 +462,8 @@ export default function AndroidHrmsShell({
           )}
           javaScriptEnabled
           domStorageEnabled
-          cacheEnabled={false}
-          cacheMode="LOAD_NO_CACHE"
+          cacheEnabled={true}
+          cacheMode="LOAD_DEFAULT"
           sharedCookiesEnabled
           thirdPartyCookiesEnabled={false}
           pullToRefreshEnabled

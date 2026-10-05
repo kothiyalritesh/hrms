@@ -87,7 +87,12 @@ function WebAppShell() {
 
   useEffect(() => {
     if (Platform.OS !== "web" || typeof document === "undefined") return;
-    const applicationRoot = new URL(webBasePath, window.location.origin);
+    const isUnderWebBasePath =
+      webBasePath !== "/" && window.location.pathname.startsWith(webBasePath);
+    const applicationRoot = new URL(
+      isUnderWebBasePath ? webBasePath : "/",
+      window.location.origin,
+    );
     const manifestUrl = new URL("manifest.webmanifest", applicationRoot).href;
     let manifest = document.querySelector(
       'link[rel="manifest"]',
@@ -179,7 +184,7 @@ function WebAppShell() {
       );
       void navigator.serviceWorker
         .register(workerUrl.href, {
-          scope: webBasePath,
+          scope: isUnderWebBasePath ? webBasePath : "/",
           updateViaCache: "none",
         })
         .then((registration) => {

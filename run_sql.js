@@ -1,15 +1,12 @@
-const fs = require('fs');
-const dotenv = require('dotenv');
-
-const envConfig = dotenv.parse(fs.readFileSync('.env.local'));
 const { createClient } = require('@supabase/supabase-js');
-const supabase = createClient(envConfig.EXPO_PUBLIC_SUPABASE_URL, envConfig.EXPO_PUBLIC_SUPABASE_ANON_KEY);
+const fs = require('fs');
+const env = fs.readFileSync('.env', 'utf8');
+const supabaseUrl = env.match(/EXPO_PUBLIC_SUPABASE_URL=(.*)/)[1].trim();
+const supabaseKey = env.match(/EXPO_PUBLIC_SUPABASE_ANON_KEY=(.*)/)[1].trim();
+const supabase = createClient(supabaseUrl, supabaseKey);
 
-const sql = fs.readFileSync('supabase/migrations/20260923020000_date_of_joining_in_save_profile.sql', 'utf8');
-
-async function run() {
-  // Try to use Postgres directly since raw SQL via JS API is tricky
-  // Actually, we can use an Edge Function if they have one, or just psql.
-  console.log('Fetching database URL from env...');
+async function test() {
+  const res = await fetch(supabaseUrl + '/rest/v1/', { headers: { 'apikey': supabaseKey } });
+  console.log(await res.text());
 }
-run();
+test();

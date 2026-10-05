@@ -10,12 +10,14 @@ export type ProfileStackParamList = {
   LeaveScreen: undefined;
   Notifications: undefined;
   MyTeam: undefined;
+  HelpSupport: undefined;
 };
 
 const Stack = createNativeStackNavigator<ProfileStackParamList>();
 const LeaveScreen = deferredScreen(() => import("@/screens/LeaveScreen"));
 const NotificationsScreen = deferredScreen(() => import("@/screens/NotificationsScreen"));
-const MyTeamScreen = deferredScreen(() => import("@/screens/MyTeamScreen"));
+const MyTeamScreen = deferredScreen(() => import("@/screens/MyTeamScreen")); 
+const HelpSupportScreen = deferredScreen(() => import("@/screens/HelpSupportScreen"));
 
 export default function ProfileStackNavigator() {
   const { theme, isDark } = useTheme();
@@ -32,7 +34,7 @@ export default function ProfileStackNavigator() {
       <Stack.Screen
         name="LeaveScreen"
         component={LeaveScreen}
-        options={{ headerTitle: "Leave Management" }}
+        options={{ headerTitle: "Leave History" }}
       />
       <Stack.Screen
         name="Notifications"
@@ -44,6 +46,7 @@ export default function ProfileStackNavigator() {
         component={MyTeamScreen}
         options={{ headerTitle: "Team Reports" }}
       />
+      <Stack.Screen name="HelpSupport" component={HelpSupportScreen} options={{ headerTitle: "Help & Support" }} />
     </Stack.Navigator>
   );
 }

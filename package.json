@@ -50,6 +50,7 @@
     "expo-image-picker": "~56.0.22",
     "expo-linking": "~56.0.16",
     "expo-location": "~56.0.22",
+    "expo-notifications": "~56.0.26",
     "expo-secure-store": "~56.0.4",
     "expo-sharing": "~56.0.23",
     "expo-splash-screen": "~56.0.14",
@@ -78,6 +79,7 @@
   "devDependencies": {
     "@react-native/jest-preset": "^0.85.3",
     "@types/jest": "29.5.14",
+    "@types/node": "^26.6.3",
     "@types/react": "~19.2.14",
     "babel-plugin-module-resolver": "^5.0.2",
     "eslint": "^9.25.0",

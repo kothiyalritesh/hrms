@@ -11,6 +11,7 @@ import Spacer from "@/components/Spacer";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/contexts/AuthContext";
 import { EventService } from "@/services/event.service";
+import { getBusinessDateIST } from "@/utils/businessDate";
 import { PaginationControls } from "@/components/PaginationControls";
 
 const PAGE_SIZE = 50;
@@ -222,8 +223,17 @@ export default function NotificationsScreen() {
     }
   };
 
-  const today    = notifications.filter((n) => new Date(n.created_at).toDateString() === new Date().toDateString());
-  const earlier  = notifications.filter((n) => new Date(n.created_at).toDateString() !== new Date().toDateString());
+  const todayDateIST = getBusinessDateIST();
+  const today    = notifications.filter((n) => {
+    // n.created_at is timestamptz (e.g. "2026-09-30T23:59:00+00:00")
+    // We must format it to IST before string comparison, otherwise 11 PM UTC matches tomorrow's date in IST.
+    const notifIST = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(n.created_at));
+    return notifIST === todayDateIST;
+  });
+  const earlier  = notifications.filter((n) => {
+    const notifIST = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(n.created_at));
+    return notifIST !== todayDateIST;
+  });
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.backgroundRoot }}>

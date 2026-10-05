@@ -267,7 +267,7 @@ export default function LeaveScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: theme.backgroundRoot }}>
       <PageHeader
-        title="Leave & Calendar"
+        title="Leave History"
         subtitle={`${leaves.filter((l) => l.status === "pending").length} pending approval`}
         rightIcon="plus"
         rightLabel="Apply"

@@ -335,6 +335,8 @@ export default function AttendanceScreen() {
               attendanceSource: result.data.checkin_source ?? result.data.attendance_type,
               attendanceContext: result.data.attendance_context ?? result.data.attendance_type,
               contextName: result.data.context_location_name ?? result.data.checkin_location_name,
+                registeredOfficeName: result.data.registeredOfficeName,
+                checkInOfficeName: result.data.checkInOfficeName,
             };
             setTodayRecord(dbRecord);
             setTodayStatus(dbRecord.status);
@@ -1012,6 +1014,7 @@ export default function AttendanceScreen() {
                   second: "2-digit",
                   timeZone: "Asia/Kolkata",
                 })}
+                  {todayRecord.contextName ? ` (${todayRecord.contextName})` : ""}
               </ThemedText>
             </View>
           ) : null}
@@ -1458,6 +1461,21 @@ export default function AttendanceScreen() {
 
         {selectedRecord ? (
           <>
+            {selectedRecord.registeredOfficeName && selectedRecord.checkInOfficeName ? (
+              <View style={[styles.policyNote, { backgroundColor: theme.infoBg, borderColor: theme.info, marginBottom: 12 }]}>
+                <Feather name="map-pin" size={16} color={theme.infoText} />
+                <View style={{ flex: 1, flexDirection: 'row', justifyContent: 'space-between' }}>
+                  <View>
+                    <ThemedText type="caption" style={{ color: theme.infoText }}>Registered Office</ThemedText>
+                    <ThemedText style={{ color: theme.infoText, fontWeight: "700" }}>{selectedRecord.registeredOfficeName}</ThemedText>
+                  </View>
+                  <View style={{ alignItems: 'flex-end' }}>
+                    <ThemedText type="caption" style={{ color: theme.infoText }}>Actual Check-In</ThemedText>
+                    <ThemedText style={{ color: theme.infoText, fontWeight: "800" }}>{selectedRecord.checkInOfficeName}</ThemedText>
+                  </View>
+                </View>
+              </View>
+            ) : null}
             <View style={styles.selectedDayGrid}>
               <View
                 style={[

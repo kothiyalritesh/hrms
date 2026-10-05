@@ -1,5 +1,5 @@
-import React, { useState, useCallback } from "react";
-import { StyleSheet, View, FlatList, Pressable } from "react-native";
+﻿import React, { useState, useCallback } from "react";
+import { StyleSheet, View, FlatList, Pressable, Platform, ScrollView } from "react-native";
 import Feather from "@expo/vector-icons/Feather";
 import { useFocusEffect } from "@react-navigation/native";
 import { ThemedText } from "@/components/ThemedText";
@@ -30,6 +30,12 @@ export default function AuditLogsScreen() {
   const [filter, setFilter] = useState<string>("all");
   const [page, setPage] = useState(0);
   const [total, setTotal] = useState(0);
+
+    const [summary, setSummary] = useState<any>(null);
+  const loadSummary = useCallback(async () => {
+    const { data } = await supabase.rpc("rpc_admin_audit_logs_summary");
+    if (data) setSummary(data);
+  }, []);
 
   const loadAuditLogs = useCallback(async () => {
     setLoading(true);
@@ -144,7 +150,7 @@ export default function AuditLogsScreen() {
           </ThemedText>
 
           <ThemedText type="caption" style={{ color: theme.textSecondary }}>
-            By: {item.user_name || "System"} •{" "}
+            By: {item.user_name || "System"} â€¢{" "}
             {new Date(item.performed_at).toLocaleString()}
           </ThemedText>
 
@@ -193,6 +199,22 @@ export default function AuditLogsScreen() {
     { label: "Users", value: "profiles" },
     { label: "Tasks", value: "tasks" },
   ];
+
+  
+  const downloadCSV = () => {
+    if (Platform.OS !== "web") {
+      alert("Export is only supported on Web.");
+      return;
+    }
+    const header = "Action,Table,Record ID,Performed By,Date\n";
+    const rows = logs.map(l => `"${l.action}","${l.table_name}","${l.record_id}","${l.user_name || l.performed_by}","${new Date(l.performed_at).toLocaleString()}"`).join("\n");
+    const blob = new Blob([header + rows], { type: "text/csv" });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "Audit_Logs.csv";
+    a.click();
+  };
 
   return (
     <View style={styles.container}>
@@ -292,6 +314,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  summaryCard: { padding: 16, borderRadius: 12, borderWidth: 1, minWidth: 140, marginRight: 12 },
   list: {
     gap: Spacing.md,
   },
@@ -328,3 +351,4 @@ const styles = StyleSheet.create({
     fontSize: 11,
   },
 });
+

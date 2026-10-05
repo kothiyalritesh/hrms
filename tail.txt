@@ -1,0 +1,40 @@
+
+    AND (NOT p_exceptions_only OR report.attendance_status IN ('ABSENT','LATE','CONFIG_REQUIRED') OR (report.official_first_in IS NOT NULL AND report.official_last_out IS NULL) OR upper(COALESCE(report.fraud_severity,'')) IN ('WARNING','SUSPICIOUS') OR report.tracking_health_reason IS NOT NULL)
+
+  ORDER BY report.work_date DESC, report.employee_number NULLS LAST, report.user_id
+
+  OFFSET p_offset LIMIT p_limit;
+
+END;
+
+$$;
+
+
+
+REVOKE ALL ON FUNCTION public.rpc_admin_attendance_report_v4(date,date,integer,integer,text[],text[],text[],text[],text[],text[],text,boolean) FROM public, anon;
+
+GRANT EXECUTE ON FUNCTION public.rpc_admin_attendance_report_v4(date,date,integer,integer,text[],text[],text[],text[],text[],text[],text,boolean) TO authenticated;
+
+-- ─── STEP 4: Grants ──────────────────────────────────────────────────────────
+
+
+
+REVOKE ALL ON public.v_attendance_daily_canonical FROM public, anon, authenticated;
+
+GRANT SELECT ON public.v_attendance_daily_canonical TO authenticated;
+
+
+
+REVOKE ALL ON FUNCTION public.rpc_attendance_canonical_range(date, date, uuid, uuid, uuid) FROM public, anon;
+
+GRANT EXECUTE ON FUNCTION public.rpc_attendance_canonical_range(date, date, uuid, uuid, uuid) TO authenticated;
+
+
+
+REVOKE ALL ON FUNCTION public.rpc_my_attendance_daily_v3(date, date) FROM public, anon;
+
+GRANT EXECUTE ON FUNCTION public.rpc_my_attendance_daily_v3(date, date) TO authenticated;
+
+
+
+NOTIFY pgrst, 'reload schema';

@@ -1,0 +1,98 @@
+# 🚀 QUICK FIX: Attendance Control - No Data on Local
+
+## The Issue
+✗ Attendance Control screen shows no data on local  
+✓ Works perfectly on production  
+✓ Screen code is correct  
+
+**Root Cause:** Local database has no attendance records for today
+
+---
+
+## The Fix (Choose One)
+
+### 🟢 Option 1: Node.js Script (Easiest)
+```bash
+node seed_attendance_local.js
+```
+**What it does:**
+- Creates 20 sample attendance records for today
+- Assigns realistic times (9-10 AM check-in, 5-6 PM check-out)
+- Links to active employees and offices
+- Shows verification output
+
+---
+
+### 🟡 Option 2: SQL Script (Direct)
+1. Open Supabase Dashboard → SQL Editor
+2. Copy entire contents of: `scripts/QUICK_SEED_ATTENDANCE.sql`
+3. Paste and execute
+4. Done!
+
+---
+
+### 🔵 Option 3: Check First (Diagnostic)
+```bash
+node check_local_db.js
+```
+**Shows:**
+- Number of active employees
+- Number of active offices
+- Attendance records for today
+- RPC function status
+- Recommendations
+
+---
+
+## After Seeding
+
+1. **Refresh the app**
+   - Go to Attendance Control screen
+   - Pull to refresh or click "Reload Data"
+
+2. **You should see:**
+   - ✅ Today's date with attendance records
+   - ✅ Employee names and offices
+   - ✅ Check-in and check-out times
+   - ✅ Attendance status
+
+---
+
+## Troubleshooting
+
+| Issue | Solution |
+|-------|----------|
+| Still no data | Run `node check_local_db.js` to diagnose |
+| "No active employees" | Create employees in User Management first |
+| "No active offices" | Create offices in Office Settings first |
+| RPC error | Ensure migrations are deployed |
+| Browser cache issue | Hard refresh: Ctrl+Shift+R |
+
+---
+
+## Reset Data (if needed)
+
+```sql
+DELETE FROM attendance_logs
+WHERE date = (CURRENT_DATE AT TIME ZONE 'Asia/Kolkata')::text;
+```
+
+---
+
+## Files Created
+
+| File | Purpose |
+|------|---------|
+| `seed_attendance_local.js` | Node.js seeding script |
+| `check_local_db.js` | Database diagnostic tool |
+| `scripts/QUICK_SEED_ATTENDANCE.sql` | SQL seeding script |
+| `SEED_LOCAL_ATTENDANCE.md` | Detailed guide |
+| `ATTENDANCE_CONTROL_LOCAL_FIX.md` | Full documentation |
+
+---
+
+## ✅ Status
+
+**RESOLVED** - Use any of the 3 options above to populate local data
+
+**Next:** Run the seed script and refresh the Attendance Control screen

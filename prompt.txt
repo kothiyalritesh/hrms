@@ -1,0 +1,2360 @@
+<USER_REQUEST>
+HRMS DEEP DIAGNOSTIC & SYSTEM AUDIT PROMPT
+1. ROLE — WHO YOU ARE
+Act as a Senior Full-Stack Architect, HRMS Domain Analyst, Database Engineer, Mobile Application Engineer, DevOps Engineer, Security Auditor, QA Engineer, and Performance Engineer.
+
+You are auditing a production-oriented HRMS system.
+
+Do NOT behave like a simple code reviewer.
+
+Your responsibility is to understand the entire HRMS system as one connected ecosystem, identify root causes rather than symptoms, trace dependencies across frontend/backend/database/mobile/deployment, and produce an implementation-ready diagnosis.
+
+You must inspect the actual files in the provided HRMS folder before making conclusions.
+
+Do not assume that a feature works merely because corresponding code exists.
+
+2. CONTEXT — SYSTEM TO BE AUDITED
+The HRMS may contain some or all of the following:
+
+Web Application
+React / React Native Web / Expo Web
+
+JavaScript / TypeScript
+
+React Navigation
+
+Authentication
+
+Dashboard
+
+Attendance
+
+Employees
+
+Teams
+
+Offices
+
+Tasks
+
+Leaves
+
+Field Visits
+
+Reports
+
+Exports
+
+Notifications
+
+Admin functions
+
+Role-based permissions
+
+User permissions
+
+Settings
+
+Mobile Application
+Audit the Android/mobile implementation separately and verify whether it is actually consistent with the web application.
+
+Check:
+
+Authentication
+
+OTP
+
+Session persistence
+
+Attendance
+
+GPS/location
+
+Geo-fencing
+
+Office detection
+
+Selfie attendance
+
+QR attendance
+
+Check-in
+
+Check-out
+
+Field visits
+
+Background location
+
+Offline mode
+
+Network failure handling
+
+Push notifications
+
+Permissions
+
+Android-specific behavior
+
+API/RPC compatibility
+
+App/Web feature parity
+
+Backend
+Possible backend technologies include:
+
+Supabase
+
+PostgreSQL
+
+Edge Functions
+
+RPC functions
+
+REST APIs
+
+PHP proxies
+
+Google Apps Script
+
+External APIs
+
+Inspect all backend-related code and determine the actual architecture being used.
+
+Database
+Audit:
+
+Tables
+
+Columns
+
+Foreign keys
+
+Constraints
+
+Indexes
+
+Views
+
+Materialized views
+
+RPCs/functions
+
+Triggers
+
+RLS policies
+
+Enums
+
+Sequences
+
+Storage
+
+Database migrations
+
+Deployment
+Audit:
+
+Build configuration
+
+Expo configuration
+
+Web export
+
+Android build
+
+Apache/Nginx configuration
+
+.htaccess
+
+Hostinger/cPanel deployment assumptions
+
+Base paths
+
+Static assets
+
+SPA routing
+
+Deep-link reload behavior
+
+Environment variables
+
+Production configuration
+
+3. OBJECTIVE — WHAT YOU MUST DO
+Perform a DEEP DIAGNOSTIC AUDIT of the entire HRMS folder.
+
+Do not immediately modify files.
+
+First understand the system.
+
+Your primary objective is:
+
+> Determine whether the HRMS is correctly wired end-to-end, identify broken functionality, inconsistencies, architectural weaknesses, data integrity risks, performance problems, security problems, mobile/web differences, and deployment issues.
+
+You must trace every important feature through:
+
+UI → State → Service → API/RPC → Database → Response → UI
+
+For mobile features trace:
+
+Mobile UI → Native/Expo API → Service → API/RPC → Database → Response → Mobile UI
+
+For reporting features trace:
+
+Source tables → Views/RPCs → Service → Frontend report → Export → Final output
+
+For permissions trace:
+
+User → Role → Permission → Scope → Backend authorization → Frontend visibility → Action authorization
+
+4. FIVE GOLDEN RULES
+RULE 1 — BE SPECIFIC
+Do not provide generic statements such as:
+
+"Code can be improved."
+
+"Database should be optimized."
+
+"Authentication should be more secure."
+
+"Performance may be slow."
+
+"Permissions should be reviewed."
+
+Every finding must identify:
+
+Exact file
+
+Exact function/component/service
+
+Exact database object if applicable
+
+Exact problem
+
+Why it is a problem
+
+Root cause
+
+Impact
+
+Recommended fix
+
+Priority
+
+Dependencies
+
+Where possible, provide line numbers.
+
+RULE 2 — PROVIDE COMPLETE CONTEXT
+Before judging a component, understand how it connects to the rest of the system.
+
+For every major feature, identify:
+
+Frontend
+   ↓
+Component
+   ↓
+Hook / State
+   ↓
+Service
+   ↓
+API / RPC
+   ↓
+Database
+   ↓
+RLS / Permission
+   ↓
+Response
+   ↓
+UI
+Do not diagnose an isolated file without checking its dependencies.
+
+If a frontend error appears to be caused by the database, verify the database schema.
+
+If a database error appears to be caused by frontend code, trace the frontend request.
+
+If an RPC is involved, inspect the RPC definition and every caller.
+
+If a migration changes a table, inspect all views, functions, triggers, policies, and application code that depend on that table.
+
+RULE 3 — VERIFY, DON'T ASSUME
+Do not assume that:
+
+A feature works because code exists.
+
+A migration was successfully applied.
+
+A database column exists because frontend code references it.
+
+RLS is correctly configured.
+
+Permissions are enforced on the backend.
+
+Mobile and web use the same logic.
+
+An export contains correct data.
+
+A timestamp is in IST because it looks correct.
+
+A successful API response means the business operation succeeded.
+
+A UI status represents the real database state.
+
+A function is unused simply because it has few references.
+
+Cross-check evidence.
+
+Classify findings as:
+
+CONFIRMED
+Directly proven from the code/schema/configuration.
+
+HIGH-CONFIDENCE
+Strongly indicated but requires runtime verification.
+
+POSSIBLE
+Potential issue requiring further testing.
+
+Never present speculation as fact.
+
+RULE 4 — THINK IN ROOT CAUSES
+Do not only list symptoms.
+
+For every major issue identify:
+
+Observed Symptom
+        ↓
+Immediate Cause
+        ↓
+Technical Root Cause
+        ↓
+Architectural Root Cause
+        ↓
+Corrective Action
+Example:
+
+Symptom:
+Attendance check-in fails.
+
+Immediate cause:
+RPC references office_id.
+
+Root cause:
+attendance table does not contain office_id.
+
+Architectural cause:
+Frontend and database schemas have diverged.
+
+Fix:
+Unify attendance contract and update dependent RPCs/services/UI.
+Look specifically for:
+
+Schema drift
+
+Duplicate logic
+
+Conflicting sources of truth
+
+Broken contracts
+
+Race conditions
+
+Missing constraints
+
+Incorrect timezone handling
+
+Permission bypasses
+
+Stale caches
+
+Incorrect state management
+
+Sequential network calls
+
+Missing error handling
+
+Incorrect assumptions
+
+Dead code
+
+Partial implementations
+
+Web/mobile divergence
+
+RULE 5 — PRODUCE ACTIONABLE OUTPUT
+The final result must be useful to a developer/architect who will actually fix the system.
+
+Do not stop at identifying problems.
+
+For every important issue provide:
+
+Issue
+Severity
+Evidence
+Root Cause
+Affected Components
+Affected Database Objects
+Impact
+Recommended Solution
+Implementation Order
+Testing Requirements
+Regression Risks
+Separate:
+
+Critical production blockers
+
+High-priority bugs
+
+Medium issues
+
+Low-priority improvements
+
+Architectural improvements
+
+Future enhancements
+
+5. AUDIT THE FOLDER STRUCTURE FIRST
+Start by creating a complete inventory.
+
+Identify:
+
+Frontend
+Screens
+
+Components
+
+Hooks
+
+Context providers
+
+Services
+
+Utilities
+
+Navigation
+
+State management
+
+API clients
+
+Backend
+APIs
+
+RPC calls
+
+Edge Functions
+
+PHP files
+
+Apps Script
+
+Server utilities
+
+Database
+Migrations
+
+SQL files
+
+Schema definitions
+
+RPC functions
+
+Views
+
+Policies
+
+Triggers
+
+Mobile
+Expo configuration
+
+Android configuration
+
+Native modules
+
+Background tasks
+
+Location tasks
+
+Permissions
+
+Build configuration
+
+Deployment
+.htaccess
+
+Apache/Nginx configuration
+
+Build scripts
+
+Export scripts
+
+Environment configuration
+
+Documentation
+README
+
+Architecture documents
+
+Implementation plans
+
+TODOs
+
+Deployment notes
+
+First produce an architecture map.
+
+6. CREATE A SYSTEM ARCHITECTURE MAP
+Generate:
+
+HRMS
+│
+├── Authentication
+│   ├── Login
+│   ├── OTP
+│   ├── Session
+│   └── Profile
+│
+├── Authorization
+│   ├── Roles
+│   ├── Permissions
+│   ├── Scope
+│   └── Admin Controls
+│
+├── Attendance
+│   ├── Check-in
+│   ├── Check-out
+│   ├── Office
+│   ├── Geo-fencing
+│   ├── Selfie
+│   ├── QR
+│   └── Reporting
+│
+├── Field Visits
+│   ├── Start
+│   ├── Tracking
+│   ├── Location
+│   └── Completion
+│
+├── Employees
+├── Teams
+├── Offices
+├── Tasks
+├── Leaves
+├── Dashboard
+├── Reports
+├── Exports
+├── Notifications
+└── Admin
+
+Adapt this structure to what actually exists.
+
+Do not invent modules that are not present.
+
+7. ATTENDANCE DEEP AUDIT
+Attendance is a critical HRMS module.
+
+Audit it extensively.
+
+Check:
+
+Check-in
+Who can check in?
+
+Can the same user check in twice?
+
+Can a user check into multiple offices?
+
+Can a user check into an office different from their registered office?
+
+How is office determined?
+
+Is office_id actually present?
+
+Is office_id nullable?
+
+Is office membership enforced?
+
+Is geo-fencing enforced?
+
+Is location accuracy validated?
+
+Can GPS spoofing bypass validation?
+
+What happens when GPS is unavailable?
+
+What happens when internet is unavailable?
+
+Is duplicate check-in prevented?
+
+Check-out
+Verify:
+
+Correct check-out time
+
+Correct status
+
+Correct event type
+
+Check-out after check-in
+
+Multiple check-outs
+
+Automatic check-out
+
+Manual check-out
+
+Missing check-out
+
+Early check-out
+
+Late check-out
+
+Late Marking
+The HRMS rule is:
+
+> 10:32 AM is the late threshold.
+
+Audit every place where late status is calculated.
+
+Search for:
+
+10:32
+
+late
+
+late_mark
+
+lateMark
+
+attendance status calculations
+
+SQL functions
+
+RPCs
+
+frontend calculations
+
+reports
+
+exports
+
+Verify that the same rule is used everywhere.
+
+There must not be different thresholds in:
+
+Dashboard
+
+Attendance screen
+
+Employee view
+
+Admin view
+
+Reports
+
+Exports
+
+Database
+
+Mobile application
+
+Determine the timezone used for the calculation.
+
+The system should not accidentally calculate the threshold in UTC.
+
+8. TIMEZONE AUDIT
+Perform a complete timezone audit.
+
+Look for:
+
+timestamp
+
+timestamp with time zone
+
+timestamp without time zone
+
+UTC conversion
+
+IST conversion
+
+toISOString()
+
+new Date()
+
+getHours()
+
+toLocaleString()
+
+PostgreSQL timezone functions
+
+frontend formatting
+
+backend formatting
+
+Determine:
+
+Database timezone
+Application timezone
+Server timezone
+Browser timezone
+Mobile timezone
+Reporting timezone
+Identify every place where timezone conversion occurs.
+
+The system must have one clearly defined canonical approach.
+
+9. DATABASE SCHEMA CONSISTENCY AUDIT
+Compare:
+
+Frontend assumptions
+against:
+
+Actual database schema
+Find:
+
+Missing columns
+
+Renamed columns
+
+Removed columns still referenced
+
+Incorrect column types
+
+Incorrect nullable assumptions
+
+Wrong foreign keys
+
+Missing indexes
+
+Duplicate indexes
+
+Missing unique constraints
+
+Orphan records
+
+Incorrect relationships
+
+Pay special attention to errors like:
+
+column "office_id" does not exist
+If such an issue exists, trace every dependency.
+
+Do not simply recommend "add the column."
+
+Determine whether the correct solution is:
+
+Add column
+
+Rename column
+
+Remove obsolete reference
+
+Update RPC
+
+Update migration
+
+Update frontend
+
+Update reporting logic
+
+Reconcile schema versions
+
+10. RPC / API AUDIT
+For every RPC/API:
+
+Identify:
+
+Caller
+
+Input parameters
+
+Output structure
+
+Database objects touched
+
+Permission requirements
+
+RLS interaction
+
+Error handling
+
+Transaction behavior
+
+Performance
+
+Race conditions
+
+Compare:
+
+Frontend request
+        vs
+RPC signature
+        vs
+Database implementation
+        vs
+Frontend response handling
+Find contract mismatches.
+
+11. RLS & SECURITY AUDIT
+Audit every important table.
+
+Check:
+
+Is RLS enabled?
+
+What policies exist?
+
+Who can SELECT?
+
+Who can INSERT?
+
+Who can UPDATE?
+
+Who can DELETE?
+
+Are policies role-based?
+
+Are permissions checked server-side?
+
+Can users bypass frontend restrictions?
+
+Can an employee modify another employee's attendance?
+
+Can users access other teams?
+
+Can users access other offices?
+
+Can users access admin data?
+
+Do not trust frontend permission checks.
+
+Backend authorization must be independently enforced.
+
+Identify every possible privilege escalation path.
+
+12. PERMISSION SYSTEM AUDIT
+Determine whether the application has:
+
+Multiple permission systems
+
+Legacy permission logic
+
+Role-based checks
+
+User-specific permissions
+
+Scoped permissions
+
+Frontend-only permissions
+
+Backend permissions
+
+Determine the actual source of truth.
+
+Create a matrix:
+
+Feature	UI Permission	Backend Permission	DB/RLS	Scope	Consistent?
+Identify conflicts.
+
+13. DASHBOARD AUDIT
+Trace every dashboard metric.
+
+For every number determine:
+
+Displayed Value
+↓
+Frontend calculation
+↓
+Service
+↓
+RPC/API
+↓
+Database query
+↓
+Source table
+Verify:
+
+Present
+
+Absent
+
+Late
+
+On Leave
+
+Checked In
+
+Checked Out
+
+Late
+
+Field Visit
+
+Team counts
+
+Office counts
+
+Ensure dashboard values match reports and database reality.
+
+14. REPORT & EXPORT AUDIT
+Audit every export.
+
+Check:
+
+Data source
+
+Filters
+
+Date range
+
+Timezone
+
+Employee mapping
+
+Office mapping
+
+Team mapping
+
+Team leader mapping
+
+Attendance status
+
+Check-in
+
+Check-out
+
+Late status
+
+Missing attendance
+
+Ensure exported data matches the UI.
+
+Pay special attention to:
+
+Employee Name
+Office
+Team Leader
+Date
+Presence/Absence
+Check-in
+Check-out
+Late
+Status
+15. MOBILE APPLICATION AUDIT
+Do a separate mobile audit.
+
+Verify parity between:
+
+WEB
+vs
+ANDROID/MOBILE
+Create:
+
+Feature	Web	Mobile	Backend	Database	Status
+Audit:
+
+Login
+
+OTP
+
+Session
+
+Attendance
+
+Location
+
+Geo-fencing
+
+Office selection
+
+Check-in
+
+Check-out
+
+Field visits
+
+Background tracking
+
+Offline mode
+
+Permissions
+
+Notifications
+
+Error handling
+
+API compatibility
+
+Identify features implemented on web but missing/broken on mobile.
+
+16. PERFORMANCE AUDIT
+Find slow paths.
+
+Especially inspect:
+
+Authentication bootstrap
+
+Session loading
+
+Profile loading
+
+Dashboard loading
+
+Attendance loading
+
+RPC calls
+
+Sequential requests
+
+Repeated requests
+
+Large queries
+
+Missing indexes
+
+Unnecessary re-renders
+
+Large bundles
+
+Startup dependencies
+
+Mobile startup
+
+Identify waterfalls such as:
+
+Auth
+ ↓
+Profile
+ ↓
+Permissions
+ ↓
+Dashboard
+ ↓
+Attendance
+Determine which requests can be:
+
+Parallelized
+
+Cached
+
+Deferred
+
+Batched
+
+Prefetched
+
+17. ERROR HANDLING AUDIT
+Find:
+
+Swallowed errors
+
+Empty catch blocks
+
+Generic error messages
+
+Incorrect error mapping
+
+Missing retry logic
+
+Missing timeout handling
+
+Network failure issues
+
+Offline failures
+
+Race conditions
+
+For every critical operation determine whether the user receives:
+
+Clear success state
+
+Clear failure state
+
+Recovery action
+
+Correct backend state
+
+18. STATE MANAGEMENT AUDIT
+Look for:
+
+Stale state
+
+Duplicate state
+
+Race conditions
+
+Optimistic update failures
+
+Cache invalidation issues
+
+Incorrect loading states
+
+Incorrect success states
+
+UI showing old database data
+
+Determine the source of truth for each critical state.
+
+19. DEPLOYMENT AUDIT
+Inspect the complete production build/deployment chain.
+
+Check:
+
+Source
+ ↓
+Build
+ ↓
+Export
+ ↓
+dist
+ ↓
+Server
+ ↓
+/HRMS/
+ ↓
+SPA Router
+ ↓
+Assets
+ ↓
+API
+Look for:
+
+502
+
+503
+
+404
+
+asset path issues
+
+deep-link reload failures
+
+relative/absolute paths
+
+base URL issues
+
+.htaccess
+
+Apache configuration
+
+environment variables
+
+production API URLs
+
+Test mentally or structurally:
+
+/HRMS/
+/HRMS/dashboard
+/HRMS/attendance
+/HRMS/employees
+and determine whether direct reload can work.
+
+20. CODE QUALITY AUDIT
+Identify:
+
+Dead code
+
+Duplicate functions
+
+Duplicate services
+
+Unused imports
+
+Legacy modules
+
+Temporary fixes
+
+Hardcoded values
+
+Magic numbers
+
+Hardcoded roles
+
+Hardcoded office IDs
+
+Hardcoded thresholds
+
+Debug logs
+
+TODO/FIXME
+
+Commented-out production code
+
+Do not recommend refactoring simply for style.
+
+Prioritize changes that improve correctness, maintainability, reliability, or security.
+
+21. DATA INTEGRITY AUDIT
+Look for:
+
+Duplicate attendance
+
+Duplicate employee records
+
+Missing foreign keys
+
+Orphan records
+
+Invalid timestamps
+
+Impossible attendance sequences
+
+Check-out before check-in
+
+Multiple active attendance sessions
+
+Conflicting office assignments
+
+Conflicting team assignments
+
+Define database constraints where appropriate.
+
+22. CRITICAL CROSS-SYSTEM CONSISTENCY CHECK
+Create a final matrix:
+
+System	Source of Truth	Web	Mobile	Backend	DB	Reports	Consistent?
+Audit especially:
+
+Employee identity
+
+Office
+
+Team
+
+Role
+
+Permission
+
+Attendance
+
+Check-in
+
+Check-out
+
+Late status
+
+Field visit
+
+Location
+
+Date/time
+
+Reports
+
+23. FIND ALL "FALSE SUCCESS" CONDITIONS
+This is extremely important.
+
+Find cases where the UI can show:
+
+Success
+while the database operation actually failed.
+
+Examples:
+
+Check-in button succeeds but DB insert failed
+
+Dashboard shows updated count before backend confirmation
+
+Export succeeds with incomplete data
+
+Permission appears enabled but backend denies action
+
+Mobile says attendance successful but server rejected it
+
+Location tracking appears active but no pings are stored
+
+Every critical operation must have a verified success state.
+
+24. FIND ALL "FALSE DATA" CONDITIONS
+Identify cases where the UI can display incorrect information because of:
+
+stale cache
+
+incorrect timezone
+
+incorrect query
+
+wrong aggregation
+
+duplicate records
+
+missing records
+
+incorrect join
+
+incorrect status mapping
+
+frontend calculation
+
+inconsistent database views
+
+25. PRIORITY CLASSIFICATION
+Classify findings:
+
+P0 — CRITICAL
+Production blocker, data corruption, security vulnerability, attendance failure, authentication failure.
+
+P1 — HIGH
+Major business functionality broken or inconsistent.
+
+P2 — MEDIUM
+Important reliability/performance/maintainability issue.
+
+P3 — LOW
+Minor technical debt or UX improvement.
+
+26. DO NOT MODIFY CODE DURING DIAGNOSIS
+Unless explicitly instructed otherwise:
+
+DO NOT modify, delete, migrate, overwrite, or refactor files during the diagnostic phase.
+
+Do not create migrations automatically.
+
+Do not "fix" issues silently.
+
+First produce the diagnosis.
+
+If you identify a potential fix, describe it separately.
+
+27. REQUIRED FINAL OUTPUT
+Your final report must contain these sections:
+
+A. Executive Summary
+Give a concise assessment:
+
+Overall HRMS Health: X/10
+
+Production Readiness:
+Security:
+Database Integrity:
+Attendance Reliability:
+Web Reliability:
+Mobile Reliability:
+Performance:
+Deployment:
+Reporting Accuracy:
+Architecture:
+B. Architecture Map
+Show the actual architecture discovered from the repository.
+
+C. Critical Issues
+Provide a table:
+
+ID	Severity	Module	Problem	Root Cause	Evidence	Impact	Fix
+D. Attendance Audit
+Give a complete attendance diagnosis.
+
+E. Database Audit
+List:
+
+Schema mismatches
+
+RPC problems
+
+RLS problems
+
+Migration problems
+
+Index problems
+
+Integrity problems
+
+F. Permission & Security Audit
+Explain the actual authorization architecture and weaknesses.
+
+G. Web Application Audit
+List all significant web problems.
+
+H. Mobile Application Audit
+List all mobile-specific issues and web/mobile differences.
+
+I. Reporting & Export Audit
+Verify whether reports actually represent database truth.
+
+J. Performance Audit
+Identify the largest performance bottlenecks and their root causes.
+
+K. Deployment Audit
+Identify build, hosting, routing, asset, and production configuration problems.
+
+L. Data Consistency Matrix
+Provide:
+
+Data	Frontend	Mobile	Backend	DB	Reports	Status
+M. Technical Debt
+Separate:
+
+Safe to defer
+
+Should be fixed soon
+
+Must be fixed before production
+
+N. Recommended Fix Order
+Create an implementation sequence.
+
+Example:
+
+Phase 1
+Database/schema blockers
+
+Phase 2
+Authentication & authorization
+
+Phase 3
+Attendance correctness
+
+Phase 4
+Backend/RPC consistency
+
+Phase 5
+Web application
+
+Phase 6
+Mobile application
+
+Phase 7
+Reporting/export
+
+Phase 8
+Performance
+
+Phase 9
+Deployment
+
+Phase 10
+Testing & regression
+
+Adjust the phases according to the actual audit findings.
+
+28. FINAL RULE
+Do not tell me:
+
+> "Everything looks good."
+
+unless you have actually traced the relevant system paths.
+
+Do not hide uncertainty.
+
+Do not invent missing information.
+
+Do not make assumptions about files you did not inspect.
+
+Do not confuse code existence with feature correctness.
+
+Do not treat frontend behavior as proof of backend correctness.
+
+Do not treat database correctness as proof of UI correctness.
+
+The goal is not to make the HRMS look correct.
+
+The goal is to determine whether the HRMS is actually correct end-to-end.
+
+At the end, clearly state:
+
+"What is working"
+"What is broken"
+"What is risky"
+"What is inconsistent"
+"What must be fixed first"
+"What should be tested after fixing"
+"What evidence supports each conclusion"
+Only after completing the diagnostic audit should implementation/fixing begin.
+
+System where permission answers two separate questions:
+WHAT can this user do?
+WHERE / WHO can they do it to?
+
+For your HRMS, the scope should support Global → Office → Team → Self, plus combinations such as this office + its teams and this team only.
+Add the following section to the diagnostic/implementation prompt:
+HRMS SCOPE-BASED PERMISSION MANAGER
+
+CORE REQUIREMENT The HRMS must use a centralized Scope-Based Permission Manager. Permissions must NOT be controlled only by:
+
+frontend route visibility
+
+hardcoded roles
+
+isAdmin
+
+isHR
+
+isTeamLead
+
+individual page checks
+
+manually hidden buttons The authorization model must answer: WHO
+
+WHAT ACTION
++
+ON WHICH RESOURCE
++
+WITH WHAT SCOPE
++
+UNDER WHICH CONDITIONS
+Example:
+User: Team Head A
+Permission: View Attendance
+Scope: Team
+Target: Team 12
+This means the user can view attendance only for Team 12.
+Another example:
+User: Office Manager
+Permission: Add Employee
+Scope: Office
+Target: Office 136
+This means the user can add employees only into Office 136.
+
+ADMIN / SYSTEM ADMIN OVERRIDE The HRMS permission system is administered by:
+
+Admin
+
+System Admin These users must have full global access by default. Their effective authorization should be equivalent to: ALL MODULES
+
+ALL ACTIONS
++
+GLOBAL SCOPE
+They must not need individual permission assignments for normal administration.
+However, the system must still record their administrative actions in Audit Logs.
+Example:
+System Admin
+→ Permissions Manager
+→ Changed Team Head permission
+→ User: John
+→ Permission: Attendance.View
+→ Scope: Office
+→ Office: 136
+→ Timestamp
+→ Performed By: System Admin
+Do NOT implement this as a frontend-only bypass.
+The backend authorization layer must recognize the System Admin privilege.
+
+PERMISSION MODEL Use the following conceptual structure: USER ↓ ROLE ↓ PERMISSION ↓ ACTION ↓ SCOPE TYPE ↓ SCOPE TARGET ↓ RESOURCE ↓ AUTHORIZATION DECISION A permission assignment should conceptually contain: user_id role_id permission_id resource action scope_type scope_id conditions status created_by created_at updated_at Do not blindly create this exact schema. First inspect the existing HRMS database and unify it with the current permission architecture.
+
+PERMISSION VS SCOPE Separate: Permission Defines WHAT the user can do. Examples: attendance.view attendance.create attendance.update attendance.delete
+
+employee.view
+employee.create
+employee.update
+employee.delete
+
+leave.view
+leave.approve
+leave.reject
+
+task.view
+task.create
+task.update
+task.assign
+
+field_visit.view
+field_visit.create
+field_visit.update
+
+team.view
+team.manage
+
+office.view
+office.manage
+
+reports.view
+reports.export
+
+notifications.send
+
+audit_logs.view
+
+permissions.view
+permissions.assign
+permissions.revoke
+Scope
+Defines WHERE / WHO the permission applies to.
+
+REQUIRED SCOPE TYPES The Permission Manager must support at minimum: GLOBAL User can access all applicable records across the HRMS. GLOBAL Example: Attendance.View Scope: GLOBAL User can view attendance across all offices and teams.
+
+OFFICE
+Permission applies to one specific office.
+OFFICE
+Office ID: 136
+Example:
+Attendance.View
+Scope: OFFICE
+Target: Office 136
+User can see attendance for Office 136 only.
+They cannot see Office 63 attendance.
+
+TEAM
+Permission applies to one specific team.
+TEAM
+Team ID: 42
+Example:
+Attendance.View
+Scope: TEAM
+Target: Team 42
+User can see attendance only for Team 42.
+
+SELF
+Permission applies only to the logged-in user.
+SELF
+Example:
+Attendance.View
+Scope: SELF
+User can only see their own attendance.
+
+OWNED / ASSIGNED
+The permission applies to records where the user is the responsible person.
+Example:
+Field Visit.View
+Scope: ASSIGNED
+User sees only field visits assigned to them.
+
+TEAM + CHILDREN
+Where hierarchy exists, allow a team head to access their team and subordinate teams.
+Example:
+TEAM_TREE
+Root Team: Sales North
+Access:
+Sales North
+├── Team A
+├── Team B
+└── Team C
+
+OFFICE + CHILD TEAMS
+Allow an office-level manager to access:
+Office 136
++
+All teams belonging to Office 136
+
+SCOPE PRECEDENCE Define deterministic precedence. Recommended: GLOBAL ↓ OFFICE ↓ TEAM_TREE ↓ TEAM ↓ OWNED ↓ SELF However, do NOT allow higher scope to accidentally override an explicit deny unless the architecture intentionally supports deny rules. Define whether the system uses: ALLOW DENY and document the precedence. Recommended: Explicit DENY > Specific restriction > ALLOW This must be enforced consistently.
+
+RESOURCE + ACTION MODEL Every HRMS feature must be represented as a resource. Audit and map all current modules. At minimum inspect: Dashboard TV Board Employees Attendance Attendance Logs Field/Site Visits Team Hierarchy Check-In Logs Suspicious Attendance Weekly Offs & Holidays Regularization Advanced Attendance Event Management Leave Balance Biometric Sync Employee Match Bulk Employee Import Imported Data Permissions Manager Site Visit Observer In Transit Monitor Duplicate Devices Office Settings Site Settings Activity Analysis Send Notification Audit Logs Anonymous Feedback Do NOT treat these only as pages. Each should have explicit actions.
+
+ACTION MATRIX Build a matrix similar to: Resource View Create Update Delete Approve Export Manage Employees ✓ ✓ ✓ ✓ - ✓ ✓ Attendance ✓ ✓ ✓ - - ✓ ✓ Field Visits ✓ ✓ ✓ - ✓ ✓ ✓ Teams ✓ ✓ ✓ ✓ - ✓ ✓ Team Hierarchy ✓ ✓ ✓ ✓ - - ✓ Leaves ✓ ✓ ✓ - ✓ ✓ ✓ Tasks ✓ ✓ ✓ ✓ ✓ ✓ ✓ Events ✓ ✓ ✓ ✓ - ✓ ✓ Permissions ✓ ✓ ✓ - - - ✓ Office Settings ✓ - ✓ - - - ✓ Site Settings ✓ - ✓ - - - ✓ Notifications ✓ ✓ - - - - ✓ Audit Logs ✓ - - - - ✓ ✓This matrix must be generated from the actual HRMS implementation.
+
+EVERY ACTION MUST HAVE A SCOPE The Permission Manager UI must allow the administrator to select: Permission ↓ Action ↓ Scope Example: Permission: Attendance
+
+Action:
+View
+
+Scope:
+○ Global
+○ This Office
+○ This Team
+○ Self
+○ Assigned
+○ Team + Sub Teams
+○ Office + Teams
+When selecting:
+This Office
+Show:
+Office:
+[ Office 136 ▼ ]
+When selecting:
+This Team
+Show:
+Team:
+[ Sales Team A ▼ ]
+When selecting:
+Team + Sub Teams
+Show:
+Root Team:
+[ Sales North ▼ ]
+When selecting:
+Office + Teams
+Show:
+Office:
+[ Office 136 ▼ ]
+
+Include all teams:
+[✓]
+
+EXAMPLE — OFFICE-SCOPED EMPLOYEE ACCESS Requirement: A person can see Office 136 attendance and can add employees only to Office 136.
+
+Permission configuration:
+User: User A
+
+Permission 1:
+Employee.View
+Scope: OFFICE
+Target: 136
+
+Permission 2:
+Employee.Create
+Scope: OFFICE
+Target: 136
+
+Permission 3:
+Attendance.View
+Scope: OFFICE
+Target: 136
+
+Permission 4:
+Attendance.Export
+Scope: OFFICE
+Target: 136
+Expected behavior:
+Office 136 employee → ALLOW
+Office 136 attendance → ALLOW
+
+Office 63 employee → DENY
+Office 63 attendance → DENY
+
+Create employee in Office 136 → ALLOW
+Create employee in Office 63 → DENY
+The frontend must also prevent selecting an unauthorized office.
+But more importantly:
+Backend/database authorization must reject the request even if the user manipulates the frontend.
+
+EXAMPLE — TEAM-SCOPED USER User: Team Head A Team: Sales Team 12 Office: 136 Permissions: Attendance.View Scope: TEAM Target: Sales Team 12
+
+Employee.View
+Scope: TEAM
+Target: Sales Team 12
+
+Task.View
+Scope: TEAM
+Target: Sales Team 12
+
+Task.Assign
+Scope: TEAM
+Target: Sales Team 12
+Expected:
+Team 12 → ALLOW
+
+Other Team in Office 136 → DENY
+Office 63 → DENY
+Other offices → DENY
+
+EXAMPLE — TEAM TREE Hierarchy: Sales │ ├── North │ ├── Team A │ └── Team B │ └── South ├── Team C └── Team D Permission: Attendance.View Scope: TEAM_TREE Target: North Expected: North → ALLOW Team A → ALLOW Team B → ALLOW
+
+South → DENY
+Team C → DENY
+Team D → DENY
+
+EXAMPLE — OFFICE MANAGER User: Office Manager Office: 136 Permissions: Employee.View → OFFICE 136 Employee.Create → OFFICE 136 Employee.Update → OFFICE 136
+
+Attendance.View → OFFICE 136
+Attendance.Export → OFFICE 136
+
+Leave.View → OFFICE 136
+Leave.Approve → OFFICE 136
+
+Team.View → OFFICE 136
+Team.Manage → OFFICE 136
+
+Task.View → OFFICE 136
+Task.Assign → OFFICE 136
+They must not automatically receive:
+Global employee access
+Global attendance access
+Global permission management
+Global office settings
+
+EXAMPLE — HR USER Example: HR User Possible configuration: Employee.View Scope: GLOBAL
+
+Employee.Create
+Scope: GLOBAL
+
+Employee.Update
+Scope: GLOBAL
+
+Attendance.View
+Scope: GLOBAL
+
+Attendance.Regularize
+Scope: GLOBAL
+
+Leave.Approve
+Scope: GLOBAL
+But:
+Permissions.Manage
+Scope: NONE
+Therefore HR can manage employees and attendance globally but cannot modify the permission system.
+
+EXAMPLE — ATTENDANCE ADMIN Attendance Admin May have: Attendance.View Scope: GLOBAL
+
+Attendance.Export
+Scope: GLOBAL
+
+Attendance.Regularize
+Scope: GLOBAL
+
+SuspiciousAttendance.View
+Scope: GLOBAL
+
+CheckInLogs.View
+Scope: GLOBAL
+But:
+Employee.Delete → DENY
+Permissions.Manage → DENY
+OfficeSettings.Manage → DENY
+
+EXAMPLE — SITE SUPERVISOR Site Supervisor Site: Project Site A Permissions: FieldVisit.View → SITE Project A FieldVisit.Update → SITE Project A
+
+Employee.View → ASSIGNED
+
+Attendance.View → SITE Project A
+
+SiteVisitObserver.View → SITE Project A
+They cannot access unrelated sites.
+
+EXAMPLE — SELF-ONLY EMPLOYEE Normal employee: Attendance.View Scope: SELF
+
+Attendance.Create
+Scope: SELF
+
+FieldVisit.View
+Scope: OWNED
+
+Leave.View
+Scope: SELF
+
+Leave.Create
+Scope: SELF
+
+Task.View
+Scope: ASSIGNED
+
+Profile.Update
+Scope: SELF
+They cannot:
+View another employee's attendance
+View another employee's leave
+Modify another employee
+Export office attendance
+View permission configuration
+
+TEAM + OFFICE + HIERARCHY MODEL The permission system must understand the HRMS organizational hierarchy. At minimum: Company ↓ Office ↓ Team ↓ Team Head ↓ Employees If the HRMS supports additional hierarchy levels, inspect and integrate them. Permissions must be capable of resolving: User ↓ User's Office ↓ User's Team ↓ Parent Team ↓ Child Teams ↓ Employees Do NOT duplicate organizational relationships inside permissions unless necessary. Prefer referencing existing authoritative organizational tables.
+
+DYNAMIC SCOPE RESOLUTION Avoid hardcoding: if (user.role === "team_head") ... Instead evaluate: can( user, resource, action, target_record ) Example: can( user_123, "attendance", "view", attendance_record_456 ) The authorization engine determines: User's permissions
+
+Target employee
++
+Target office
++
+Target team
++
+Hierarchy
++
+Scope
+ALLOW / DENY
+
+FRONTEND + BACKEND ENFORCEMENT Implement authorization at multiple layers. Layer 1 — Navigation Hide unauthorized modules. Layer 2 — UI Hide/disable unauthorized actions. Layer 3 — Service/API Reject unauthorized operations. Layer 4 — Backend/RPC Perform authoritative authorization. Layer 5 — Database/RLS Prevent unauthorized data access. The frontend must NEVER be the security boundary.
+
+DATA FILTERING Scope must affect actual database queries. For example: User has: Attendance.View Scope: OFFICE 136 Then: SELECT * FROM attendance must NOT simply return all attendance and filter it in JavaScript. The query/backend/RPC must enforce: office_id = authorized_office or an equivalent secure authorization mechanism.
+
+CREATE / UPDATE SCOPE Scope applies not only to VIEW. For example: Employee.Create Scope: OFFICE 136 The system must validate the target office. Request: Create Employee Office = 136 → ALLOW Request: Create Employee Office = 63 → DENY Similarly: Employee.Update Scope: TEAM 12 must prevent updating employees outside Team 12.
+
+EXPORT SCOPE Exports are especially sensitive. If: Attendance.Export Scope: OFFICE 136 then the exported dataset must contain only Office 136. The user must not be able to: Modify frontend filter Call export API directly Change office_id Manipulate URL parameters to obtain global data.
+
+DASHBOARD SCOPE Dashboard numbers must also respect scope. Example: User has: Attendance.View Scope: OFFICE 136 Dashboard: Employees Today Present Leave Requests Overdue Tasks Open Tickets Live Tracking must represent only data the user is authorized to see. For example: Today Present = Office 136 only Employees = Office 136 only Leave Requests = Office 136 only Live Tracking = Office 136 only Do not calculate global counts and merely hide records from the UI.
+
+TV BOARD SCOPE TV Board must support: GLOBAL OFFICE TEAM TEAM_TREE Example: TV Board Scope: OFFICE 136 Only Office 136 attendance should appear. Example: TV Board Scope: TEAM 12 Only Team 12 should appear.
+
+REAL-TIME SUBSCRIPTIONS Audit realtime subscriptions. A user with: Attendance.View Scope: OFFICE 136 must not receive realtime events for: Office 63 Office 27 Office 99 Scope must be respected by:
+
+Realtime subscriptions
+
+WebSockets
+
+Supabase Realtime
+
+polling
+
+live dashboards
+
+notifications Do not rely only on frontend filtering after receiving unauthorized events.
+
+PERMISSIONS MANAGER ITSELF Only authorized administrators should access: Permissions Manager Minimum actions: View permissions Create permission assignment Update permission assignment Revoke permission View effective permissions Test permission View permission history Provide an Effective Access view. Example: USER: John
+
+Effective Permissions
+
+Attendance
+✓ View — Office 136
+✓ Export — Office 136
+✗ Regularize — None
+
+Employees
+✓ View — Office 136
+✓ Create — Office 136
+✗ Delete — None
+
+Leaves
+✓ View — Team 12
+✓ Approve — Team 12
+
+PERMISSION SIMULATOR The Permission Manager should have a testing/simulation function. Example: User: John
+
+Resource:
+Attendance
+
+Action:
+View
+
+Target:
+Employee: Rahul
+Office: 136
+Team: 12
+Result:
+ALLOW
+Explain:
+Matched Permission:
+Attendance.View
+
+Scope:
+Office 136
+
+Target:
+Rahul
+
+Target Office:
+136
+Another test:
+Target Office:
+63
+Result:
+DENY
+
+Reason:
+User has Attendance.View only for Office 136.
+This will make debugging permission issues significantly easier.
+
+PERMISSION CONFLICT DETECTION The Permission Manager must identify conflicts such as: User: John
+
+ALLOW:
+Attendance.View
+Office 136
+
+DENY:
+Attendance.View
+Global
+or:
+Employee.Update
+Office 136
+
+Employee.Update
+Team 63
+or redundant permissions:
+Global Attendance.View
++
+Office 136 Attendance.View
+The system should identify redundant or conflicting assignments.
+
+PERMISSION AUDIT LOG Every permission modification must generate an audit event. Record: Performed By Affected User Action Resource Previous Scope New Scope Previous Permission New Permission Timestamp IP Device Reason Examples: Admin granted:
+
+Attendance.View
+Office 136
+
+to:
+John
+or:
+Admin revoked:
+
+Employee.Create
+Office 136
+
+from:
+John
+
+REQUIRED PERMISSION SCENARIOS The diagnostic must test at least these scenarios. Scenario 1 — Global Admin User = System Admin Scope = GLOBAL Expected: All modules All offices All teams All employees All administrative actions
+
+Scenario 2 — Office Attendance Viewer
+User = Office Manager
+Attendance.View
+Scope = OFFICE 136
+Expected:
+Office 136 → ALLOW
+Office 63 → DENY
+
+Scenario 3 — Office Employee Creator
+Employee.Create
+Scope = OFFICE 136
+Expected:
+Create Office 136 employee → ALLOW
+Create Office 63 employee → DENY
+
+Scenario 4 — Team Head
+Attendance.View
+Scope = TEAM 12
+Expected:
+Team 12 → ALLOW
+Team 13 → DENY
+
+Scenario 5 — Team Tree
+Attendance.View
+Scope = TEAM_TREE
+Target = Sales North
+Expected:
+Sales North → ALLOW
+Team A → ALLOW
+Team B → ALLOW
+Sales South → DENY
+
+Scenario 6 — Self
+Attendance.View
+Scope = SELF
+Expected:
+Own attendance → ALLOW
+Other employee → DENY
+
+Scenario 7 — Office + Team
+Attendance.View
+Scope = OFFICE 136
+and:
+Task.Update
+Scope = TEAM 12
+Expected:
+Attendance:
+Office 136 → ALLOW
+
+Tasks:
+Team 12 → ALLOW
+Other teams → DENY
+
+Scenario 8 — Unauthorized Export
+User has:
+Attendance.View
+Office 136
+but does NOT have:
+Attendance.Export
+Expected:
+View → ALLOW
+Export → DENY
+
+Scenario 9 — Unauthorized Create
+User has:
+Employee.View
+Office 136
+but not:
+Employee.Create
+Expected:
+View → ALLOW
+Create → DENY
+
+Scenario 10 — Backend Bypass Attempt
+User authorized for:
+Office 136
+attempts direct API/RPC request for:
+Office 63
+Expected:
+BACKEND DENY
+This must work even if the frontend is completely bypassed.
+
+Scenario 11 — Team Transfer
+Employee moves:
+Team 12 → Team 20
+A Team 12 scoped user should automatically lose access to that employee if authorization is based on current organizational relationships.
+Do not require manually updating hundreds of permission records.
+
+Scenario 12 — Office Transfer
+Employee moves:
+Office 136 → Office 63
+A user with:
+Employee.View
+Office 136
+must no longer see that employee.
+
+Scenario 13 — Team Head Changes
+Team 12 gets a new Team Head.
+The new Team Head should inherit the configured team-scoped permissions according to the actual permission model.
+The old Team Head should lose access where access was derived from team-head responsibility.
+
+Scenario 14 — Permission Revocation
+Admin revokes:
+Attendance.View
+Office 136
+Expected:
+UI access disappears
+API access denied
+RPC access denied
+Database access denied
+Realtime access restricted
+Existing cached data invalidated
+
+Scenario 15 — Global Permission
+User receives:
+Attendance.View
+GLOBAL
+Expected:
+All offices
+All teams
+All applicable employees
+No office-specific filtering should accidentally restrict them.
+
+IMPORTANT ARCHITECTURAL REQUIREMENT Do not create separate authorization logic for every module. Create a centralized authorization mechanism such as: Permission Engine with a consistent conceptual API: can(user, resource, action, target) and: getAuthorizedScope(user, resource, action) and, where appropriate: getAuthorizedRecords(user, resource, action) Adapt naming to the existing architecture.
+
+DIAGNOSTIC REQUIREMENT During the HRMS audit, find every existing permission check. Search for: role roles permission permissions can hasPermission isAdmin isHR isTeamLead isManager isSuperAdmin user_permissions user_roles Also search for: office_id team_id employee_id team_head manager hierarchy Determine whether the HRMS currently has multiple competing authorization systems. Report: Current Permission Systems ↓ Duplicate Systems ↓ Conflicts ↓ Source of Truth ↓ Migration Required
+
+FINAL PERMISSION REPORT The audit must produce: Permission Architecture User ↓ Role ↓ Permission ↓ Action ↓ Scope ↓ Target ↓ Authorization Permission Matrix For every module. Scope Matrix Resource | Global | Office | Team | Team Tree | Self | Assigned Role Matrix Role | Permissions | Scope Security Findings Identify every frontend-only permission and every backend bypass. Data Leakage Risks Identify where users could access data outside their scope. Implementation Plan Give the safest migration sequence from the existing permission architecture to the centralized scope-based architecture.
+
+FINAL ACCEPTANCE CRITERIA The implementation should only be considered successful when all of the following are true: ✓ System Admin has global access by default
+
+✓ Admin has global administrative access
+
+✓ Permissions are centralized
+
+✓ Permissions support actions
+
+✓ Permissions support scopes
+
+✓ Global scope works
+
+✓ Office scope works
+
+✓ Team scope works
+
+✓ Team hierarchy scope works
+
+✓ Self scope works
+
+✓ Assigned scope works
+
+✓ Office + team relationships work
+
+✓ Dashboard respects scope
+
+✓ TV Board respects scope
+
+✓ Attendance respects scope
+
+✓ Employee management respects scope
+
+✓ Field visits respect scope
+
+✓ Tasks respect scope
+
+✓ Leaves respect scope
+
+✓ Reports respect scope
+
+✓ Exports respect scope
+
+✓ Notifications respect scope
+
+✓ Live tracking respects scope
+
+✓ Realtime data respects scope
+
+✓ Backend enforces permissions
+
+✓ Database/RLS enforces permissions where appropriate
+
+✓ Frontend cannot bypass authorization
+
+✓ Office transfer updates access automatically
+
+✓ Team transfer updates access automatically
+
+✓ Team hierarchy changes update access
+
+✓ Permission revocation takes effect correctly
+
+✓ Permission changes are audited
+
+✓ Permission simulator works
+
+✓ Effective permissions can be inspected
+
+✓ Conflicting permissions can be identified
+
+✓ No module has hidden hardcoded authorization logic
+
+✓ Web and mobile use the same authorization model
+The final goal is:
+One HRMS. One authorization model. One permission engine. Multiple scopes. Consistent enforcement across Web, Mobile, Backend, Database, Reports, Exports, Realtime, and Dashboard.
+
+The key design change
+Your example:
+"A person can see 136 attendance and can add any employee from 136 office only."
+
+should not be represented as a role like OfficeManager136.
+It should be represented as:
+Attendance
+→ View
+→ OFFICE
+→ 136
+
+Employee
+→ View
+→ OFFICE
+→ 136
+
+Employee
+→ Create
+→ OFFICE
+→ 136
+
+That distinction is important because later you can give the same person something like:
+Attendance.View → OFFICE 136
+Employee.Create → OFFICE 136
+Leave.Approve → TEAM 42
+Task.Update → TEAM_TREE 7
+FieldVisit.View → ASSIGNED
+Profile.Update → SELF
+
+without creating dozens of hardcoded roles.
+And your Team + Hierarchy becomes part of the scope-resolution engine rather than another separate permission system.
+
+what are your thoughts on this ?
+
+
+Context
+6 files read
+20260908010000_permissions_model.sql
+20260923010000_rbac_permission_manager.sql
+20260929000000_unify_permission_system.sql
+20260929000001_secure_permissions_architecture.sql
+20260909010000_multidimensional_permission_scopes.sql
+20260908070000_audit_logs_and_permission_scopes.sql
+Now I have a thorough picture of the actual system. Here are my honest, direct thoughts:
+
+The Prompt is Excellent — But Your System Has a Deeper Problem the Prompt Alone Won't Solve
+The diagnostic prompt you've written is genuinely comprehensive and architecturally sound. The scope-based permission model you've described is exactly the right design. But after reading your actual code and migrations, I need to be direct with you about what's really happening.
+
+What the Prompt Gets Right
+The core design principle — WHO + WHAT ACTION + ON WHICH RESOURCE + WITH WHAT SCOPE — is correct and your codebase actually has the skeleton of this already. The prompt correctly identifies the gap between "permission exists" and "permission is enforced."
+
+What I Found in Your Actual Code
+CONFIRMED: You have 4 competing permission systems running simultaneously
+
+System	Where	Status
+Role-string checks (isAdmin, isHR)	userRole.ts, MainTabNavigator.tsx, AuthContext.tsx	Active
+Simple user_permissions table (no scope)	Migration 20260908010000	Partially active
+RBAC with roles + role_permissions + user_permission_overrides tables	Migration 20260923010000	Created but frontend never calls it
+Multidimensional user_permissions with office_id, department, team_lead_id	Migrations 20260909010000, 20260929000000	Schema exists, frontend partially wired
+CONFIRMED: The admin_grant_permission RPC has a syntax error in production
+
+In 20260908010000_permissions_model.sql, the function body has duplicate/conflicting lines — two p_permission text parameters, two where id = auth.uid() clauses, two values(...) blocks. This migration likely failed or produced an invalid function.
+
+CONFIRMED: PermissionsManagerScreen.tsx never passes office_id, department, or team_lead_id to the RPC
+
+// Line ~95 in PermissionsManagerScreen.tsx
+await supabase.rpc("admin_grant_permission", {
+  p_user_id: activeTarget.id,
+  p_permission: permKey,
+  p_scope: "GLOBAL",
+  p_scope_id: null   // ← office_id, department, team_lead_id are NEVER sent
+});
+
+Copy
+
+Insert at cursor
+typescript
+The multidimensional scope columns exist in the database but the UI never populates them. Every permission granted through the UI is effectively GLOBAL regardless of what scope the admin selects.
+
+CONFIRMED: can_access_user_data() exists in the DB but is never called from the frontend
+
+The most important backend enforcement function — the one that actually checks scope — has zero callers in the TypeScript codebase. All the RPCs that return attendance, employee lists, and field visits do NOT call it.
+
+CONFIRMED: get_my_permissions() has been redefined 5 times across migrations
+
+Each migration drops and recreates it with a different return shape — text[], then jsonb, then jsonb with different fields. The PermissionsContext.tsx handles this with a runtime shape-detection hack:
+
+if (typeof data[0] === "object" && "permission" in data[0]) {
+  // new shape
+} else {
+  // old shape — treat as string[]
+}
+
+Copy
+
+Insert at cursor
+typescript
+This is a fragile contract that will silently break if the DB shape changes again.
+
+The Real Gap Between Your Prompt and Your System
+Your prompt describes the target architecture perfectly. But the actual system state is:
+
+What the prompt assumes exists:
+  One centralized permission engine
+  Scope enforced at DB/RPC layer
+  Frontend reads scope, backend enforces scope
+
+What actually exists:
+  4 overlapping systems
+  Scope stored in DB but never read by RPCs
+  Frontend does role checks, DB does nothing with scope
+  can_access_user_data() is an orphan function
+
+Copy
+
+Insert at cursor
+My Honest Assessment of the Prompt Itself
+What to keep:
+
+The WHO + WHAT + WHERE + SCOPE model — correct
+
+The scope hierarchy (GLOBAL → OFFICE → TEAM → SELF) — correct
+
+The requirement that backend enforces, not just frontend — critical and currently violated
+
+The permission simulator concept — excellent for debugging
+
+The audit log requirement — already partially implemented
+
+What to add to the prompt:
+
+The prompt should explicitly require a migration consolidation audit before any new work begins, because right now you have:
+
+user_permissions table altered by 6 different migrations
+
+admin_grant_permission function with 4 different signatures across migrations
+
+get_my_permissions returning 3 different shapes
+
+permissions master table created but the frontend PermissionsManagerScreen reads from it for display but writes to user_permissions directly
+
+Without consolidating this first, any new permission work will add a 5th competing system on top of the existing 4.
+
+What the prompt underspecifies:
+
+The prompt says "inspect existing architecture and unify" but doesn't give a concrete decision rule for what to keep. Based on what I see, the answer is:
+
+Keep: user_permissions table (it's the one the frontend actually reads)
+
+Keep: can_access_user_data() function (it's the right pattern, just unwired)
+
+Keep: permissions master table (used for UI enumeration)
+
+Drop or ignore: roles, role_permissions, user_permission_overrides tables (created in 20260923010000 but never used by any frontend code)
+
+Fix: admin_grant_permission to consistently use the 8-parameter multidimensional signature from 20260909010000
+
+The One Thing Missing from the Prompt
+The prompt covers everything except the wiring problem. The architecture is designed. The database schema mostly exists. The frontend context exists. The gap is that the scope data flows from DB → frontend correctly, but never flows from frontend → RPC → DB enforcement.
+
+The prompt should add:
+
+ENFORCEMENT WIRING REQUIREMENT:
+For every RPC that returns a list of records (employees, attendance, 
+field visits, leave requests), verify that it calls can_access_user_data() 
+or an equivalent scope filter BEFORE returning data.
+
+A permission system that stores scope but never reads it during data 
+queries is not a permission system — it is a decoration.
+
+Copy
+
+Insert at cursor
+Bottom Line
+The prompt is the right diagnostic tool. Run it. But before implementing anything new, the first output of the diagnosis should be a consolidation decision: which of the 4 permission systems becomes the one source of truth, and which migrations need to be written to clean up the others. Everything else in the prompt follows from that decision.
+
+
+
+give me the report 
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 2026-10-05T15:01:50+05:30.
+
+The user's current state is as follows:
+Active Document: d:\download\RealtyHRM-fixed\RealtyHRM-fixed\supabase\migrations\20261005000000_fix_attendance_control_historical_range.sql (LANGUAGE_UNSPECIFIED)
+Cursor is on line: 1
+Other open documents:
+- d:\download\RealtyHRM-fixed\RealtyHRM-fixed\components\ModuleErrorBoundary.tsx (LANGUAGE_UNSPECIFIED)
+- d:\download\RealtyHRM-fixed\RealtyHRM-fixed\screens\admin\UserManagementScreen.tsx (LANGUAGE_UNSPECIFIED)
+- d:\download\RealtyHRM-fixed\RealtyHRM-fixed\fix.js (LANGUAGE_UNSPECIFIED)
+- d:\download\RealtyHRM-fixed\RealtyHRM-fixed\contexts\AuthContext.tsx (LANGUAGE_UNSPECIFIED)
+- d:\download\RealtyHRM-fixed\RealtyHRM-fixed\screens\HelpSupportScreen.tsx (LANGUAGE_UNSPECIFIED)
+</ADDITIONAL_METADATA>

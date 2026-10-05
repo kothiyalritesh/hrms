@@ -1,0 +1,131 @@
+SELECT e.*,
+
+  COALESCE(
+
+    e.approved_regularization_checkout,
+
+    e.admin_corrected_checkout,
+
+    CASE WHEN COALESCE(e.allow_field_visit_checkout, true)
+
+         THEN COALESCE(e.app_checkout, e.field_visit_checkout)
+
+         ELSE e.app_checkout END,
+
+    e.app_checkout,
+
+    e.raw_checkout,
+
+    e.biometric_last_punch_evidence
+
+    ) effective_checkout,
+  COALESCE(
+    e.approved_regularization_checkout,
+    e.admin_corrected_checkout,
+    CASE WHEN COALESCE(e.allow_field_visit_checkout, true)
+         THEN COALESCE(e.app_checkout, e.field_visit_checkout)
+         ELSE e.app_checkout END,
+    e.app_checkout,
+    e.raw_checkout,
+    e.biometric_last_punch_evidence
+  ) official_last_out,
+  CASE
+    WHEN e.approved_regularization_checkout IS NOT NULL THEN 'REGULARIZATION'
+    WHEN e.admin_corrected_checkout IS NOT NULL THEN 'ADMIN_CORRECTED'
+    WHEN e.app_checkout IS NOT NULL THEN 'APP'
+    WHEN COALESCE(e.allow_field_visit_checkout, true) AND e.field_visit_checkout IS NOT NULL THEN 'FIELD_VISIT'
+    WHEN e.raw_checkout IS NOT NULL THEN 'SYSTEM'
+    WHEN e.biometric_last_punch_evidence IS NOT NULL THEN 'BIOMETRIC'
+    ELSE 'NO_DATA'
+  END last_out_source,
+  COALESCE(
+    e.app_first_in,
+    e.field_visit_first_in,
+    e.biometric_first_in
+  ) effective_checkin,
+  COALESCE(
+    e.app_first_in,
+    e.field_visit_first_in,
+    e.biometric_first_in
+  ) official_first_in,
+  CASE
+    WHEN e.app_first_in IS NOT NULL THEN 'APP'
+    WHEN e.field_visit_first_in IS NOT NULL THEN 'FIELD_VISIT'
+    WHEN e.biometric_first_in IS NOT NULL THEN 'BIOMETRIC'
+    ELSE 'NO_DATA'
+  END first_in_source,
+  CASE
+    WHEN e.app_first_in IS NOT NULL THEN 'APP'
+    WHEN e.biometric_first_in IS NOT NULL THEN 'BIOMETRIC'
+    WHEN e.field_visit_first_in IS NOT NULL THEN 'FIELD_VISIT'
+    ELSE 'NO_DATA'
+  END presence_source,
+
+
+  (CASE
+
+    WHEN e.leave_type IS NOT NULL                     THEN 'LEAVE'
+
+    WHEN e.calendar_value->>'kind' = 'WEEKLY_OFF'     THEN 'WEEKLY_OFF'
+
+    WHEN e.calendar_value->>'kind' = 'HOLIDAY'        THEN 'HOLIDAY'
+
+    WHEN e.app_first_in IS NOT NULL
+
+      OR e.biometric_first_in IS NOT NULL
+
+      OR e.field_visit_first_in IS NOT NULL THEN
+
+      CASE
+
+        WHEN e.raw_checkout IS NOT NULL
+
+          OR e.approved_regularization_checkout IS NOT NULL
+
+          OR e.admin_corrected_checkout IS NOT NULL
+
+          OR e.biometric_last_punch_evidence IS NOT NULL
+
+        THEN 'CHECKED_OUT'
+
+        ELSE 'CHECKED_IN'
+
+      END
+
+    ELSE 'ABSENT'
+
+  END) effective_status,
+  (CASE
+    WHEN e.leave_type IS NOT NULL                     THEN 'LEAVE'
+    WHEN e.calendar_value->>'kind' = 'WEEKLY_OFF'     THEN 'WEEKLY_OFF'
+    WHEN e.calendar_value->>'kind' = 'HOLIDAY'        THEN 'HOLIDAY'
+    WHEN e.app_first_in IS NOT NULL
+      OR e.biometric_first_in IS NOT NULL
+      OR e.field_visit_first_in IS NOT NULL THEN
+      CASE
+        WHEN e.raw_checkout IS NOT NULL
+          OR e.approved_regularization_checkout IS NOT NULL
+          OR e.admin_corrected_checkout IS NOT NULL
+          OR e.biometric_last_punch_evidence IS NOT NULL
+        THEN 'CHECKED_OUT'
+        ELSE 'CHECKED_IN'
+      END
+    ELSE 'ABSENT'
+  END) attendance_status,
+
+  EXISTS(
+
+    SELECT 1 FROM public.attendance_logs a
+
+    WHERE a.id = e.attendance_log_id AND a.auto_closed = true
+
+  ) is_auto_closed,
+  COALESCE(e.has_visit, false) has_field_visit
+
+FROM evidence e;
+
+
+
+-- ─── STEP 2: Recreate the RPC with the joining_date floor removed ─────────────
+
+-- The only change from 20261002010000 is the generate_series lower bound:

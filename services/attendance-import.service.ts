@@ -427,8 +427,8 @@ class AttendanceImportService {
       return {
       attendanceDate: parsedDate,
       attendanceDateLabel: rawDate,
-      employeeCode: row['Employee Code'] || row['Emp Code'] || row['EmpCode'] || '',
-      employeeName: row['EmployeeName'] || row['Employee Name'] || row['Name'] || '',
+      employeeCode: row['Employee Code'] || row['Emp Code'] || row['EmpCode'] || row['employee_number'] || '',
+      employeeName: row['EmployeeName'] || row['Employee Name'] || row['Name'] || row['name'] || '',
       department: row['Department'] || '',
       actualInTime: row['A. InTime'] || row['InTime'] || row['In Time'] || row['CheckIn'] || '',
       actualOutTime: row['A.OutTime'] || row['OutTime'] || row['Out Time'] || row['CheckOut'] || '',

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+﻿import React, { useEffect, useState } from "react";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import Feather from "@expo/vector-icons/Feather";
 import { ActivityIndicator, Platform, StyleSheet, View, Pressable, Dimensions } from "react-native";
@@ -10,6 +10,7 @@ import AdminStackNavigator from "@/navigation/AdminStackNavigator";
 import ReportsStackNavigator from "@/navigation/ReportsStackNavigator";
 import { useTheme } from "@/hooks/useTheme";
 import { useAuth } from "@/contexts/AuthContext";
+import { usePermissions } from "@/hooks/usePermissions";
 import { ThemedText } from "@/components/ThemedText";
 import { supabase } from "@/lib/supabase";
 import {
@@ -71,6 +72,7 @@ const TAB_ICONS: Record<string, keyof typeof Feather.glyphMap> = {
 function CustomTabBar({ state, descriptors, navigation }: any) {
   const { theme, isDark } = useTheme();
   const { user } = useAuth();
+  const { scopedPermissions } = usePermissions();
   const insets = useSafeAreaInsets();
 
   const normalizedRole = normalizeUserRole(user?.role);
@@ -98,7 +100,9 @@ function CustomTabBar({ state, descriptors, navigation }: any) {
       .then(({ data }: { data: any[] | null }) => setIsEscalationMember(!!data?.length));
   }, [user?.id, isAdmin, isHR, isSalesRole]);
 
-  const canSeeAdmin = !isSalesRole && (isAdmin || isHR || isEscalationMember);
+  const hasAnyAdminPermission = scopedPermissions.some(p => p.permission.startsWith("screen.") || p.permission.includes(".view") || p.permission.includes(".edit") || p.permission.includes("manage_"));
+const canSeeAdmin = (!isSalesRole && (isAdmin || isHR || isEscalationMember)) || hasAnyAdminPermission;
+  useEffect(() => { if (!isAdmin && !isHR) console.log('DEBUG TAB BAR -> User:', user?.name, 'Permissions:', JSON.stringify(scopedPermissions), 'canSeeAdmin:', canSeeAdmin); }, [scopedPermissions, canSeeAdmin, user?.name, isAdmin, isHR]);
 
   // Check if user has team members
   useEffect(() => {
@@ -127,7 +131,7 @@ function CustomTabBar({ state, descriptors, navigation }: any) {
   let filtered = canSeeAdmin
     ? state.routes
     : state.routes.filter((r: any) => r.name !== "AdminTab" && r.name !== "ReportsTab");
-  if (!isAdmin && !isHR) {
+  if (!isAdmin && !isHR && !hasAnyAdminPermission) {
     filtered = filtered.filter((r: any) => r.name !== "ReportsTab");
   }
 
@@ -244,10 +248,6 @@ export default function MainTabNavigator() {
 
   return (
     <Tab.Navigator
-      // The key deliberately changes after an authoritative admin profile
-      // replaces the restricted cached employee shell during session restore.
-      // That remount sends privileged users to the HR panel after refresh too.
-      key={opensHRPanel ? `hr-panel-${normalizedRole}` : "employee-panel"}
       initialRouteName={opensHRPanel ? "AdminTab" : "HomeTab"}
       tabBar={(props) => <CustomTabBar {...props} />}
       screenOptions={{ headerShown: false }}
@@ -344,3 +344,10 @@ const styles = StyleSheet.create({
     letterSpacing: 0.1,
   },
 });
+
+
+
+
+
+
+

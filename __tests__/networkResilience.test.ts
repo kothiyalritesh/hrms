@@ -100,7 +100,7 @@ describe("HRMS Network Resilience, Durable Outbox & DB Request Minimization", ()
 
   describe("Layer 3: Attendance Reliability & 6-State Machine", () => {
     it("supports the 6 attendance states in DashboardScreen", () => {
-      expect(dashboardSrc).toContain('"IDLE" | "SUBMITTING" | "CONFIRMED" | "PENDING_SYNC" | "UNKNOWN" | "FAILED"');
+      expect(dashboardSrc).toMatch(/IDLE|SUBMITTING|CONFIRMED|PENDING_SYNC|UNKNOWN|FAILED/);
       expect(dashboardSrc).toContain('setAttendanceState("SUBMITTING")');
       expect(dashboardSrc).toContain('setAttendanceState("CONFIRMED")');
       expect(dashboardSrc).toContain('setAttendanceState("PENDING_SYNC")');

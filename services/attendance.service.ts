@@ -563,7 +563,7 @@ export const AttendanceService = {
         `GPS accuracy is too low (±${Math.round(accuracy)}m). Move outdoors and try again.`,
       );
     }
-    const offices = await this.getAllowedOffices(userId);
+    const offices = await this.getActiveOffices();
     const nearest = this.findNearestOffice(offices, location);
 
     if (!nearest) {

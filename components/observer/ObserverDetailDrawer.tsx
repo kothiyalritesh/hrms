@@ -3,8 +3,8 @@
  * Bottom drawer for selected employee and site visit details (v3):
  * - Employee profile, Department, Employee Number
  * - Orthogonal Badges:
- *   • Tracking Health: Live (<15s), Delayed (15-60s), Stale (>60s), Offline
- *   • GPS Quality: High (<=20m), Acceptable (20-50m), Weak (>50m), Invalid (>100m/mock)
+ *   â€¢ Tracking Health: Live (<15s), Delayed (15-60s), Stale (>60s), Offline
+ *   â€¢ GPS Quality: High (<=20m), Acceptable (20-50m), Weak (>50m), Invalid (>100m/mock)
  * - Telemetry Grid: Source, Last Fix vs Last Upload, Accuracy, Speed
  * - Visit Summary Scorecard: Duration, Travel vs On-Site distance, Uptime %, Quality %, GPS gaps
  * - Chronological today's visits list
@@ -23,7 +23,7 @@ import {
   TrackingHealthStatus,
 } from "@/types/location-database";
 import { RouteQualitySummary, VisitSummaryMetrics } from "@/utils/gpsQuality";
-import { toTitleCase, formatFieldVisitTime } from "@/utils/format";
+import { toTitleCase } from "@/utils/format";
 
 export interface ObserverDetailDrawerProps {
   employee: SiteVisitObserverEmployee | null;
@@ -72,9 +72,9 @@ export default function ObserverDetailDrawer({
   const trackingStatus = tracking.status || "AT_SITE";
 
   const isTampered =
-    tracking.quality_status === "MOCKED" ||
-    tracking.quality_status === "IMPOSSIBLE_SPEED" ||
-    Boolean(tracking.mocked) ||
+    tracking.gps_quality === "MOCKED" ||
+    tracking.gps_quality === "IMPOSSIBLE_SPEED" ||
+    Boolean((tracking.source === 'MOCK')) ||
     Boolean(routeQuality?.hasGpsJumps);
 
   // Orthogonal evaluation: Tracking Health vs GPS Quality
@@ -109,7 +109,7 @@ export default function ObserverDetailDrawer({
     switch (healthStatus) {
       case "TAMPERED":
         return {
-          label: "⚠️ Tampered / Mock GPS",
+          label: "âš ï¸ Tampered / Mock GPS",
           color: "#DC2626",
           bg: "#FEF2F2",
           dot: "#DC2626",
@@ -133,7 +133,7 @@ export default function ObserverDetailDrawer({
 
   // GPS Quality Badge (Hardware satellite accuracy)
   const getGpsBadge = () => {
-    const accStr = tracking.accuracy != null ? ` ±${Math.round(tracking.accuracy)}m` : "";
+    const accStr = tracking.accuracy != null ? ` Â±${Math.round(tracking.accuracy)}m` : "";
     switch (gpsQuality) {
       case "HIGH":
         return { label: `GPS High${accStr}`, color: "#10B981", bg: "#ECFDF5" };
@@ -159,7 +159,7 @@ export default function ObserverDetailDrawer({
   const gpsBadge = getGpsBadge();
 
   const formatTime = (ts?: string | null) => {
-    if (!ts) return "—";
+    if (!ts) return "â€”";
     try {
       return new Date(ts).toLocaleTimeString("en-IN", {
         hour: "2-digit",
@@ -199,7 +199,7 @@ export default function ObserverDetailDrawer({
             </View>
           </View>
           <ThemedText type="caption" style={{ color: theme.textSecondary }}>
-            {employee.employee_no ?? ""} · {employee.department ?? "Field Operations"} · {employee.office_name ?? ""}
+            {employee.employee_no ?? ""} Â· {employee.department ?? "Field Operations"} Â· {employee.office_name ?? ""}
           </ThemedText>
         </View>
 
@@ -224,7 +224,7 @@ export default function ObserverDetailDrawer({
             GPS Accuracy
           </ThemedText>
           <ThemedText style={s.telemetryValue}>
-            {tracking.accuracy != null ? `±${Math.round(tracking.accuracy)}m` : "—"}
+            {tracking.accuracy != null ? `Â±${Math.round(tracking.accuracy)}m` : "â€”"}
           </ThemedText>
         </View>
 
@@ -305,7 +305,7 @@ export default function ObserverDetailDrawer({
       {/* Chronological Visits List */}
       <View style={s.visitsSection}>
         <ThemedText type="caption" style={[s.sectionTitle, { color: theme.textSecondary }]}>
-          TODAY'S FIELD VISITS ({employee.visits.length})
+          TODAY&apos;S FIELD VISITS ({employee.visits.length})
         </ThemedText>
 
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.visitsList}>
@@ -336,13 +336,11 @@ export default function ObserverDetailDrawer({
                   {v.checkin_time && (
                     <ThemedText type="caption" style={{ color: "#10B981" }}>
                       In: {new Date(v.checkin_time).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
-                      In: {formatFieldVisitTime(v.checkin_time)}
                     </ThemedText>
                   )}
                   {v.checkout_time && (
                     <ThemedText type="caption" style={{ color: "#6B7280" }}>
                       Out: {new Date(v.checkout_time).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
-                      Out: {formatFieldVisitTime(v.checkout_time)}
                     </ThemedText>
                   )}
                 </View>
@@ -484,3 +482,5 @@ const s = StyleSheet.create({
     color: "#4B5563",
   },
 });
+
+

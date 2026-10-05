@@ -17,6 +17,7 @@ import { Spacing, BorderRadius, Colors } from "@/constants/theme";
 import Spacer from "@/components/Spacer";
 import { useAuth } from "@/contexts/AuthContext";
 import { DashboardSummaryService } from "@/services/dashboard-summary.service";
+import { usePermissions } from "@/hooks/usePermissions";
 
 type Props = { navigation: NativeStackNavigationProp<any> };
 
@@ -128,7 +129,9 @@ function ActionCard({ icon, label, desc, accent, onPress }: ActionCardProps) {
 export default function AdminDashboardScreen({ navigation }: Props) {
   const { theme } = useTheme();
   const { user, isHR, isHRD } = useAuth();
+  const { hasPermission } = usePermissions();
   
+  const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [hasLoaded, setHasLoaded] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -245,24 +248,46 @@ export default function AdminDashboardScreen({ navigation }: Props) {
               (loading ? "Loading server date…" : "Server date unavailable")}
           </ThemedText>
         </View>
-        {/* TV Screen shortcut in hero */}
-        <Pressable
-          style={({ pressed }) => [s.tvBtn, { opacity: pressed ? 0.85 : 1 }]}
-          onPress={() => navigation.navigate("TVDisplay")}
-        >
-          <Feather name="monitor" size={18} color="#fff" />
-          <ThemedText
-            type="caption"
-            style={{
-              color: "#fff",
-              fontWeight: "700",
-              marginTop: 3,
-              fontSize: 10,
-            }}
-          >
-            TV Board
-          </ThemedText>
-        </Pressable>
+        {/* Right side action buttons */}
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+            <Pressable
+              style={({ pressed }) => [
+                {
+                  flexDirection: "row",
+                  alignItems: "center",
+                  borderWidth: 1,
+                  borderColor: "rgba(255,255,255,0.4)",
+                  borderRadius: 20,
+                  paddingHorizontal: 12,
+                  paddingVertical: 8,
+                  opacity: pressed ? 0.7 : 1,
+                  backgroundColor: "rgba(255,255,255,0.12)",
+                }
+              ]}
+              onPress={onRefresh}
+            >
+              <Feather name="refresh-ccw" size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
+              <ThemedText style={{ color: "#FFFFFF", fontSize: 12, fontWeight: "600" }}>Refresh</ThemedText>
+            </Pressable>
+            
+            <Pressable
+              style={({ pressed }) => [s.tvBtn, { opacity: pressed ? 0.85 : 1 }]}
+              onPress={() => navigation.navigate("TVDisplay")}
+            >
+              <Feather name="monitor" size={18} color="#fff" />
+              <ThemedText
+                type="caption"
+                style={{
+                  color: "#fff",
+                  fontWeight: "700",
+                  marginTop: 3,
+                  fontSize: 10,
+                }}
+              >
+                TV Board
+              </ThemedText>
+            </Pressable>
+          </View>
       </View>
 
       <View style={s.body}>
@@ -391,120 +416,121 @@ export default function AdminDashboardScreen({ navigation }: Props) {
           Quick Actions
         </ThemedText>
         <View style={s.actionsGrid}>
-          <ActionCard
+          {(hasPermission("screen.user_management") || hasPermission("employee.view") || hasPermission("employee.edit")) && (<ActionCard
             icon="user-plus"
             label={isHR ? "View / Edit Employees" : "Add Employee"}
             desc="Manage employee profiles"
             accent={theme.primary}
             onPress={() => navigation.navigate("UserManagement")}
-          />
-          <ActionCard
+          />)}
+          {(hasPermission("screen.attendance_control") || hasPermission("attendance.view") || hasPermission("attendance.edit")) && (<ActionCard
             icon="clock"
             label="Attendance Logs"
             desc="Today's check-ins & history"
             accent="#10B981"
             onPress={() => navigation.navigate("AttendanceControl")}
-          />
-          <ActionCard
+          />)}
+          {(hasPermission("screen.field_visit_admin") || hasPermission("field_visit.view")) && (<ActionCard
             icon="map-pin"
             label="Field / Site Visits"
             desc="Team location log"
             accent="#3B82F6"
             onPress={() => navigation.navigate("FieldVisitAdmin")}
-          />
-          <ActionCard
+          />)}
+          {hasPermission("screen.team_hierarchy") && (<ActionCard
             icon="git-branch"
             label="Team Hierarchy"
             desc="Teams & reporting structure"
             accent={theme.primary}
             onPress={() => navigation.navigate("TeamHierarchy")}
-          />
-          <ActionCard
+          />)}
+          {hasPermission("screen.check_in_logs") && (<ActionCard
             icon="map"
             label="Check-In Logs"
             desc="GPS locations & blocked attempts"
             accent="#3B82F6"
             onPress={() => navigation.navigate("CheckInLogs")}
-          />
-          <ActionCard
+          />)}
+          {hasPermission("screen.suspicious_attendance") && (<ActionCard
             icon="alert-triangle"
             label="Suspicious Attendance"
             desc="Fraud scores and GPS evidence"
             accent="#EF4444"
             onPress={() => navigation.navigate("SuspiciousAttendance")}
-          />
-          <ActionCard
+          />)}
+          {(hasPermission("screen.attendance_control") || hasPermission("attendance.view") || hasPermission("attendance.edit")) && (<ActionCard
             icon="calendar"
             label="Weekly Offs & Holidays"
             desc="Attendance calendar rules"
             accent="#8B5CF6"
             onPress={() => navigation.navigate("AttendanceCalendar")}
-          />
-          <ActionCard
+          />)}
+          {hasPermission("screen.attendance_regularization") && (<ActionCard
             icon="check-square"
             label="Regularization"
             desc="Early and missed checkout approvals"
             accent="#F59E0B"
             onPress={() => navigation.navigate("AttendanceRegularization")}
-          />
-          <ActionCard
+          />)}
+          {(hasPermission("screen.attendance_control") || hasPermission("attendance.view") || hasPermission("attendance.edit")) && (<ActionCard
             icon="bar-chart-2"
             label="Advanced Attendance"
             desc="Reconciliation, filters and 7-sheet export"
             accent="#059669"
             onPress={() => navigation.navigate("AdvancedAttendanceReport")}
-          />
-          <ActionCard
+          />)}
+          {hasPermission("screen.event_management") && (<ActionCard
             icon="calendar"
             label="Event Management"
             desc="Create & track events"
             accent="#F97316"
             onPress={() => navigation.navigate("EventManagement")}
-          />
-          <ActionCard
+          />)}
+          {(hasPermission("screen.leave_balance") || hasPermission("leave.view") || hasPermission("leave.approve")) && (<ActionCard
             icon="credit-card"
             label="Leave Balance"
             desc="Add or remove employee balance"
             accent="#10B981"
             onPress={() => navigation.navigate("LeaveBalance")}
-          />
-          <ActionCard
+          />)}
+          {hasPermission("screen.smartoffice_integration") && (<ActionCard
             icon="refresh-cw"
             label="Biometric Sync"
             desc="Fetch logs & update attendance"
             accent="#F97316"
             onPress={() => navigation.navigate("SmartOfficeIntegration")}
-          />
-          <ActionCard
+          />)}
+          {hasPermission("screen.smartoffice_integration") && (<ActionCard
             icon="users"
             label="Employee Match"
             desc="Link HRMS profiles to biometric identities"
             accent="#6B7280"
             onPress={() => navigation.navigate("BiometricUserMatch")}
-          />
-          <ActionCard
+          />)}
+          {(hasPermission("screen.user_management") || hasPermission("employee.view") || hasPermission("employee.edit")) && (<ActionCard
             icon="upload-cloud"
             label="Bulk Employee Import"
             desc="Import employee profiles from a spreadsheet"
             accent="#475569"
             onPress={() => navigation.navigate("SmartOfficeEmployeeImport")}
-          />
-          <ActionCard
+          />)}
+          {hasPermission("screen.smartoffice_integration") && (<ActionCard
             icon="database"
             label="Imported Data"
             desc="Review SmartOffice users and punch logs"
             accent="#0F766E"
             onPress={() => navigation.navigate("SmartOfficeImportedData")}
-          />
-          {isHRD && (
-              <>
-              <ActionCard
-                icon="shield"
+          />)}
+                    {hasPermission("screen.permissions_manager") && (
+            <ActionCard
+              icon="shield"
               label="Permissions Manager"
               desc="Role-based access control"
               accent="#8B5CF6"
               onPress={() => navigation.navigate("PermissionsManager")}
             />
+          )}
+          {hasPermission("screen.site_visit_observer") && (
             <ActionCard
               icon="eye"
               label="Site Visit Observer"
@@ -512,6 +538,8 @@ export default function AdminDashboardScreen({ navigation }: Props) {
               accent="#10B981"
               onPress={() => navigation.navigate("SiteVisitObserver")}
             />
+          )}
+          {(hasPermission("screen.in_transit") || hasPermission("location.view_live")) && (
             <ActionCard
               icon="map"
               label="In Transit Monitor"
@@ -519,6 +547,8 @@ export default function AdminDashboardScreen({ navigation }: Props) {
               accent="#F59E0B"
               onPress={() => navigation.navigate("InTransit")}
             />
+          )}
+          {hasPermission("screen.duplicate_devices") && (
             <ActionCard
               icon="smartphone"
               label="Duplicate Devices"
@@ -526,49 +556,53 @@ export default function AdminDashboardScreen({ navigation }: Props) {
               accent="#EF4444"
               onPress={() => navigation.navigate("AdminDeviceSessions")}
             />
+          )}
+          {hasPermission("screen.office_settings") && (
             <ActionCard
-                icon="settings"
-                label="Office Settings"
-                desc="Offices, geofences and attendance rules"
-                accent="#7C3AED"
-                onPress={() => navigation.navigate("OfficeSettings")}
-              />
-              </>
-            )}
-          {isHRD && (
-            <ActionCard
+              icon="settings"
+              label="Office Settings"
+              desc="Offices, geofences and attendance rules"
+              accent="#7C3AED"
+              onPress={() => navigation.navigate("OfficeSettings")}
+            />
+          )}
+          {hasPermission("screen.site_settings") && (<ActionCard
               icon="map-pin"
               label="Site Settings"
               desc="Projects, saved sites and geofences"
               accent="#059669"
               onPress={() => navigation.navigate("SiteSettings")}
-            />
-          )}
-          {isHRD && (
-            <ActionCard
+            />)}
+          {(hasPermission("screen.live_tracking") || hasPermission("location.view_live")) && (<ActionCard
               icon="activity"
               label="Activity Analysis"
               desc="Employee activity deep dive"
               accent={theme.primary}
               onPress={() => navigation.navigate("ActivityAnalysis")}
-            />
-          )}
-          {isHRD && (
-            <ActionCard
+            />)}
+          {hasPermission("screen.notification_management") && (<ActionCard
               icon="bell"
               label="Send Notification"
               desc="Push to all or specific users"
               accent="#3B82F6"
               onPress={() => navigation.navigate("NotificationManagement")}
-            />
-          )}
-          {isHRD && (
+            />)}
+          {hasPermission("screen.audit_logs") && (
             <ActionCard
               icon="file-text"
+              accent="#9CA3AF"
               label="Audit Logs"
               desc="System activity trail"
-              accent="#F97316"
               onPress={() => navigation.navigate("AuditLogs")}
+            />
+          )}
+          {hasPermission("screen.anonymous_feedback") && (
+            <ActionCard
+              icon="message-square"
+              label="Anonymous Feedback"
+              desc="View employee suggestions"
+              accent="#EC4899"
+              onPress={() => navigation.navigate("AnonymousFeedback")}
             />
           )}
         </View>
@@ -724,5 +758,8 @@ const s = StyleSheet.create({
     justifyContent: "center",
   },
 });
+
+
+
 
 

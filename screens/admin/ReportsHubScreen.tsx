@@ -1,5 +1,5 @@
-import React from "react";
-import { Pressable, StyleSheet, View, Text } from "react-native";
+﻿import React from "react";
+import { Pressable, StyleSheet, View } from "react-native";
 import Feather from "@expo/vector-icons/Feather";
 import { ScreenScrollView } from "@/components/ScreenScrollView";
 import { ThemedText } from "@/components/ThemedText";
@@ -9,22 +9,22 @@ const SECTIONS = [
   {
     title: "ATTENDANCE ANALYTICS",
     items: [
-      { title: "Monthly Attendance Register", description: "Printable traditional attendance sheet (P/A/L/WO)", route: "ReportsAdvancedAttendance", icon: "calendar" },
-      { title: "Late Arrival Report", description: "Who's consistently late, pattern analysis", route: "ReportsAdvancedAttendance", icon: "clock" },
+      { title: "Monthly Attendance Register", description: "Printable traditional attendance sheet (P/A/L/WO)", route: "ReportsAttendanceRegister", icon: "calendar" },
+      { title: "Late Arrival Report", description: "Who is consistently late, pattern analysis", route: "ReportsLateArrival", icon: "clock" },
       { title: "Attendance Intelligence", description: "Punctuality scores, anomalies, hours worked & AI insights", route: "ReportsIntelligence", icon: "cpu" },
       { title: "Activity Analysis", description: "Attendance-aligned daily app & location activity", route: "ReportsActivity", icon: "activity" },
       { title: "GPS & Suspicious", description: "Stale, mocked and out-of-range GPS evidence", route: "ReportsGps", icon: "alert-triangle" },
       { title: "Live Tracking Report", description: "Latest native pings and real-time tracking health", route: "ReportsTracking", icon: "navigation" },
-      { title: "Geofence & Tracking Events", description: "Audit trail for office and field geofence violations", route: "ReportsTracking", icon: "map" },
+      { title: "Geofence & Tracking Events", description: "Audit trail for office and field geofence violations", route: "ReportsGeofenceEvents", icon: "map" },
       { title: "Check-In Location Log", description: "Full GPS log of every check-in attempt and block", route: "ReportsCheckInLogs", icon: "map-pin" },
     ]
   },
   {
     title: "LEAVE & HR",
     items: [
-      { title: "Leave Usage Report", description: "Read-only: leaves taken, pending, rejected per employee", route: "ReportsLeaves", icon: "briefcase" },
+      { title: "Leave Usage Report", description: "Read-only: leaves taken, pending, rejected per employee", route: "ReportsLeaveUsage", icon: "briefcase" },
       { title: "Leave Balance Summary", description: "Read-only balance table (casual, sick, earned & comp-off)", route: "ReportsLeaveBalance", icon: "pie-chart" },
-      { title: "Overtime & Comp-Off Report", description: "Who worked on weekends/holidays, units earned, expiry", route: "ReportsLeaves", icon: "clock" },
+      { title: "Overtime & Comp-Off Report", description: "Who worked on weekends/holidays, units earned, expiry", route: "ReportsOvertime", icon: "award" },
     ]
   },
   {
@@ -37,7 +37,7 @@ const SECTIONS = [
   {
     title: "EXPORTS",
     items: [
-      { title: "Download Centre", description: "Export attendance, leave and activity as Excel / CSV", route: "ReportsDownloads", icon: "download" },
+      { title: "Download Centre", description: "Export attendance, leave and activity as Excel / CSV", route: "ReportsDownloadCentre", icon: "download" },
     ]
   }
 ];
@@ -55,7 +55,7 @@ export default function ReportsHubScreen({ navigation }: any) {
           </ThemedText>
         </View>
       </View>
-      
+
       {SECTIONS.map((section, idx) => (
         <View key={idx} style={styles.section}>
           <ThemedText style={[styles.sectionTitle, { color: theme.textSecondary }]}>{section.title}</ThemedText>
@@ -65,7 +65,7 @@ export default function ReportsHubScreen({ navigation }: any) {
                 key={i}
                 accessibilityRole="button"
                 accessibilityLabel={item.title}
-                onPress={() => navigation.navigate(item.route)}
+                onPress={() => navigation.navigate(item.route as any)}
                 style={({ pressed }) => [
                   styles.card,
                   {

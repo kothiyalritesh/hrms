@@ -28,7 +28,8 @@ interface Office {
 
 export default function OfficeSettingsScreen() {
   const { theme } = useTheme();
-  const [offices, setOffices] = useState<Office[]>([]);
+  const [offices, setOffices] = useState<Office[]>([]);  const [teamSchedules, setTeamSchedules] = useState<any[]>([]);
+
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [configurationIssues, setConfigurationIssues] = useState<any[]>([]);
@@ -42,10 +43,14 @@ export default function OfficeSettingsScreen() {
   });
 
   const loadOffices = useCallback(async () => {
-    const [{ data, error }, { data: issues, error: issuesError }] = await Promise.all([
+    
+    const [{ data, error }, { data: issues, error: issuesError }, { data: schedules }] = await Promise.all([
       supabase.from("offices").select("*").order("name"),
       supabase.rpc("rpc_admin_attendance_configuration_issues"),
+      supabase.from("work_schedule_configs").select("*").order("team")
     ]);
+    if (schedules) setTeamSchedules(schedules);
+
 
     if (error) {
       console.error("Error loading offices:", error);
@@ -449,6 +454,23 @@ export default function OfficeSettingsScreen() {
           renderItem={renderOffice}
           contentContainerStyle={styles.list}
           showsVerticalScrollIndicator={false}
+
+          ListFooterComponent={() => (
+            <View style={{ marginTop: Spacing.xl, marginBottom: Spacing['2xl'] }}>
+              <ThemedText type="h3">Team Schedules & Policies</ThemedText>
+              <Spacer height={Spacing.md} />
+              {teamSchedules.length === 0 ? <ThemedText>No team schedules configured.</ThemedText> : null}
+              {teamSchedules.map(t => (
+                <View key={t.id} style={[styles.officeCard, { backgroundColor: theme.backgroundDefault }]}>
+                  <ThemedText type="body" style={{ fontWeight: '700', color: theme.text, marginBottom: 4 }}>{t.team} Team</ThemedText>
+                  <ThemedText type="caption" style={{ color: theme.textSecondary }}>Saturday: {t.saturday_policy}</ThemedText>
+                  <ThemedText type="caption" style={{ color: theme.textSecondary }}>Sunday: {t.sunday_policy}</ThemedText>
+                  {t.monday_credit_bonus && <ThemedText type="caption" style={{ color: Colors.light.success, marginTop: 4 }}>ś +1 Monday Biometric Compliance Credit</ThemedText>}
+                </View>
+              ))}
+            </View>
+          )}
+
         />
       )}
     </View>

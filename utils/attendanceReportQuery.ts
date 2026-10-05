@@ -203,7 +203,7 @@ export function parseAttendanceReportQuery(
     result.interpretation.push(`reporting to ${titleCase(head)}`);
   }
 
-  const roleRules: Array<[RegExp, string]> = [
+  const roleRules: [RegExp, string][] = [
     [/\bsales managers?\b/, "Sales Manager"],
     [/\bteam heads?\b/, "Team Head"],
     [/\bbusiness heads?\b/, "Business Head"],
@@ -219,7 +219,7 @@ export function parseAttendanceReportQuery(
     }
   }
 
-  const statusRules: Array<[RegExp, string, AttendanceReportSection]> = [
+  const statusRules: [RegExp, string, AttendanceReportSection][] = [
     [/\b(?:late|latecomers?|came late)\b/, "LATE", "Exceptions"],
     [/\b(?:absent|absentees?)\b/, "ABSENT", "Exceptions"],
     [

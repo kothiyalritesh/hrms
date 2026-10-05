@@ -13,11 +13,13 @@ import { ThemedText } from "@/components/ThemedText";
 import { useTheme } from "@/hooks/useTheme";
 import { BorderRadius, Colors, Spacing } from "@/constants/theme";
 import { CanonicalAttendanceService, CanonicalAttendanceDay } from "@/services/canonical-attendance.service";
-import { supabase } from "@/lib/supabase";
+import { ModuleErrorBoundary } from "@/components/ModuleErrorBoundary";
+import { getBusinessDateIST } from "@/utils/businessDate";
 
 const STATUS_COLORS: Record<string, string> = {
     PRESENT:      "#10B981",
-    CHECKED_OUT:  "#10B981",
+  CHECKED_OUT:  "#10B981",
+  CHECKED_IN:   "#10B981",
     FIELD_VISIT:  "#06B6D4",
     LATE:         "#F59E0B",
     ABSENT:       "#EF4444",
@@ -29,8 +31,9 @@ const STATUS_COLORS: Record<string, string> = {
     HALF_DAY:     "#F97316",
   };
   const STATUS_SHORT: Record<string, string> = {
-    PRESENT:      "P",
-    CHECKED_OUT:  "P",
+    PRESENT:     "P",
+  CHECKED_OUT: "P",
+  CHECKED_IN:  "P",
     FIELD_VISIT:  "FV",
     LATE:         "La",
     ABSENT:       "A",
@@ -59,7 +62,7 @@ interface EmployeeSummary {
   present: number; absent: number; late: number; leave: number; wfh: number; wo: number;
 }
 
-export default function AttendanceRegisterReportScreen() {
+function AttendanceRegisterReportScreenInner() {
   const { theme } = useTheme();
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
@@ -74,13 +77,9 @@ export default function AttendanceRegisterReportScreen() {
     setLoading(true);
     try {
       const [start, endRaw] = monthRange(year, month);
-      const today = new Date(new Date().getTime() + 5.5 * 3600000).toISOString().slice(0, 10); // naive IST for clamping
+      const today = getBusinessDateIST();
       const end = endRaw > today ? today : endRaw;
-      // removed log
-      const {data:d2} = await supabase.from("biometric_device_punches").select("id").limit(1);
-      
       const data = await CanonicalAttendanceService.list(start, end);
-      console.log("FIRST ROW SOURCE:", data[0]?.first_in_source, "NAME:", data[0]?.employee_name, data[0]?.attendance_status);
       const dim = new Date(year, month, 0).getDate();
       setDaysInMonth(Array.from({ length: dim }, (_, i) => i + 1));
 
@@ -102,13 +101,24 @@ export default function AttendanceRegisterReportScreen() {
         const status = row.attendance_status?.toUpperCase() || "ABSENT";
         emp.days[dayNum] = status;
           emp.sources[dayNum] = row.first_in_source;
-          if (["PRESENT","CHECKED_OUT","LATE","FIELD_VISIT"].includes(status)) emp.present++;
+          if (["PRESENT", "CHECKED_OUT", "CHECKED_IN", "LATE", "FIELD_VISIT"].includes(status)) emp.present++;
           if (status === "LATE") emp.late++;
           else if (status === "ABSENT") emp.absent++;
           else if (status === "LEAVE" || status === "ON_LEAVE") emp.leave++;
           else if (status === "WFH") emp.wfh++;
           else if (status === "WEEKLY_OFF" || status === "HOLIDAY") emp.wo++;
       }
+
+      const todayDay = end === today ? parseInt(today.slice(8), 10) : dim;
+      for (const emp of map.values()) {
+        for (let d = 1; d <= todayDay; d++) {
+          if (!emp.days[d]) {
+            emp.days[d] = "ABSENT";
+            emp.absent++;
+          }
+        }
+      }
+
       setRows(Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name)));
     } catch (e: any) {
       Alert.alert("Error", e.message);
@@ -156,6 +166,9 @@ export default function AttendanceRegisterReportScreen() {
                 <ThemedText type="caption" style={{ color: theme.textSecondary }}>{v} = {k.replace("_", " ")}</ThemedText>
               </View>
             ))}
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginLeft: 8, paddingLeft: 8, borderLeftWidth: 1, borderLeftColor: theme.border }}>
+                <ThemedText type="caption" style={{ color: theme.textSecondary }}>Pa = App, Pb = Bio, P(a+b) = Both</ThemedText>
+              </View>
           </View>
         </ScrollView>
       </View>
@@ -202,6 +215,7 @@ export default function AttendanceRegisterReportScreen() {
                         if (emp.sources?.[d] === "BIOMETRIC") label = "Pb";
                         if (emp.sources?.[d] === "APP") label = "Pa";
                         if (emp.sources?.[d] === "FIELD_VISIT") label = "Pv";
+                        if (emp.sources?.[d] === "COMBINED") label = "P(a+b)";
                       }
                     return (
                       <View key={d} style={[styles.dayCell, { backgroundColor: color + "22" }]}>
@@ -223,6 +237,14 @@ export default function AttendanceRegisterReportScreen() {
         </ScrollView>
       )}
     </View>
+  );
+}
+
+export default function AttendanceRegisterReportScreen() {
+  return (
+    <ModuleErrorBoundary moduleName="Attendance Register">
+      <AttendanceRegisterReportScreenInner />
+    </ModuleErrorBoundary>
   );
 }
 

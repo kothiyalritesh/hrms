@@ -93,8 +93,6 @@ begin
     to_char(fv.checkin_time at time zone 'Asia/Kolkata', 'HH12:MI AM') as check_in_time,
     to_char(fv.checkout_time at time zone 'Asia/Kolkata', 'HH12:MI AM') as check_out_time,
     coalesce(fv.project_name, fv.location_name, 'Site') as project_name,
-    fv.client_name,
-    fv.client_phone,
     coalesce(fv.client_name, fv.contact_name) as client_name,
     coalesce(fv.client_phone, fv.contact_phone) as client_phone,
     fv.visit_type,

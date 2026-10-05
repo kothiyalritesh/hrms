@@ -14,23 +14,21 @@ export default function PermissionsManagerScreen() {
   const { theme } = useTheme();
   const [loading, setLoading] = useState(true);
   const [users, setUsers] = useState<any[]>([]);
-  const [roles, setRoles] = useState<any[]>([]);
-  const [teams, setTeams] = useState<string[]>([]);
   const [offices, setOffices] = useState<any[]>([]);
+  const [departments, setDepartments] = useState<string[]>([]);
   
   const [permissions, setPermissions] = useState<any[]>([]);
   
-  const [selectedTargetType, setSelectedTargetType] = useState<"USER" | "ROLE">("ROLE");
   const [activeTarget, setActiveTarget] = useState<any>(null);
   
-  const [currentOverrides, setCurrentOverrides] = useState<any[]>([]);
-  const [inheritedPermissions, setInheritedPermissions] = useState<any[]>([]);
+  // Array of { permission: string, scope: string, scope_id: string }
+  const [userGrants, setUserGrants] = useState<any[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
 
   // Modal State
   const [scopeModalVisible, setScopeModalVisible] = useState(false);
   const [activePermConfig, setActivePermConfig] = useState<any>(null);
-  const [configScopeType, setConfigScopeType] = useState("ALL");
+  const [configScopeType, setConfigScopeType] = useState("GLOBAL");
   const [configScopeId, setConfigScopeId] = useState("");
 
   useEffect(() => {
@@ -40,388 +38,283 @@ export default function PermissionsManagerScreen() {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [usersRes, rolesRes, permsRes, officesRes, teamRes] = await Promise.all([
-        supabase.from("profiles").select("id, name, role, employee_number").order("name"),
-        supabase.from("roles").select("id, name").order("name"),
+      const [usersRes, permsRes, officesRes, deptRes] = await Promise.all([
+        supabase.from("profiles").select("id, name, role, employee_number, department").order("name"),
         supabase.from("permissions").select("*"),
         supabase.from("offices").select("id, name"),
-        supabase.from("profiles").select("team").not("team", "is", null)
+        supabase.from("profiles").select("department").not("department", "is", null)
       ]);
 
-      if (permsRes.error) Alert.alert("Permissions Fetch Error", permsRes.error.message);
-      
-      setUsers(usersRes.data || []);
-      setRoles(rolesRes.data || []);
-      setPermissions(permsRes.data || []);
-      setOffices(officesRes.data || []);
-      
-      const distinctTeams = Array.from(new Set((teamRes.data || []).map((t: any) => t.team).filter(Boolean)));
-      setTeams(distinctTeams as string[]);
-    } catch (e) {
-      console.error(e);
+      if (usersRes.data) setUsers(usersRes.data);
+      if (permsRes.data) setPermissions(permsRes.data);
+      if (officesRes.data) setOffices(officesRes.data);
+      if (deptRes.data) {
+        const uniqueDepts = Array.from(new Set(deptRes.data.map((d: any) => d.department))).filter(Boolean);
+        setDepartments(uniqueDepts as string[]);
+      }
+    } catch (err) {
+      console.error(err);
     }
     setLoading(false);
   };
 
-  useEffect(() => {
-    if (activeTarget) {
-      loadTargetPermissions();
+  const loadTargetPermissions = async (userId: string) => {
+    const { data, error } = await supabase
+      .from("user_permissions")
+      .select("permission, scope, scope_id")
+      .eq("user_id", userId)
+      .is("revoked_at", null);
+      
+    if (data) {
+      setUserGrants(data);
     } else {
-      setCurrentOverrides([]);
-      setInheritedPermissions([]);
-    }
-  }, [activeTarget, selectedTargetType]);
-
-  const loadTargetPermissions = async () => {
-    if (!activeTarget) return;
-    
-    const table = selectedTargetType === "USER" ? "user_permission_overrides" : "role_permissions";
-    const col = selectedTargetType === "USER" ? "user_id" : "role_id";
-    
-    const { data } = await supabase.from(table).select("*").eq(col, activeTarget.id);
-    setCurrentOverrides(data || []);
-
-    if (selectedTargetType === "USER" && activeTarget.role) {
-      const roleObj = roles.find(r => r.name === activeTarget.role);
-      if (roleObj) {
-        const { data: inheritedData } = await supabase.from("role_permissions").select("*").eq("role_id", roleObj.id);
-        setInheritedPermissions(inheritedData || []);
-      } else {
-        setInheritedPermissions([]);
-      }
-    } else {
-      setInheritedPermissions([]);
+      setUserGrants([]);
     }
   };
 
-  const groupedPermissions = useMemo(() => {
-    const map = new Map<string, any[]>();
-    permissions.forEach(p => {
-      const mod = p.module.toUpperCase();
-      if (!map.has(mod)) map.set(mod, []);
-      map.get(mod)!.push(p);
-    });
-    return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-  }, [permissions]);
+  useEffect(() => {
+    if (activeTarget) {
+      loadTargetPermissions(activeTarget.id);
+    } else {
+      setUserGrants([]);
+    }
+  }, [activeTarget]);
 
-  const openConfig = (p: any, existingOverride: any) => {
-    if (!activeTarget) return Alert.alert("Select a target first");
+  const handleToggleAllow = async (permKey: string, isAllowed: boolean, permObj?: any) => {
+    if (!activeTarget) return;
+
+    if (isAllowed) {
+      // Open config modal instead of defaulting to GLOBAL
+      if (permObj) openConfig(permObj, null);
+    } else {
+      const { error } = await supabase.rpc("admin_revoke_permission", {
+        p_user_id: activeTarget.id,
+        p_permission: permKey
+      });
+      if (error) { console.error("[PermissionsManager] RPC error:", error.message); Alert.alert("Permission Error", error.message); }
+      loadTargetPermissions(activeTarget.id);
+    }
+  };
+
+  const openConfig = (p: any, existingGrant: any) => {
+    if (!activeTarget) return Alert.alert("Select a user first");
     setActivePermConfig(p);
-    setConfigScopeType(existingOverride && existingOverride.effect === "ALLOW" ? existingOverride.scope_type : "ALL");
-    setConfigScopeId(existingOverride && existingOverride.scope_id ? existingOverride.scope_id : "");
+    setConfigScopeType(existingGrant ? existingGrant.scope : "GLOBAL");
+    setConfigScopeId(existingGrant && existingGrant.scope_id ? existingGrant.scope_id : "");
     setScopeModalVisible(true);
   };
 
   const handleSaveConfig = async () => {
     if (!activeTarget) return;
-    const table = selectedTargetType === "USER" ? "user_permission_overrides" : "role_permissions";
-    const col = selectedTargetType === "USER" ? "user_id" : "role_id";
     
-    await supabase.from(table).delete()
-      .eq(col, activeTarget.id)
-      .eq("permission_id", activePermConfig.id);
-      
-    await supabase.from(table).insert({
-      [col]: activeTarget.id,
-      permission_id: activePermConfig.id,
-      effect: "ALLOW",
-      scope_type: configScopeType,
-      scope_id: configScopeId || null
+    // Revoke old first just in case to avoid duplicates
+    await supabase.rpc("admin_revoke_permission", {
+      p_user_id: activeTarget.id,
+      p_permission: activePermConfig.permission_key
     });
+      
+    const { data, error } = await supabase.rpc("admin_grant_permission", {
+      p_user_id: activeTarget.id,
+      p_permission: activePermConfig.permission_key,
+      p_scope: configScopeType,
+      p_scope_id: configScopeId || null
+    });
+    
+    if (error) { console.error("[PermissionsManager] RPC error:", error.message); Alert.alert("Permission Error", error.message); }
     
     setScopeModalVisible(false);
-    loadTargetPermissions();
+    loadTargetPermissions(activeTarget.id);
   };
 
-  const handleInsertDeny = async (permissionId: string) => {
-    if (!activeTarget) return;
-    const table = selectedTargetType === "USER" ? "user_permission_overrides" : "role_permissions";
-    const col = selectedTargetType === "USER" ? "user_id" : "role_id";
-    
-    await supabase.from(table).delete()
-      .eq(col, activeTarget.id)
-      .eq("permission_id", permissionId);
-      
-    await supabase.from(table).insert({
-      [col]: activeTarget.id,
-      permission_id: permissionId,
-      effect: "DENY",
-      scope_type: "ALL" // Scope doesn't matter for DENY but DB requires non-null
+  // Group permissions by module
+  const groupedPerms = useMemo(() => {
+    const groups: Record<string, any[]> = {};
+    permissions.forEach(p => {
+      const mod = p.module || "OTHER";
+      if (!groups[mod]) groups[mod] = [];
+      groups[mod].push(p);
     });
-    
-    loadTargetPermissions();
-  };
+    return groups;
+  }, [permissions]);
 
-  const handleRemoveOverride = async (permissionId: string) => {
-    if (!activeTarget) return;
-    const table = selectedTargetType === "USER" ? "user_permission_overrides" : "role_permissions";
-    const col = selectedTargetType === "USER" ? "user_id" : "role_id";
-    await supabase.from(table).delete()
-      .eq(col, activeTarget.id)
-      .eq("permission_id", permissionId);
-    loadTargetPermissions();
-  };
-
-  const filteredUsers = useMemo(() => {
-    const q = searchQuery.toLowerCase();
-    return users.filter(u => u.name?.toLowerCase().includes(q) || (u.employee_number && String(u.employee_number).toLowerCase().includes(q)));
-  }, [users, searchQuery]);
-
-  const filteredRoles = useMemo(() => {
-    const q = searchQuery.toLowerCase();
-    return roles.filter(r => r.name?.toLowerCase().includes(q));
-  }, [roles, searchQuery]);
-
-  if (loading) return <ActivityIndicator style={{ flex: 1, backgroundColor: theme.backgroundSecondary }} color={theme.primary} />;
+  if (loading && users.length === 0) {
+    return (
+      <View style={[styles.container, { justifyContent: "center", alignItems: "center" }]}>
+        <ActivityIndicator size="large" color={theme.primary} />
+      </View>
+    );
+  }
 
   return (
-    <View style={{ flex: 1, backgroundColor: theme.backgroundSecondary }}>
-      {/* Header */}
-      <View style={[styles.header, { backgroundColor: theme.backgroundDefault, borderBottomWidth: 1, borderBottomColor: theme.border }]}>
-        <Feather name="shield" size={24} color={theme.primary} />
-        <ThemedText type="h2" style={{ color: theme.text, marginLeft: Spacing.sm }}>Access Control</ThemedText>
+    <View style={[styles.container, { backgroundColor: theme.backgroundRoot }]}>
+      <View style={styles.header}>
+        <Feather name="shield" size={24} color={theme.text} />
+        <ThemedText type="h2" style={{ marginLeft: 12 }}>Permissions & Scope</ThemedText>
       </View>
 
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: Spacing.lg, paddingBottom: 100 }}>
-        
-        {/* Segments */}
-        <View style={styles.segmentContainer}>
-          <TouchableOpacity 
-            style={[styles.segment, selectedTargetType === "ROLE" ? { backgroundColor: theme.primary } : { backgroundColor: theme.backgroundDefault }]}
-            onPress={() => { setSelectedTargetType("ROLE"); setActiveTarget(null); setSearchQuery(""); }}
-          >
-            <Feather name="users" size={16} color={selectedTargetType === "ROLE" ? "#fff" : theme.textSecondary} />
-            <ThemedText style={{ marginLeft: 8, color: selectedTargetType === "ROLE" ? "#fff" : theme.textSecondary, fontWeight: selectedTargetType === "ROLE" ? "bold" : "normal" }}>Role Defaults</ThemedText>
-          </TouchableOpacity>
-          <TouchableOpacity 
-            style={[styles.segment, selectedTargetType === "USER" ? { backgroundColor: theme.primary } : { backgroundColor: theme.backgroundDefault }]}
-            onPress={() => { setSelectedTargetType("USER"); setActiveTarget(null); setSearchQuery(""); }}
-          >
-            <Feather name="user" size={16} color={selectedTargetType === "USER" ? "#fff" : theme.textSecondary} />
-            <ThemedText style={{ marginLeft: 8, color: selectedTargetType === "USER" ? "#fff" : theme.textSecondary, fontWeight: selectedTargetType === "USER" ? "bold" : "normal" }}>User Overrides</ThemedText>
-          </TouchableOpacity>
+      <View style={styles.layout}>
+        {/* Left Sidebar: Targets */}
+        <View style={[styles.sidebar, { borderRightColor: theme.border }]}>
+          <View style={styles.searchBox}>
+            <Feather name="search" size={16} color={theme.textSecondary} style={{ marginRight: 8 }} />
+            <TextInput
+              style={[styles.searchInput, { color: theme.text }]}
+              placeholder="Search Users..."
+              placeholderTextColor={theme.textSecondary}
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+            />
+          </View>
+          <ScrollView style={{ flex: 1 }}>
+            {users.filter(u => u.name.toLowerCase().includes(searchQuery.toLowerCase())).map(u => (
+              <TouchableOpacity 
+                key={u.id}
+                style={[
+                  styles.targetItem,
+                  activeTarget?.id === u.id && { backgroundColor: theme.primary + "20", borderLeftColor: theme.primary, borderLeftWidth: 3 }
+                ]}
+                onPress={() => setActiveTarget(u)}
+              >
+                <ThemedText style={{ fontWeight: activeTarget?.id === u.id ? "bold" : "normal" }}>
+                  {u.name}
+                </ThemedText>
+                <ThemedText type="caption" style={{ color: theme.textSecondary }}>{u.role}</ThemedText>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
         </View>
 
-        {/* Target Selector */}
-        <View style={[styles.card, { backgroundColor: theme.backgroundDefault, borderColor: theme.border }]}>
-          {activeTarget ? (
-            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-              <View>
-                <ThemedText type="small" style={{ color: theme.textSecondary, marginBottom: 4 }}>
-                  {selectedTargetType === "ROLE" ? "Configuring Role:" : "Configuring Employee:"}
-                </ThemedText>
-                <ThemedText type="h4" style={{ color: theme.primary }}>{activeTarget.name}</ThemedText>
-                {selectedTargetType === "USER" && activeTarget.role && (
-                   <ThemedText type="caption" style={{ color: theme.textSecondary }}>Inherits permissions from {activeTarget.role} role</ThemedText>
-                )}
-              </View>
-              <TouchableOpacity 
-                style={{ padding: Spacing.sm, backgroundColor: theme.backgroundSecondary, borderRadius: BorderRadius.sm }}
-                onPress={() => { setActiveTarget(null); setSearchQuery(""); }}
-              >
-                <Feather name="x" size={18} color={theme.text} />
-              </TouchableOpacity>
+        {/* Right Content: Permissions */}
+        <ScrollView style={styles.mainContent}>
+          {!activeTarget ? (
+            <View style={{ flex: 1, justifyContent: "center", alignItems: "center", padding: Spacing.xl * 2 }}>
+              <Feather name="arrow-left" size={48} color={theme.border} style={{ marginBottom: Spacing.lg }} />
+              <ThemedText type="h3" style={{ color: theme.textSecondary }}>Select a user to configure</ThemedText>
             </View>
           ) : (
-            <View>
-              <ThemedText type="small" style={{ color: theme.textSecondary, marginBottom: 8 }}>
-                {selectedTargetType === "ROLE" ? "Search and select a Role" : "Search and select an Employee"}
-              </ThemedText>
-              
-              <View style={[styles.searchBar, { backgroundColor: theme.backgroundSecondary }]}>
-                <Feather name="search" size={16} color={theme.textSecondary} />
-                <TextInput
-                  style={{ flex: 1, marginLeft: 8, color: theme.text, height: Platform.OS === "web" ? 36 : undefined, outline: "none" } as any}
-                  placeholder={selectedTargetType === "ROLE" ? "Search roles..." : "Search employees..."}
-                  placeholderTextColor={theme.textSecondary}
-                  value={searchQuery}
-                  onChangeText={setSearchQuery}
-                  autoFocus={true}
-                />
+            <View style={{ paddingBottom: 100 }}>
+              <View style={[styles.targetHeader, { borderBottomColor: theme.border }]}>
+                <ThemedText type="h2">{activeTarget.name}</ThemedText>
+                <ThemedText type="small" style={{ color: theme.textSecondary }}>Dynamic Scope Assignment</ThemedText>
               </View>
 
-              <ScrollView style={{ marginTop: Spacing.sm, maxHeight: 300 }} nestedScrollEnabled={true}>
-                {selectedTargetType === "USER" ? (
-                  filteredUsers.map(u => (
-                    <TouchableOpacity 
-                      key={u.id} 
-                      style={[styles.searchResultItem, { borderBottomColor: theme.backgroundSecondary }]}
-                      onPress={() => setActiveTarget(u)}
-                    >
-                      <View>
-                        <ThemedText style={{ fontWeight: "600" }}>{u.name}</ThemedText>
-                        <ThemedText type="caption" style={{ color: theme.textSecondary }}>{u.role || "No Role"}</ThemedText>
-                      </View>
-                      <Feather name="chevron-right" size={16} color={theme.textSecondary} />
-                    </TouchableOpacity>
-                  ))
-                ) : (
-                  filteredRoles.map(r => (
-                    <TouchableOpacity 
-                      key={r.id} 
-                      style={[styles.searchResultItem, { borderBottomColor: theme.backgroundSecondary }]}
-                      onPress={() => setActiveTarget(r)}
-                    >
-                      <ThemedText style={{ fontWeight: "600" }}>{r.name}</ThemedText>
-                      <Feather name="chevron-right" size={16} color={theme.textSecondary} />
-                    </TouchableOpacity>
-                  ))
-                )}
-              </ScrollView>
-            </View>
-          )}
-        </View>
+              {Object.keys(groupedPerms).map(module => (
+                <View key={module} style={styles.moduleSection}>
+                  <ThemedText style={[styles.moduleTitle, { color: theme.primary }]}>{module}</ThemedText>
+                  
+                  {groupedPerms[module].map((perm) => {
+                    const existingGrant = userGrants.find(g => g.permission === perm.permission_key);
+                    const isAllowed = !!existingGrant;
 
-        {/* Permissions List */}
-        {activeTarget ? (
-          <View style={{ marginTop: Spacing.xl }}>
-            <ThemedText type="h3" style={{ marginBottom: Spacing.lg }}>Permission Catalogue</ThemedText>
-            
-            {groupedPermissions.map(([moduleName, perms]) => (
-              <View key={moduleName} style={[styles.moduleCard, { backgroundColor: theme.backgroundDefault, borderColor: theme.border }]}>
-                <View style={[styles.moduleHeader, { borderBottomColor: theme.border, backgroundColor: theme.backgroundSecondary }]}>
-                  <Feather name="layers" size={18} color={theme.primary} />
-                  <ThemedText type="h4" style={{ marginLeft: Spacing.sm }}>{moduleName}</ThemedText>
-                </View>
-                
-                {perms.map((p, idx) => {
-                  const existingOverride = currentOverrides.find(o => o.permission_id === p.id);
-                  const inheritedPerm = inheritedPermissions.find(o => o.permission_id === p.id && o.effect === "ALLOW");
-                  
-                  const isExplicitlyAllowed = existingOverride?.effect === "ALLOW";
-                  const isExplicitlyDenied = existingOverride?.effect === "DENY";
-                  
-                  const isVisuallyOn = isExplicitlyAllowed || (!!inheritedPerm && !isExplicitlyDenied);
-                  
-                  return (
-                    <View key={p.id} style={[styles.permRow, idx < perms.length - 1 && { borderBottomWidth: 1, borderBottomColor: theme.backgroundSecondary }]}>
-                      <View style={{ flex: 1, paddingRight: Spacing.md }}>
-                        <ThemedText style={{ fontWeight: "600", fontSize: 15 }}>{p.action}</ThemedText>
-                        <ThemedText type="caption" style={{ color: theme.textSecondary, marginTop: 2 }}>{p.permission_key}</ThemedText>
-                        
-                        {(isExplicitlyAllowed || (!!inheritedPerm && !isExplicitlyDenied)) && (
-                          <View style={{ flexDirection: "row", alignItems: "center", marginTop: 4 }}>
-                            {isExplicitlyAllowed ? (
+                    return (
+                      <View key={perm.id} style={[styles.permRow, { borderBottomColor: theme.border }]}>
+                        <View style={{ flex: 1 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                            <ThemedText style={{ fontWeight: "600" }}>{perm.action}</ThemedText>
+                            <ThemedText type="small" style={{ color: theme.textSecondary, marginLeft: 8 }}>{perm.permission_key}</ThemedText>
+                          </View>
+                          <ThemedText type="caption" style={{ color: theme.textSecondary, marginTop: 4 }}>
+                            {perm.description}
+                          </ThemedText>
+                          
+                          {isAllowed && (
+                            <View style={{ flexDirection: "row", marginTop: 8, alignItems: "center" }}>
                               <View style={[styles.badge, { backgroundColor: theme.backgroundDefault, borderWidth: 1, borderColor: theme.primary }]}>
                                 <ThemedText style={{ fontSize: 10, color: theme.primary, fontWeight: "bold" }}>
-                                  CUSTOM: {existingOverride.scope_type}
+                                  SCOPE: {existingGrant.scope}
                                 </ThemedText>
                               </View>
-                            ) : (
-                              <View style={[styles.badge, { backgroundColor: theme.border }]}>
-                                <ThemedText style={{ fontSize: 10, color: theme.textSecondary, fontWeight: "bold" }}>
-                                  INHERITED: {inheritedPerm.scope_type}
-                                </ThemedText>
-                              </View>
-                            )}
-                            
-                            {isExplicitlyAllowed && existingOverride.scope_id && (
-                               <ThemedText type="caption" style={{ color: theme.textSecondary, marginLeft: 6, fontSize: 11 }}>
-                                 Scoped resource attached
-                               </ThemedText>
-                            )}
-                          </View>
-                        )}
-
-                        {isExplicitlyDenied && (
-                          <View style={{ flexDirection: "row", alignItems: "center", marginTop: 4 }}>
-                             <View style={[styles.badge, { backgroundColor: theme.backgroundDefault, borderWidth: 1, borderColor: "red" }]}>
-                               <ThemedText style={{ fontSize: 10, color: "red", fontWeight: "bold" }}>
-                                 EXPLICITLY REVOKED
-                               </ThemedText>
-                             </View>
-                          </View>
-                        )}
+                              
+                              {existingGrant.scope_id && (
+                                 <ThemedText type="caption" style={{ color: theme.textSecondary, marginLeft: 6, fontSize: 11 }}>
+                                   ID: {existingGrant.scope_id}
+                                 </ThemedText>
+                              )}
+                            </View>
+                          )}
+                        </View>
+                        
+                        <View style={{ flexDirection: "row", alignItems: "center" }}>
+                          <TouchableOpacity 
+                            style={[styles.configBtn, { borderColor: theme.border }]}
+                            onPress={() => openConfig(perm, existingGrant)}
+                          >
+                            <Feather name="settings" size={16} color={theme.textSecondary} />
+                          </TouchableOpacity>
+                          
+                          <Switch 
+                            value={isAllowed} 
+                            onValueChange={(val) => handleToggleAllow(perm.permission_key, val, perm)} 
+                            trackColor={{ false: theme.border, true: theme.primary + "80" }}
+                            thumbColor={isAllowed ? theme.primary : "#f4f3f4"}
+                          />
+                        </View>
                       </View>
-                      
-                      <View style={{ flexDirection: "row", alignItems: "center", gap: Spacing.md }}>
-                        {isExplicitlyAllowed && (
-                           <TouchableOpacity onPress={() => openConfig(p, existingOverride)}>
-                             <Feather name="settings" size={18} color={theme.textSecondary} />
-                           </TouchableOpacity>
-                        )}
-                        <Switch 
-                          value={isVisuallyOn} 
-                          onValueChange={(v) => {
-                            if (v) {
-                              if (inheritedPerm) handleRemoveOverride(p.id);
-                              else openConfig(p, existingOverride);
-                            } else {
-                              if (inheritedPerm) handleInsertDeny(p.id);
-                              else handleRemoveOverride(p.id);
-                            }
-                          }} 
-                          trackColor={{ true: theme.primary }}
-                        />
-                      </View>
-                    </View>
-                  );
-                })}
-              </View>
-            ))}
-          </View>
-        ) : (
-          <View style={{ marginTop: 60, alignItems: "center" }}>
-            <Feather name="lock" size={48} color={theme.border} />
-            <ThemedText type="h4" style={{ marginTop: Spacing.md, color: theme.textSecondary }}>Select a target to manage permissions</ThemedText>
-          </View>
-        )}
-      </ScrollView>
-
-      {/* Scope Configuration Modal */}
-      <Modal visible={scopeModalVisible} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { backgroundColor: theme.backgroundDefault }]}>
-            <View style={[styles.modalHeader, { borderBottomColor: theme.border }]}>
-              <ThemedText type="h3">Configure Custom Override</ThemedText>
-              <TouchableOpacity onPress={() => setScopeModalVisible(false)}>
-                <Feather name="x" size={24} color={theme.text} />
-              </TouchableOpacity>
-            </View>
-            
-            {activePermConfig && (
-              <ScrollView style={{ padding: Spacing.lg }}>
-                <ThemedText type="small" style={{ color: theme.textSecondary, marginBottom: 4 }}>Permission</ThemedText>
-                <ThemedText style={{ fontWeight: "bold", fontSize: 16, marginBottom: Spacing.xl }}>{activePermConfig.permission_key}</ThemedText>
-                
-                <ThemedText type="small" style={{ color: theme.textSecondary, marginBottom: 8 }}>Scope Type</ThemedText>
-                <View style={[styles.pickerWrapper, { backgroundColor: theme.backgroundSecondary, marginBottom: Spacing.xl }]}>
-                  <Picker dropdownIconColor={theme.text} itemStyle={{ color: theme.text }} selectedValue={configScopeType} onValueChange={setConfigScopeType} style={{ color: theme.text, height: Platform.OS === "web" ? 40 : undefined, outline: "none", borderWidth: 0, backgroundColor: theme.backgroundSecondary } as any}>
-                    <Picker.Item label="All (Global Access)" value="ALL" />
-                    <Picker.Item label="Team (Subordinates only)" value="TEAM" />
-                    <Picker.Item label="Office (Location specific)" value="OFFICE" />
-                    <Picker.Item label="Self (Own records only)" value="SELF" />
-                  </Picker>
+                    );
+                  })}
                 </View>
+              ))}
+            </View>
+          )}
+        </ScrollView>
 
-                {["TEAM", "OFFICE"].includes(configScopeType) && (
-                  <>
-                    <ThemedText type="small" style={{ color: theme.textSecondary, marginBottom: 8 }}>Target Resource (Optional)</ThemedText>
-                    <View style={[styles.pickerWrapper, { backgroundColor: theme.backgroundSecondary, marginBottom: Spacing.xl }]}>
-                      <Picker dropdownIconColor={theme.text} itemStyle={{ color: theme.text }} selectedValue={configScopeId} onValueChange={setConfigScopeId} style={{ color: theme.text, height: Platform.OS === "web" ? 40 : undefined, outline: "none", borderWidth: 0, backgroundColor: theme.backgroundSecondary } as any}>
-                        <Picker.Item label="Dynamic (User's own assigned Team/Office)" value="" />
-                        {configScopeType === "TEAM" && teams.map((t, i) => <Picker.Item key={i} label={t} value={t} />)}
-                        {configScopeType === "OFFICE" && offices.map(o => <Picker.Item key={o.id} label={o.name} value={o.id} />)}
-                      </Picker>
-                    </View>
-                  </>
-                )}
-                
-                <Pressable style={[styles.saveBtn, { backgroundColor: theme.primary }]} onPress={handleSaveConfig}>
-                  <Feather name="check" size={18} color="#fff" />
-                  <ThemedText style={{ color: "#fff", fontWeight: "bold", marginLeft: 8 }}>Apply Override</ThemedText>
-                </Pressable>
-              </ScrollView>
-            )}
+        {/* Scope Configuration Modal */}
+        <Modal visible={scopeModalVisible} transparent animationType="slide">
+          <View style={styles.modalOverlay}>
+            <View style={[styles.modalContent, { backgroundColor: theme.backgroundDefault }]}>
+              <View style={[styles.modalHeader, { borderBottomColor: theme.border }]}>
+                <ThemedText type="h3">Configure Scope</ThemedText>
+                <TouchableOpacity onPress={() => setScopeModalVisible(false)}>
+                  <Feather name="x" size={24} color={theme.text} />
+                </TouchableOpacity>
+              </View>
+              
+              {activePermConfig && (
+                <ScrollView style={{ padding: Spacing.xl }}>
+                  <ThemedText type="small" style={{ color: theme.textSecondary, marginBottom: 4 }}>Permission</ThemedText>
+                  <ThemedText style={{ fontWeight: "bold", fontSize: 16, marginBottom: Spacing.xl }}>{activePermConfig.permission_key}</ThemedText>
+                  
+                  <ThemedText type="small" style={{ color: theme.textSecondary, marginBottom: 8 }}>Scope Type</ThemedText>
+                  <View style={[styles.pickerWrapper, { backgroundColor: theme.backgroundSecondary, marginBottom: Spacing.xl }]}>
+                    <Picker dropdownIconColor={theme.text} itemStyle={{ color: theme.text }} selectedValue={configScopeType} onValueChange={setConfigScopeType} style={{ color: theme.text, height: Platform.OS === "web" ? 40 : undefined, outline: "none", borderWidth: 0, backgroundColor: theme.backgroundSecondary } as any}>
+                      <Picker.Item label="GLOBAL (All Data)" value="GLOBAL" />
+                      <Picker.Item label="OFFICE (Location Specific)" value="OFFICE" />
+                      <Picker.Item label="DEPARTMENT" value="DEPARTMENT" />
+                      <Picker.Item label="TEAM (Team members only)" value="TEAM" />
+                      <Picker.Item label="SELF (Only own data)" value="SELF" />
+                    </Picker>
+                  </View>
+
+                  {["OFFICE", "TEAM"].includes(configScopeType) && (
+                    <>
+                      <ThemedText type="small" style={{ color: theme.textSecondary, marginBottom: 8 }}>Target Resource ID (Optional)</ThemedText>
+                      <TextInput
+                        style={[styles.searchInput, { color: theme.text, backgroundColor: theme.backgroundSecondary, marginBottom: Spacing.xl, height: 40, paddingHorizontal: 10 }]}
+                        placeholder="Enter UUID for specific team/office..."
+                        placeholderTextColor={theme.textSecondary}
+                        value={configScopeId}
+                        onChangeText={setConfigScopeId}
+                      />
+                    </>
+                  )}
+                  
+                  <Pressable style={[styles.saveBtn, { backgroundColor: theme.primary }]} onPress={handleSaveConfig}>
+                    <Feather name="check" size={18} color="#fff" />
+                    <ThemedText style={{ color: "#fff", fontWeight: "bold", marginLeft: 8 }}>Apply Permission & Scope</ThemedText>
+                  </Pressable>
+                </ScrollView>
+              )}
+            </View>
           </View>
-        </View>
-      </Modal>
+        </Modal>
 
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  container: { flex: 1 },
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -429,92 +322,30 @@ const styles = StyleSheet.create({
     paddingTop: Platform.OS === "ios" ? 50 : Spacing.xl,
     paddingBottom: Spacing.xl,
   },
-  segmentContainer: {
-    flexDirection: "row",
-    gap: Spacing.sm,
-    marginBottom: Spacing.xl,
+  layout: { flex: 1, flexDirection: Platform.OS === "web" ? "row" : "column" },
+  sidebar: {
+    width: Platform.OS === "web" ? 300 : "100%",
+    height: Platform.OS === "web" ? "100%" : 200,
+    borderRightWidth: Platform.OS === "web" ? 1 : 0,
+    borderBottomWidth: Platform.OS === "web" ? 0 : 1,
   },
-  segment: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: Spacing.md,
-    borderRadius: BorderRadius.md,
-    ...(Platform.OS === "web" ? { cursor: "pointer" } : {}),
-  },
-  card: {
-    padding: Spacing.lg,
-    borderRadius: BorderRadius.md,
-    borderWidth: 1,
-  },
-  searchBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Platform.OS === "web" ? 0 : Spacing.sm,
-    borderRadius: BorderRadius.sm,
-    borderWidth: 1,
-    borderColor: "transparent",
-  },
-  searchResultItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingVertical: Spacing.md,
-    borderBottomWidth: 1,
-  },
-  pickerWrapper: {
-    borderRadius: BorderRadius.sm,
-    overflow: "hidden",
-  },
-  moduleCard: {
-    borderRadius: BorderRadius.md,
-    borderWidth: 1,
-    marginBottom: Spacing.lg,
-    overflow: "hidden"
-  },
-  moduleHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: Spacing.md,
-    borderBottomWidth: 1,
-  },
-  permRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    padding: Spacing.md,
-  },
-  badge: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 10,
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.5)",
-    justifyContent: "flex-end"
-  },
-  modalContent: {
-    borderTopLeftRadius: BorderRadius.xl,
-    borderTopRightRadius: BorderRadius.xl,
-    minHeight: "60%"
-  },
-  modalHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    padding: Spacing.lg,
-    borderBottomWidth: 1,
-  },
-  saveBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: Spacing.md,
-    borderRadius: BorderRadius.md,
-    marginTop: Spacing.md,
-    marginBottom: 40
-  }
+  mainContent: { flex: 1, padding: Spacing.lg },
+  searchBox: { flexDirection: "row", alignItems: "center", padding: Spacing.md, borderBottomWidth: 1, borderBottomColor: "#eee" },
+  searchInput: { flex: 1, height: 36, outline: "none" } as any,
+  targetItem: { padding: Spacing.md, paddingHorizontal: Spacing.lg, borderBottomWidth: 1, borderBottomColor: "#eee" },
+  targetHeader: { paddingBottom: Spacing.lg, marginBottom: Spacing.lg, borderBottomWidth: 1 },
+  moduleSection: { marginBottom: Spacing.xl * 2 },
+  moduleTitle: { fontWeight: "bold", letterSpacing: 1, marginBottom: Spacing.md, fontSize: 12 },
+  permRow: { flexDirection: "row", paddingVertical: Spacing.lg, borderBottomWidth: StyleSheet.hairlineWidth },
+  badge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: BorderRadius.sm },
+  configBtn: { padding: 6, borderRadius: BorderRadius.sm, borderWidth: 1, marginRight: 12 },
+  modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", alignItems: "center" },
+  modalContent: { width: "90%", maxWidth: 500, maxHeight: "90%", borderRadius: BorderRadius.lg, overflow: "hidden" },
+  modalHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: Spacing.lg, borderBottomWidth: 1 },
+  pickerWrapper: { borderRadius: BorderRadius.md, overflow: "hidden" },
+  saveBtn: { flexDirection: "row", justifyContent: "center", alignItems: "center", padding: Spacing.lg, borderRadius: BorderRadius.md, marginTop: Spacing.xl }
 });
+
+
+
+

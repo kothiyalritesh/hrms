@@ -13,6 +13,9 @@ import { ThemedText } from "@/components/ThemedText";
 import { useTheme } from "@/hooks/useTheme";
 import { BorderRadius, Colors, Spacing } from "@/constants/theme";
 import { CanonicalAttendanceService, CanonicalAttendanceDay } from "@/services/canonical-attendance.service";
+import { ModuleErrorBoundary } from "@/components/ModuleErrorBoundary";
+import { formatHrmsTime, parseHrmsTimestamp } from "@/utils/attendanceTimestamp";
+import { getBusinessDateIST } from "@/utils/businessDate";
 
 const toIso = (d: Date) => d.toISOString().slice(0, 10);
 
@@ -24,16 +27,23 @@ interface LateRow {
   work_date: string;
   first_in: string | null;
   minutes_late: number;
+  late_threshold?: string | null;
 }
 
-function minutesLate(firstIn: string | null): number {
+function minutesLate(firstIn: string | null, threshold: string | null = "09:30:00"): number {
   if (!firstIn) return 0;
-  // Expected check-in is 09:30 IST — adjust if needed
-  const expected = new Date(firstIn);
-  expected.setHours(9, 30, 0, 0);
-  const actual = new Date(firstIn);
-  const diff = Math.floor((actual.getTime() - expected.getTime()) / 60000);
-  return diff > 0 ? diff : 0;
+  try {
+    const actual = parseHrmsTimestamp(firstIn);
+    const [h, m] = (threshold || "09:30:00").split(":").map(Number);
+    const istHours = Number(new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Kolkata", hour: "numeric", hourCycle: "h23" }).format(actual));
+    const istMinutes = Number(new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Kolkata", minute: "numeric" }).format(actual));
+    const actualTotalMin = istHours * 60 + istMinutes;
+    const expectedTotalMin = (h || 9) * 60 + (m || 30);
+    const diff = actualTotalMin - expectedTotalMin;
+    return diff > 0 ? diff : 0;
+  } catch {
+    return 0;
+  }
 }
 
 function formatTime(iso: string | null) {
@@ -45,7 +55,7 @@ function formatDate(d: string) {
   return new Date(d + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
 }
 
-export default function LateArrivalReportScreen() {
+function LateArrivalReportScreenInner() {
   const { theme } = useTheme();
   const now = new Date();
   const [fromDate, setFromDate] = useState(toIso(new Date(now.getFullYear(), now.getMonth(), 1)));
@@ -60,7 +70,7 @@ export default function LateArrivalReportScreen() {
     setLoading(true);
     try {
       const endRaw = toDate;
-      const today = new Date(new Date().getTime() + 5.5 * 3600000).toISOString().slice(0, 10);
+      const today = getBusinessDateIST();
       const end = endRaw > today ? today : endRaw;
       const data = await CanonicalAttendanceService.list(fromDate, end);
       const late: LateRow[] = data
@@ -72,7 +82,8 @@ export default function LateArrivalReportScreen() {
           office: r.office_name,
           work_date: r.work_date,
           first_in: r.official_first_in,
-          minutes_late: minutesLate(r.official_first_in),
+          minutes_late: minutesLate(r.official_first_in, (r as any).late_checkin_time),
+          late_threshold: (r as any).late_checkin_time,
         }));
       setRows(late);
     } catch (e: any) {
@@ -211,7 +222,7 @@ export default function LateArrivalReportScreen() {
               </View>
               <View style={{ flexDirection: "row", gap: Spacing.lg, marginTop: 4 }}>
                 <ThemedText type="caption" style={{ color: theme.textSecondary }}>Check-in: <ThemedText style={{ color: Colors.light.error, fontWeight: "700" }}>{formatTime(r.first_in)}</ThemedText></ThemedText>
-                <ThemedText type="caption" style={{ color: theme.textSecondary }}>Expected: <ThemedText style={{ fontWeight: "700" }}>09:30 AM</ThemedText></ThemedText>
+                <ThemedText type="caption" style={{ color: theme.textSecondary }}>Expected: <ThemedText style={{ fontWeight: "700" }}>{r.late_threshold ? (r.late_threshold.slice(0, 5)) : "09:30"}</ThemedText></ThemedText>
               </View>
             </View>
           ))}
@@ -219,6 +230,14 @@ export default function LateArrivalReportScreen() {
         </ScrollView>
       )}
     </View>
+  );
+}
+
+export default function LateArrivalReportScreen() {
+  return (
+    <ModuleErrorBoundary moduleName="Late Arrival Report">
+      <LateArrivalReportScreenInner />
+    </ModuleErrorBoundary>
   );
 }
 

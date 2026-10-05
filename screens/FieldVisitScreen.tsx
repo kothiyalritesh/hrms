@@ -178,11 +178,6 @@ export default function FieldVisitScreen() {
       const quality = validateFreshLocation(gps);
 
       // Debug: log exactly what we have so we can diagnose coord issues
-      console.log("[CheckIn] visit.id:", visit.id);
-      console.log("[CheckIn] visit.destination_coords:", JSON.stringify(visit.destination_coords));
-      console.log("[CheckIn] visit.predefined_site_id:", (visit as any).predefined_site_id);
-      console.log("[CheckIn] visit.checkin_radius_m:", visit.checkin_radius_m);
-      console.log("[CheckIn] user GPS:", gps.latitude, gps.longitude);
 
       // Resolve destination coordinates.
       const dc = visit.destination_coords as any;

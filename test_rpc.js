@@ -1,24 +1,18 @@
-const fetch = require('node-fetch'); // we can just use global fetch in modern node
+const { createClient } = require('@supabase/supabase-js');
+const fs = require('fs');
+
+const env = fs.readFileSync('.env', 'utf8');
+const supabaseUrl = env.match(/EXPO_PUBLIC_SUPABASE_URL=(.*)/)[1].trim();
+const supabaseKey = env.match(/EXPO_PUBLIC_SUPABASE_ANON_KEY=(.*)/)[1].trim();
+
+const supabase = createClient(supabaseUrl, supabaseKey);
+
 async function test() {
-  const url = "https://fuchvtzbgwzdpzfaizbj.supabase.co/rest/v1/rpc/rpc_admin_attendance_daily_v3";
-  const body = {
-    p_start: "2026-09-18",
-    p_end: "2026-09-18",
-    p_offset: 0,
-    p_limit: 50
-  };
-  const res = await globalThis.fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "apikey": "sb_publishable_SVIfa_ezLPPgKaQ7xlw3mA_uS2_p4PX",
-      // we don't have a user token, so this will either hit RLS or fail. 
-      // But rpc_admin_attendance_daily_v3 has a SECURITY DEFINER, and internally calls require_profile_admin().
-      // Without Auth token, auth.uid() is null. It should return ADMIN_REQUIRED.
-    },
-    body: JSON.stringify(body)
-  });
-  console.log(res.status);
-  console.log(await res.text());
+  const { data, error } = await supabase.rpc('get_my_permissions');
+  console.log('Type of data:', typeof data);
+  console.log('IsArray:', Array.isArray(data));
+  console.log('Data:', data);
+  console.log('Error:', error);
 }
+
 test();

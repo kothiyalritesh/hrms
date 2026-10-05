@@ -7,6 +7,7 @@ import {
 import Feather from "@expo/vector-icons/Feather";
 import { useFocusEffect } from "@react-navigation/native";
 import { ThemedText } from "@/components/ThemedText";
+import { ModuleErrorBoundary } from "@/components/ModuleErrorBoundary";
 import { useTheme } from "@/hooks/useTheme";
 import { Spacing, BorderRadius } from "@/constants/theme";
 import { supabase } from "@/lib/supabase";
@@ -625,7 +626,7 @@ function LogCard({ w, theme }: { w: any; theme: any }) {
 }
 
 // ─── Main Screen ──────────────────────────────────────────────────────────────
-export default function InTransitScreen() {
+function InTransitScreenContent() {
   const { theme } = useTheme();
   const { user } = useAuth();
   const [tab, setTab] = useState<"transit" | "suspicious" | "log">("transit");
@@ -795,7 +796,6 @@ export default function InTransitScreen() {
           Math.cos((lastPing.latitude * Math.PI) / 180) *
           Math.sin(dLon / 2) ** 2;
         const distM = Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
-        console.log(`InTransit - User ${att.user_id} is ${distM}m from check-in location`);
 
         // If user is more than 50m from check-in location AND has PENDING meetings, show in transit
         const departureRadius = Number((att as any).offices?.attendance_radius);
@@ -1197,3 +1197,11 @@ const styles = StyleSheet.create({
   modalBtns: { flexDirection: "row", gap: Spacing.sm },
   modalBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", padding: Spacing.md, borderRadius: BorderRadius.md },
 });
+
+export default function InTransitScreen() {
+  return (
+    <ModuleErrorBoundary moduleName="In-Transit Tracker">
+      <InTransitScreenContent />
+    </ModuleErrorBoundary>
+  );
+}

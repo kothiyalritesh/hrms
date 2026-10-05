@@ -1,0 +1,401 @@
+﻿
+-- 1. Fix the view to check for WEEKLY_OFF correctly
+-- DROP required because column names changed (cannot use CREATE OR REPLACE when renaming columns)
+DROP VIEW IF EXISTS public.v_attendance_daily_canonical CASCADE;
+CREATE VIEW public.v_attendance_daily_canonical
+WITH (security_invoker=true) AS
+WITH employee_days AS (
+  SELECT p.id user_id, day::date work_date, p.name employee_name, p.employee_number,
+    p.office_id, o.name office_name, p.team_id, COALESCE(t.name,p.team) team_name,
+    p.reports_to team_head_id, manager.name team_head_name, p.role, p.show_on_tv,
+    p.joining_date, p.is_active
+  FROM public.profiles p
+  LEFT JOIN public.offices o ON o.id=p.office_id
+  LEFT JOIN public.teams t ON t.id=p.team_id
+  LEFT JOIN public.profiles manager ON manager.id=p.reports_to
+  CROSS JOIN LATERAL generate_series(
+    greatest(COALESCE(p.joining_date,(p.created_at AT TIME ZONE 'Asia/Kolkata')::date), date '2020-01-01'),
+    least(COALESCE(p.last_working_date,(now() AT TIME ZONE 'Asia/Kolkata')::date),(now() AT TIME ZONE 'Asia/Kolkata')::date),
+    INTERVAL '1 day') day
+  WHERE p.attendance_reporting_enabled
+    AND (day::date < (now() AT TIME ZONE 'Asia/Kolkata')::date OR p.is_active)
+), evidence AS (
+SELECT employee.*,
+  attendance.id attendance_log_id,
+  COALESCE(attendance.app_checkin_time,
+    CASE WHEN upper(COALESCE(attendance.checkin_source,attendance.attendance_type,'')) LIKE 'APP%'
+         THEN attendance.checkin_time END) app_first_in,
+  COALESCE(attendance.biometric_first_punch,biometric.first_punch) biometric_first_in,
+  visit.first_in field_visit_first_in,
+  attendance.checkout_time raw_checkout,
+  CASE WHEN upper(COALESCE(attendance.checkout_source,''))
+         NOT IN ('ADMIN','REGULARIZATION','SYSTEM','BIOMETRIC','FIELD_VISIT')
+       THEN attendance.checkout_time END app_checkout,
+  regularization.requested_checkout approved_regularization_checkout,
+  CASE WHEN regularization.id IS NULL
+         AND upper(COALESCE(attendance.checkout_source,''))='ADMIN'
+       THEN attendance.checkout_time END admin_corrected_checkout,
+  COALESCE(attendance.biometric_last_punch,biometric.last_punch) biometric_last_punch_evidence,
+  visit.last_out field_visit_checkout, 
+  visit.has_visit, 
+  visit.active_id, 
+  visit.active_name,
+  visit.distance_m, 
+  visit.active_site_name,
+  policy.late_checkin_time, 
+  policy.allow_field_visit_checkout, 
+  policy.policy_id,
+  calendar.value calendar_value, 
+  leave_request.leave_type,
+  attendance.warning attendance_warning,
+  NULL::timestamptz latest_ping_at, 
+  NULL::numeric latest_accuracy_m,
+  NULL::text latest_tracking_status,
+  NULL::numeric distance_from_office_m,
+  NULL::text tracking_session_status,
+  NULL::text tracking_health_reason,
+  settings.tv_tracking_stale_minutes
+FROM employee_days employee
+LEFT JOIN LATERAL (
+  SELECT a.* FROM public.attendance_logs a
+  WHERE a.user_id=employee.user_id AND a.date=employee.work_date
+  ORDER BY a.created_at, a.id LIMIT 1) attendance ON true
+LEFT JOIN LATERAL (
+  SELECT min(d.log_date) first_punch, max(d.log_date) last_punch
+  FROM public.smartoffice_device_logs d
+  WHERE d.user_id=employee.user_id AND (d.log_date AT TIME ZONE 'Asia/Kolkata')::date=employee.work_date) biometric ON true
+LEFT JOIN LATERAL (
+  SELECT
+    min(public.hrms_timestamp(v.checkin_time))  first_in,
+    max(public.hrms_timestamp(v.checkout_time)) last_out,
+    bool_or(v.checkin_time IS NOT NULL) has_visit,
+    (array_agg(v.id ORDER BY public.hrms_timestamp(v.checkin_time) DESC NULLS LAST, v.created_at DESC)
+      FILTER (WHERE v.status IN ('CHECKED_IN','IN_TRANSIT','PENDING')))[1] active_id,
+    (array_agg(COALESCE(v.project_name,v.location_name)
+      ORDER BY public.hrms_timestamp(v.checkin_time) DESC NULLS LAST, v.created_at DESC)
+      FILTER (WHERE v.status IN ('CHECKED_IN','IN_TRANSIT','PENDING')))[1] active_name,
+    (array_agg(v.last_distance_m ORDER BY v.last_distance_at DESC NULLS LAST))[1] distance_m,
+    (array_agg(COALESCE(v.project_name,v.location_name)
+      ORDER BY public.hrms_timestamp(v.checkin_time) DESC NULLS LAST, v.created_at DESC)
+      FILTER (WHERE v.status IN ('CHECKED_IN','IN_TRANSIT','PENDING')))[1] active_site_name
+  FROM public.field_visits v
+  WHERE v.user_id=employee.user_id AND v.date=employee.work_date
+  AND COALESCE(v.verification_status,'PENDING') <> 'REJECTED') visit ON true
+LEFT JOIN LATERAL (
+  SELECT r.id, r.requested_checkout
+  FROM public.attendance_regularization_requests r
+  WHERE r.attendance_id=attendance.id AND r.status='APPROVED'
+  ORDER BY r.reviewed_at DESC NULLS LAST, r.created_at DESC LIMIT 1) regularization ON true
+LEFT JOIN LATERAL (
+  SELECT p.id policy_id, p.late_checkin_time, p.allow_field_visit_checkout
+  FROM public.attendance_policies p
+  WHERE p.is_active
+    AND employee.work_date BETWEEN p.effective_from AND COALESCE(p.effective_to,'infinity'::date)
+    AND (p.office_id=employee.office_id OR p.office_id IS NULL)
+    AND lower(COALESCE(p.role,'all')) IN (lower(COALESCE(employee.role,'')),'all')
+  ORDER BY CASE
+    WHEN p.office_id=employee.office_id AND lower(p.role)=lower(COALESCE(employee.role,'')) THEN 1
+    WHEN p.office_id=employee.office_id AND lower(COALESCE(p.role,'all'))='all' THEN 2
+    WHEN p.office_id IS NULL AND lower(p.role)=lower(COALESCE(employee.role,'')) THEN 3
+    ELSE 4 END
+  LIMIT 1) policy ON true
+LEFT JOIN LATERAL (
+  SELECT public.resolve_hrms_calendar_day(employee.user_id,employee.work_date) value) calendar ON true
+LEFT JOIN LATERAL (
+  SELECT r.leave_type
+  FROM public.leave_requests r
+  WHERE r.user_id=employee.user_id AND r.status='APPROVED'
+    AND employee.work_date BETWEEN r.start_date AND r.end_date
+  ORDER BY r.created_at DESC LIMIT 1) leave_request ON true
+CROSS JOIN (
+  SELECT COALESCE(
+    current_setting('app.tv_tracking_stale_minutes', true),
+    '15'
+  )::integer tv_tracking_stale_minutes
+) settings
+)
+SELECT e.*,
+  COALESCE(
+    e.approved_regularization_checkout,
+    e.admin_corrected_checkout,
+    CASE WHEN COALESCE(e.allow_field_visit_checkout,true) THEN COALESCE(e.app_checkout,e.field_visit_checkout) ELSE e.app_checkout END,
+    e.app_checkout,
+    e.raw_checkout
+  ) effective_checkout,
+  COALESCE(
+    e.app_first_in,
+    e.field_visit_first_in,
+    e.biometric_first_in
+  ) effective_checkin,
+  (CASE
+    WHEN e.leave_type IS NOT NULL THEN 'LEAVE'
+    WHEN e.calendar_value->>'kind'='WEEKLY_OFF' THEN 'WEEKLY_OFF'
+    WHEN e.calendar_value->>'kind'='HOLIDAY' THEN 'HOLIDAY'
+    WHEN e.raw_checkout IS NOT NULL OR e.approved_regularization_checkout IS NOT NULL OR e.admin_corrected_checkout IS NOT NULL THEN 'CHECKED_OUT'
+    WHEN e.app_first_in IS NOT NULL OR e.biometric_first_in IS NOT NULL OR e.field_visit_first_in IS NOT NULL THEN 'CHECKED_IN'
+    ELSE 'ABSENT'
+  END) effective_status,
+  EXISTS(
+    SELECT 1 FROM public.attendance_logs a
+    WHERE a.id=e.attendance_log_id AND a.auto_closed=true
+  ) is_auto_closed
+FROM evidence e;
+
+
+
+-- 1. Fix rpc_get_my_monthly_attendance to use profiles.weekly_off_day
+CREATE OR REPLACE FUNCTION public.rpc_get_my_monthly_attendance(p_month date)
+RETURNS jsonb
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_uid uuid := auth.uid();
+  v_month_start date := date_trunc('month', p_month)::date;
+  v_month_end date := (v_month_start + interval '1 month - 1 day')::date;
+  v_today date := (now() at time zone 'Asia/Kolkata')::date;
+  v_profile record;
+  v_policy record;
+  v_date date;
+  v_week_number integer;
+  v_attendance record;
+  v_leave record;
+  v_status text;
+  v_rows jsonb := '[]'::jsonb;
+BEGIN
+  if v_uid is null then
+    raise exception 'AUTHENTICATION_REQUIRED';
+  end if;
+  if p_month is null or p_month <> v_month_start then
+    raise exception 'MONTH_START_REQUIRED';
+  end if;
+
+  select id, office_id, role, weekly_off_day
+  into v_profile
+  from public.profiles
+  where id = v_uid and is_active = true;
+  if not found or v_profile.office_id is null then
+    raise exception 'ACTIVE_PROFILE_WITH_OFFICE_REQUIRED';
+  end if;
+
+  select late_checkin_time
+  into v_policy
+  from public.attendance_policies
+  where office_id = v_profile.office_id
+    and coalesce(is_active, true)
+    and lower(coalesce(role, 'all')) in (
+      lower(coalesce(v_profile.role, '')),
+      'all'
+    )
+  order by
+    case when lower(coalesce(role, 'all')) =
+      lower(coalesce(v_profile.role, '')) then 0 else 1 end
+  limit 1;
+  if not found or v_policy.late_checkin_time is null then
+    raise exception 'ATTENDANCE_POLICY_NOT_CONFIGURED';
+  end if;
+
+  for v_date in
+    select day::date
+    from generate_series(
+      v_month_start,
+      least(v_month_end, v_today),
+      interval '1 day'
+    ) day
+  loop
+    v_week_number := ((extract(day from v_date)::integer - 1) / 7) + 1;
+    v_status := null;
+
+    if exists (
+      select 1 from public.holiday_calendar holiday
+      where holiday.holiday_date = v_date
+        and (holiday.office_id is null or holiday.office_id = v_profile.office_id)
+        and not coalesce(holiday.is_optional, false)
+    ) then
+      continue;
+    end if;
+
+    if v_profile.weekly_off_day is not null and v_profile.weekly_off_day = extract(dow from v_date)::integer then
+      continue;
+    end if;
+
+    if exists (
+      select 1 from public.weekly_off_rules weekly
+      where weekly.is_active
+        and (
+          weekly.user_id = v_uid
+          or (weekly.user_id is null and weekly.office_id = v_profile.office_id)
+        )
+        and weekly.weekday = extract(dow from v_date)::integer
+        and (
+          weekly.week_of_month is null
+          or weekly.week_of_month = v_week_number
+        )
+    ) then
+      continue;
+    end if;
+
+    select
+      attendance.checkin_time,
+      attendance.checkout_time
+    into v_attendance
+    from public.attendance_logs attendance
+    where attendance.user_id = v_uid
+      and attendance.date = v_date
+      and attendance.checkin_time is not null
+    order by attendance.created_at desc
+    limit 1;
+
+    if found then
+      if v_attendance.checkin_time::time > v_policy.late_checkin_time then
+        v_status := 'late';
+      else
+        v_status := 'present';
+      end if;
+    else
+      select request.leave_type
+      into v_leave
+      from public.leave_requests request
+      where request.user_id = v_uid
+        and lower(request.status) = 'approved'
+        and v_date between request.start_date and request.end_date
+      limit 1;
+
+      if found then
+        v_status := 'leave';
+      else
+        v_status := 'absent';
+      end if;
+    end if;
+
+    v_rows := v_rows || jsonb_build_object(
+      'date', v_date,
+      'status', v_status
+    );
+  end loop;
+
+  return jsonb_build_object(
+    'success', true,
+    'month', p_month,
+    'records', v_rows
+  );
+END;
+$$;
+
+
+
+-- Drop broken RPC
+DROP FUNCTION IF EXISTS public.rpc_admin_attendance_daily_v3(date, date);
+
+-- Recreate to use canonical view
+CREATE OR REPLACE FUNCTION public.rpc_admin_attendance_daily_v3(
+  p_start_date date,
+  p_end_date date
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_result jsonb;
+BEGIN
+  SELECT jsonb_agg(
+    jsonb_build_object(
+      'date', att.date,
+      'day_label', to_char(att.date, 'Dy, MMM DD'),
+      'present_count', att.present_count,
+      'present_missing_out_count', att.present_missing_out_count,
+      'absent_count', att.absent_count,
+      'leave_count', att.leave_count,
+      'weekly_off_count', att.weekly_off_count,
+      'holiday_count', att.holiday_count,
+      'late_count', att.late_count,
+      'attendance_rate', att.attendance_rate
+    )
+    ORDER BY att.date
+  )
+  INTO v_result
+  FROM (
+    SELECT
+      v.work_date as date,
+      COUNT(*) FILTER (WHERE v.effective_status = 'CHECKED_IN' OR v.effective_status = 'CHECKED_OUT') as present_count,
+      COUNT(*) FILTER (WHERE v.effective_status = 'CHECKED_IN') as present_missing_out_count,
+      COUNT(*) FILTER (WHERE v.effective_status = 'ABSENT') as absent_count,
+      COUNT(*) FILTER (WHERE v.effective_status = 'LEAVE') as leave_count,
+      COUNT(*) FILTER (WHERE v.effective_status = 'WEEKLY_OFF') as weekly_off_count,
+      COUNT(*) FILTER (WHERE v.effective_status = 'HOLIDAY') as holiday_count,
+      COUNT(*) FILTER (WHERE (v.app_first_in::time > v.late_checkin_time) OR (v.biometric_first_in::time > v.late_checkin_time)) as late_count,
+      CASE
+        WHEN COUNT(*) FILTER (WHERE v.effective_status NOT IN ('HOLIDAY', 'WEEKLY_OFF')) > 0
+        THEN ROUND(
+          (COUNT(*) FILTER (WHERE v.effective_status IN ('CHECKED_IN', 'CHECKED_OUT'))::numeric /
+           COUNT(*) FILTER (WHERE v.effective_status NOT IN ('HOLIDAY', 'WEEKLY_OFF'))) * 100,
+          2
+        )
+        ELSE 100
+      END as attendance_rate
+    FROM public.v_attendance_daily_canonical v
+    WHERE v.work_date >= p_start_date
+      AND v.work_date <= p_end_date
+    GROUP BY v.work_date
+  ) att;
+
+  RETURN COALESCE(v_result, '[]'::jsonb);
+END;
+$$;
+
+-- New function to grant comp off
+CREATE OR REPLACE FUNCTION public.grant_weekly_off_comp_off(p_user_id uuid, p_work_date date)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_calendar jsonb;
+  v_earning record;
+  v_tx uuid;
+BEGIN
+  -- Get calendar resolution to check if it's a WEEKLY_OFF
+  v_calendar := public.resolve_hrms_calendar_day(p_user_id, p_work_date);
+
+  IF v_calendar->>'kind' = 'WEEKLY_OFF' THEN
+    -- Prevent duplicate via idempotency key on insert
+    BEGIN
+      INSERT INTO public.comp_off_earnings(
+        user_id, eligible_work_date, units, remaining_units,
+        source_type, source_id, reason, status, created_by,
+        expires_at
+      )
+      VALUES(
+        p_user_id, p_work_date, 1, 1,
+        'WEEKLY_OFF_ATTENDANCE', NULL, 'Worked on a designated Weekly Off', 'APPROVED', p_user_id,
+        p_work_date + interval '3 months'
+      )
+      RETURNING * INTO v_earning;
+      
+      -- Credit to leave balance
+      v_tx := public.apply_leave_transaction(
+        p_user_id, 'COMP_OFF', 'COMP_OFF_EARNING', 1,
+        p_work_date, NULL, 'WEEKLY_OFF_ATTENDANCE', NULL, 'Worked on Weekly Off', p_user_id,
+        'weekly-off-comp:' || p_user_id || ':' || p_work_date
+      );
+
+      UPDATE public.comp_off_earnings SET credited_transaction_id = v_tx WHERE id = v_earning.id;
+
+      INSERT INTO public.notifications(user_id, title, message, type, read)
+      VALUES(p_user_id, 'Comp-Off Earned', 'You earned +1 Comp-Off for working on your Week Off!', 'SYSTEM', false);
+
+      RETURN true;
+    EXCEPTION WHEN unique_violation THEN
+      RETURN false;
+    END;
+  END IF;
+  
+  RETURN false;
+END;
+$$;
+

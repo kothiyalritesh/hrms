@@ -85,8 +85,8 @@ export default function OvertimeReportScreen() {
         (data || []).map((r: any) => ({
           id: r.id,
           user_id: r.user_id,
-          employee_name: r.profiles?.name || "Unknown",
-          employee_number: r.profiles?.employee_number || null,
+          employee_name: r.employee?.name || "Unknown",
+          employee_number: r.employee?.employee_number || null,
           eligible_work_date: r.eligible_work_date,
           units_earned: Number(r.units_earned) || 0,
           remaining_units: Number(r.remaining_units) || 0,

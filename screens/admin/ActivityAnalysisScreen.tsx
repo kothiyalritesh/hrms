@@ -6,11 +6,13 @@ import {
 import Feather from "@expo/vector-icons/Feather";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
+import { ModuleErrorBoundary } from "@/components/ModuleErrorBoundary";
 import { ActivityService } from "@/services/activity.service";
 import { supabase } from "@/lib/supabase";
 import { BusinessClockService } from "@/services/business-clock.service";
 import { addBusinessDays, formatBusinessDate } from "@/utils/businessDate";
 import { formatHrmsTime } from "@/utils/attendanceTimestamp";
+import { getBusinessDateIST } from "@/utils/businessDate";
 
 function fmtTime(iso?: string | null) {
   if (!iso) return "—";
@@ -22,7 +24,7 @@ const ACT_COLORS: Record<string, string> = {
   TRAVEL: "#EF4444", OFFICE_WORK: "#6B7280", OTHER: "#9CA3AF",
 };
 
-export default function ActivityAnalysisScreen({ navigation }: any) {
+function ActivityAnalysisScreenContent({ navigation }: any) {
   const [date, setDate] = useState("");
   const [allLogs, setAllLogs] = useState<any[]>([]);
   const [offices, setOffices] = useState<any[]>([]);
@@ -35,7 +37,7 @@ export default function ActivityAnalysisScreen({ navigation }: any) {
 
   useEffect(() => {
     if (!date) {
-      BusinessClockService.getDate(true)
+      Promise.resolve(getBusinessDateIST())
         .then(setDate)
         .catch((error) => Alert.alert("Server time unavailable", error.message));
       return;
@@ -450,3 +452,11 @@ const s = StyleSheet.create({
   noActs: { fontSize: 12, color: "#9CA3AF", fontStyle: "italic", marginLeft: 20 },
   hint: { fontSize: 11, color: "#007AFF", textAlign: "center", marginTop: 8 },
 });
+
+export default function ActivityAnalysisScreen(props: any) {
+  return (
+    <ModuleErrorBoundary moduleName="Activity Analysis">
+      <ActivityAnalysisScreenContent {...props} />
+    </ModuleErrorBoundary>
+  );
+}

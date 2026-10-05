@@ -33,6 +33,8 @@ export interface AttendanceRecord {
   workedMinutes?: number | null;
   attendanceSource?: string | null;
   attendanceContext?: string | null;
+  registeredOfficeName?: string | null;
+  checkInOfficeName?: string | null;
   contextName?: string | null;
   eventId?: string | null;
   eventName?: string | null;

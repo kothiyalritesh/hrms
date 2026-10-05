@@ -672,9 +672,9 @@ export default function AttendanceIntelligenceScreen() {
             <View style={styles.sectionStack}>
               {/* Sub-Navigation */}
               <View style={styles.subTabBar}>
-                {(["EMPLOYEES", "TEAMS", "OFFICES", "DEPARTMENTS"] as WorkforceSubTab[]).map((tab) => (
+                {(["EMPLOYEES", "TEAMS", "OFFICES", "DEPARTMENTS"] as WorkforceSubTab[]).map((tab, idx) => (
                   <TouchableOpacity
-                    key={tab}
+                    key={`workforce-${idx}`}
                     style={[styles.subTabItem, workforceTab === tab && styles.subTabItemActive]}
                     onPress={() => setWorkforceTab(tab)}
                   >
@@ -951,9 +951,9 @@ export default function AttendanceIntelligenceScreen() {
             <View style={styles.sectionStack}>
               {/* Sub-Navigation */}
               <View style={styles.subTabBar}>
-                {(["DAILY", "PUNCTUALITY", "HOURS"] as AttendanceSubTab[]).map((tab) => (
+                {(["DAILY", "PUNCTUALITY", "HOURS"] as AttendanceSubTab[]).map((tab, idx) => (
                   <TouchableOpacity
-                    key={tab}
+                    key={`attendance-${idx}`}
                     style={[styles.subTabItem, attendanceTab === tab && styles.subTabItemActive]}
                     onPress={() => setAttendanceTab(tab)}
                   >
@@ -1053,9 +1053,9 @@ export default function AttendanceIntelligenceScreen() {
                     { id: "AT_RISK", label: "At-Risk & Streaks" },
                     { id: "HOURS_COMPLIANCE", label: "Hours Compliance" },
                   ] as const
-                ).map((tab) => (
+                ).map((tab, idx) => (
                   <TouchableOpacity
-                    key={tab.id}
+                    key={`performance-${idx}`}
                     style={[styles.subTabItem, performanceTab === tab.id && styles.subTabItemActive]}
                     onPress={() => setPerformanceTab(tab.id as PerformanceSubTab)}
                   >
@@ -1389,9 +1389,9 @@ export default function AttendanceIntelligenceScreen() {
             <View style={styles.sectionStack}>
               {/* Sub-Navigation */}
               <View style={styles.subTabBar}>
-                {(["INBOX", "ANOMALIES", "DATA_QUALITY", "RECONCILIATION"] as ExceptionsSubTab[]).map((tab) => (
+                {(["INBOX", "ANOMALIES", "DATA_QUALITY", "RECONCILIATION"] as ExceptionsSubTab[]).map((tab, idx) => (
                   <TouchableOpacity
-                    key={tab}
+                    key={`exceptions-${idx}`}
                     style={[styles.subTabItem, exceptionsTab === tab && styles.subTabItemActive]}
                     onPress={() => setExceptionsTab(tab)}
                   >
@@ -1527,9 +1527,9 @@ export default function AttendanceIntelligenceScreen() {
             <View style={styles.sectionStack}>
               {/* Sub-Navigation */}
               <View style={styles.subTabBar}>
-                {(["AI_INSIGHTS", "ASK_AI"] as InsightsSubTab[]).map((tab) => (
+                {(["AI_INSIGHTS", "ASK_AI"] as InsightsSubTab[]).map((tab, idx) => (
                   <TouchableOpacity
-                    key={tab}
+                    key={`insights-${idx}`}
                     style={[styles.subTabItem, insightsTab === tab && styles.subTabItemActive]}
                     onPress={() => setInsightsTab(tab)}
                   >

@@ -67,6 +67,11 @@ export default function LeaveBalanceScreen() {
   const [reasonOption, setReasonOption] = useState(LEAVE_REASONS[0]);
   const [customReason, setCustomReason] = useState("");
   const [actionLoading, setActionLoading] = useState(false);
+  const [resetModal, setResetModal] = useState<{ visible: boolean }>({ visible: false });
+  const [resetLeaveType, setResetLeaveType] = useState<LeaveType>("sick");
+  const [resetFemaleDays, setResetFemaleDays] = useState("2");
+  const [resetMaleDays, setResetMaleDays] = useState("1");
+  const [resetReason, setResetReason] = useState("Monthly Allocation");
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -176,6 +181,38 @@ export default function LeaveBalanceScreen() {
     }
   };
 
+  
+  const handleResetAll = async () => {
+    if (!isHRDUser) {
+      RNAlert.alert("Access Denied", "Only HRD users can modify leave balances.");
+      return;
+    }
+    const fDays = parseFloat(resetFemaleDays);
+    const mDays = parseFloat(resetMaleDays);
+    if (isNaN(fDays) || isNaN(mDays) || !resetReason.trim()) {
+      RNAlert.alert("Invalid", "Please enter valid days and a reason.");
+      return;
+    }
+
+    setActionLoading(true);
+    try {
+      const { data, error } = await supabase.rpc("rpc_admin_reset_all_leave_balances", {
+        p_leave_type: resetLeaveType.toUpperCase(),
+        p_female_days: fDays,
+        p_male_days: mDays,
+        p_reason: resetReason.trim(),
+      });
+      if (error) throw error;
+      RNAlert.alert("Success", `Reset applied for ${data?.employees_updated || 0} employees.`);
+      setResetModal({ visible: false });
+      await loadData();
+    } catch (e: any) {
+      RNAlert.alert("Error", e.message);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   const removeSingle = (emp: EmployeeBalance) => {
     // Check if current user has permission
     if (!isHRDUser) {
@@ -277,6 +314,17 @@ export default function LeaveBalanceScreen() {
             <Feather name="minus" size={14} color="#fff" />
             <ThemedText type="caption" style={{ color: "#fff", fontWeight: "700" }}>Remove</ThemedText>
           </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.actionBtn, { backgroundColor: "#6366F1", marginLeft: 4 }]}
+              onPress={() => {
+                if (!isHRDUser) { RNAlert.alert("Access Denied"); return; }
+                setResetModal({ visible: true });
+              }}
+            >
+              <Feather name="refresh-cw" size={14} color="#fff" />
+              <ThemedText type="caption" style={{ color: "#fff", fontWeight: "700" }}>Reset All</ThemedText>
+            </TouchableOpacity>
+
         </View>
       </View>
 
@@ -386,6 +434,71 @@ export default function LeaveBalanceScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Reset All Modal */}
+      <Modal visible={resetModal.visible} transparent animationType="slide">
+        <View style={styles.overlay}>
+          <View style={[styles.modalBox, { backgroundColor: theme.backgroundDefault }]}>
+            <View style={styles.modalHeader}>
+              <ThemedText type="h3">Reset All Balances</ThemedText>
+              <Pressable onPress={() => setResetModal({ visible: false })}><Feather name="x" size={24} color={theme.textSecondary} /></Pressable>
+            </View>
+            <ThemedText type="caption" style={{ color: theme.textSecondary, marginBottom: Spacing.md }}>
+              This will overwrite the current balance for ALL employees (based on gender).
+            </ThemedText>
+            
+            <ThemedText style={styles.label}>Leave Type</ThemedText>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: Spacing.xs, marginBottom: Spacing.md }}>
+              {LEAVE_TYPES.map(lt => (
+                <Pressable
+                  key={lt}
+                  style={[styles.chip, { backgroundColor: resetLeaveType === lt ? theme.primary : "transparent", borderColor: theme.border }]}
+                  onPress={() => setResetLeaveType(lt)}
+                >
+                  <ThemedText style={{ color: resetLeaveType === lt ? "#fff" : theme.text }}>{lt.replace("_", " ").toUpperCase()}</ThemedText>
+                </Pressable>
+              ))}
+            </View>
+
+            <View style={{ flexDirection: "row", gap: Spacing.md, marginBottom: Spacing.md }}>
+              <View style={{ flex: 1 }}>
+                <ThemedText style={styles.label}>Female Days</ThemedText>
+                <TextInput
+                  style={[styles.input, { borderColor: theme.border, color: theme.text }]}
+                  keyboardType="numeric"
+                  value={resetFemaleDays}
+                  onChangeText={setResetFemaleDays}
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <ThemedText style={styles.label}>Male Days</ThemedText>
+                <TextInput
+                  style={[styles.input, { borderColor: theme.border, color: theme.text }]}
+                  keyboardType="numeric"
+                  value={resetMaleDays}
+                  onChangeText={setResetMaleDays}
+                />
+              </View>
+            </View>
+
+            <ThemedText style={styles.label}>Reason</ThemedText>
+            <TextInput
+              style={[styles.input, { borderColor: theme.border, color: theme.text, marginBottom: Spacing.xl }]}
+              value={resetReason}
+              onChangeText={setResetReason}
+            />
+
+            <TouchableOpacity
+              style={[styles.modalBtn, { backgroundColor: actionLoading ? theme.textSecondary : theme.primary }]}
+              onPress={handleResetAll}
+              disabled={actionLoading}
+            >
+              {actionLoading ? <ActivityIndicator color="#fff" /> : <ThemedText style={{ color: "#fff", fontWeight: "600", fontSize: 16 }}>Confirm Reset All</ThemedText>}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
     </View>
   );
 }

@@ -236,7 +236,7 @@ export default function SitePickerModal({ visible, visitType, visitTypeLabel, on
                         <TouchableOpacity
                           key={site.id}
                           style={st.siteRow}
-                          onPress={() => setSelectedSavedSite(site)}
+                          onPress={() => { setSelectedSavedSite(site); setSavedOpen(false); }}
                           activeOpacity={0.75}
                         >
                           <View style={st.siteIcon}>

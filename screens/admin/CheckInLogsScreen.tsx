@@ -21,6 +21,8 @@ interface CheckedInUser {
   latitude: number | null;
   longitude: number | null;
   distance_from_office: number | null;
+  check_in_office_name: string | null;  // Actual check-in office (may differ from registered office)
+  checkin_source: string | null;
 }
 
 interface BlockedUser {
@@ -80,6 +82,16 @@ function CheckedInCard({ item }: { item: CheckedInUser }) {
         </View>
         <View style={{ alignItems: "flex-end" }}>
           <ThemedText type="caption" style={{ color: "#10B981", fontWeight: "700" }}>{fmtTime(item.checkin_time)}</ThemedText>
+          {item.check_in_office_name && (
+            <ThemedText type="caption" style={{ color: theme.textSecondary, fontSize: 10 }} numberOfLines={1}>
+              📍 {item.check_in_office_name}
+            </ThemedText>
+          )}
+          {item.checkin_source && item.checkin_source !== 'APP' && (
+            <ThemedText type="caption" style={{ color: "#8B5CF6", fontSize: 10, fontWeight: "600" }}>
+              {item.checkin_source}
+            </ThemedText>
+          )}
           {item.distance_from_office != null && (
             <ThemedText type="caption" style={{ color: theme.textSecondary }}>{item.distance_from_office}m</ThemedText>
           )}
@@ -201,9 +213,9 @@ export default function CheckInLogsScreen() {
       // TODAY's successful check-ins from attendance_logs
       const { data: attLogs } = await supabase
         .from("attendance_logs")
-        .select("id, user_id, checkin_time, checkin_location, distance_from_office, status")
+        .select("id, user_id, checkin_time, checkin_location, distance_from_office, status, checkin_location_name, checkin_source")
         .eq("date", localDate)
-        .in("status", ["CHECKED_IN", "CHECKED_OUT"])
+        .not("checkin_time", "is", null)
         .order("checkin_time", { ascending: false });
 
       setCheckedIn((attLogs ?? []).map((a: any) => ({
@@ -214,6 +226,8 @@ export default function CheckInLogsScreen() {
         latitude: a.checkin_location?.latitude ?? null,
         longitude: a.checkin_location?.longitude ?? null,
         distance_from_office: a.distance_from_office ?? null,
+        check_in_office_name: a.checkin_location_name ?? null,
+        checkin_source: a.checkin_source ?? null,
       })));
 
       // TODAY's blocked/failed attempts — fetch all non-success statuses, no status filter

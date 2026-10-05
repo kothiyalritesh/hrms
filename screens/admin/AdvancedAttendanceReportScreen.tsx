@@ -20,6 +20,7 @@ import { reportNonFatalError } from "@/utils/operationalErrors";
 import { toTitleCase } from "@/utils/format";
 import { downloadBrowserBytes } from "@/utils/browserFileDownload";
 import { formatHrmsDateTime, formatHrmsTime } from "@/utils/attendanceTimestamp";
+import { usePermissions } from "@/hooks/usePermissions";
 import {
   CanonicalAttendanceService,
   withAttendanceV2Aliases,
@@ -126,7 +127,9 @@ async function downloadAttendanceCsv(rows: any[], filename: string) {
     "Date",
     "Employee",
     "Employee No",
-    "Office",
+    "Registered Office",
+    "Check-In Office",
+    "Attendance Source",
     "Team",
     "Team Head",
     "Role",
@@ -147,6 +150,8 @@ async function downloadAttendanceCsv(rows: any[], filename: string) {
     canonicalLabel(row.name, "person"),
     row.employee_number,
     canonicalLabel(row.office_name, "office"),
+    canonicalLabel((row as any).check_in_office_name ?? row.office_name, "office"),
+    (row as any).attendance_source ?? row.presence_source ?? "APP",
     canonicalLabel(row.team, "team"),
     canonicalLabel(row.team_head_name, "person"),
     canonicalLabel(row.role, "role"),
@@ -201,8 +206,8 @@ async function fetchAllRows(
   );
 }
 
-async function fetchAttendanceRows(start: string, end: string) {
-  return (await CanonicalAttendanceService.list(start, end, MAX_EXPORT_ROWS)).map(
+async function fetchAttendanceRows(start: string, end: string, scopeFilters?: any) {
+  return (await CanonicalAttendanceService.list(start, end, MAX_EXPORT_ROWS, scopeFilters)).map(
     withAttendanceV2Aliases,
   );
 }
@@ -286,6 +291,7 @@ export default function AdvancedAttendanceReportScreen({ route }: any) {
   const [exportError, setExportError] = useState("");
   const [loadError, setLoadError] = useState("");
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
+  const { getScopedPermission, hasPermission } = usePermissions();
   const [section, setSection] = useState<(typeof REPORT_SECTIONS)[number]>(
     REPORT_SECTIONS.includes(route?.params?.initialSection)
       ? route.params.initialSection
@@ -305,7 +311,9 @@ export default function AdvancedAttendanceReportScreen({ route }: any) {
     setLoading(true);
     setLoadError("");
     try {
-      setRows(await fetchAttendanceRows(resolvedStart, resolvedEnd));
+      const perm = getScopedPermission('attendance.view');
+        const isGlobal = perm?.scope === 'GLOBAL' || hasPermission('SYSTEM_ADMIN');
+        setRows(await fetchAttendanceRows(resolvedStart, resolvedEnd, isGlobal ? undefined : { office_id: perm?.scope_id || undefined }));
     } catch (error: any) {
       const rawMessage = error?.message ?? "Unable to load report.";
       const message = rawMessage.includes(
@@ -318,7 +326,7 @@ export default function AdvancedAttendanceReportScreen({ route }: any) {
     } finally {
       setLoading(false);
     }
-  }, [start, end]);
+  }, [start, end, getScopedPermission, hasPermission]);
 
   useFocusEffect(
     useCallback(() => {
@@ -510,7 +518,9 @@ export default function AdvancedAttendanceReportScreen({ route }: any) {
         Date: row.date,
         Employee: canonicalLabel(row.name, "person"),
         EmployeeNo: row.employee_number,
-        Office: canonicalLabel(row.office_name, "office"),
+        RegisteredOffice: canonicalLabel(row.office_name, "office"),
+        CheckInOffice: canonicalLabel((row as any).check_in_office_name ?? row.office_name, "office"),
+        AttendanceSource: (row as any).attendance_source ?? row.presence_source ?? "APP",
         Team: canonicalLabel(row.team, "team"),
         TeamHead: canonicalLabel(row.team_head_name, "person"),
         Role: canonicalLabel(row.role, "role"),
@@ -744,9 +754,9 @@ export default function AdvancedAttendanceReportScreen({ route }: any) {
       </View>
 
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sectionTabs}>
-        {REPORT_SECTIONS.map((item) => (
+        {REPORT_SECTIONS.map((item, idx) => (
           <Pressable
-            key={item}
+            key={`section-${idx}`}
             onPress={() => setSection(item)}
             style={[
               styles.sectionTab,

@@ -107,9 +107,14 @@ const routeEtaCache = new Map<string, { value: number | null; expiresAt: number 
 
 function timeAgo(iso: string) {
   if (authoritativeClockMs == null) return "server time unavailable";
-  const diff = Math.floor(
-    (authoritativeClockMs - parseDatabaseTimestamp(iso).getTime()) / 1000,
-  );
+  let diff: number;
+  try {
+    diff = Math.floor(
+      (authoritativeClockMs - parseDatabaseTimestamp(iso).getTime()) / 1000,
+    );
+  } catch {
+    return "—";
+  }
   if (diff < -10) return "invalid future timestamp";
   if (diff < 0) return "just now";
   if (diff < 60)  return `${diff}s ago`;
@@ -128,9 +133,14 @@ function isGpsTrulyOff(emp: LiveEmployee): boolean {
   if (emp.status === "CHECKED_OUT" || emp.status === "CHECKIN_ONLY") return false;
   if (!emp.gps_available) return true;
   if (authoritativeClockMs == null) return true;
-  const staleMins =
-    (authoritativeClockMs - parseDatabaseTimestamp(emp.recorded_at).getTime()) /
-    60000;
+  let staleMins: number;
+  try {
+    staleMins =
+      (authoritativeClockMs - parseDatabaseTimestamp(emp.recorded_at).getTime()) /
+      60000;
+  } catch {
+    return true; // treat unparseable timestamp as GPS off
+  }
   if (staleMins < -10 / 60) return true;
   return staleMins > 10;
 }
@@ -735,7 +745,14 @@ export default function LiveTrackingScreen() {
           distance_from_base: row.distance_from_office_m ?? null,
           status,
           gps_available: status !== "RED_GPS_OFF",
-          recorded_at: ping?.recorded_at ?? row.official_first_in,
+          recorded_at: ping?.recorded_at ?? (() => {
+            const ts = row.official_first_in;
+            if (!ts) return ts;
+            const normalized = ts.trim().replace(' ', 'T');
+            return /(?:Z|[+-]\d{2}:?\d{2})$/i.test(normalized)
+              ? normalized
+              : normalized + '+05:30';
+          })(),
           attendance_checkin: row.official_first_in,
           attendance_checkout: row.official_last_out,
           checkin_time: row.official_first_in,
@@ -764,7 +781,7 @@ export default function LiveTrackingScreen() {
         }
 
         const pingTimestamp = e.recorded_at
-          ? parseDatabaseTimestamp(e.recorded_at).getTime()
+          ? (() => { try { return parseDatabaseTimestamp(e.recorded_at).getTime(); } catch { return null; } })()
           : null;
         const staleMins = pingTimestamp == null
           ? Infinity

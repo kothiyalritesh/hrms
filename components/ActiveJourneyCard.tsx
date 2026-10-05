@@ -5,6 +5,7 @@ import React, {
   useRef,
   useState,
 } from "react";
+import { haversineDistanceM } from "@/services/location/geo";
 import {
   ActivityIndicator,
   StyleSheet,
@@ -184,90 +185,79 @@ export default function ActiveJourneyCard({
         <View style={styles.loading}>
           <ActivityIndicator color="#6D1B6D" />
           <ThemedText style={styles.loadingText}>
-            Calculating the best driving route…
+            Calculating the best driving route...
           </ThemedText>
         </View>
-      ) : route ? (
+      ) : (
         <>
           <View style={styles.metrics}>
             <View>
               <ThemedText style={styles.metricValue}>
-                {formatEta(route.durationSeconds)}
+                {route?.durationSeconds ? formatEta(route.durationSeconds) : origin && destination ? formatEta(haversineDistanceM(origin.latitude, origin.longitude, destination.latitude, destination.longitude) / 8.33) : "..."}
               </ThemedText>
               <ThemedText style={styles.metricLabel}>
-                estimated arrival
+                {route?.durationSeconds ? "estimated arrival" : "estimated arrival (fallback)"}
               </ThemedText>
             </View>
             <View style={styles.metricDivider} />
             <View>
               <ThemedText style={styles.metricValue}>
-                {formatDistance(route.distanceM)}
+                {route?.distanceM ? formatDistance(route.distanceM) : origin && destination ? formatDistance(haversineDistanceM(origin.latitude, origin.longitude, destination.latitude, destination.longitude)) : "..."}
               </ThemedText>
-              <ThemedText style={styles.metricLabel}>road distance</ThemedText>
+              <ThemedText style={styles.metricLabel}>{route?.distanceM ? "road distance" : "straight-line dist."}</ThemedText>
             </View>
           </View>
 
-          <MapView
-            ref={mapRef}
-            provider={PROVIDER_GOOGLE}
-            style={styles.map}
-            initialRegion={{
-              latitude: origin?.latitude ?? destination.latitude,
-              longitude: origin?.longitude ?? destination.longitude,
-              latitudeDelta: 0.08,
-              longitudeDelta: 0.08,
-            }}
-            showsCompass
-            showsTraffic
-            toolbarEnabled={false}
-          >
-            {origin ? (
-              <Marker coordinate={origin} title="Current location">
-                <View style={styles.currentMarker}>
-                  <View style={styles.currentMarkerInner} />
-                </View>
-              </Marker>
-            ) : null}
-            <Marker
-              coordinate={{
-                latitude: destination.latitude,
-                longitude: destination.longitude,
+          {origin && destination && (
+            <MapView
+              ref={mapRef}
+              provider={PROVIDER_GOOGLE}
+              style={styles.map}
+              initialRegion={{
+                latitude: origin.latitude,
+                longitude: origin.longitude,
+                latitudeDelta: 0.08,
+                longitudeDelta: 0.08,
               }}
-              title={destination.name}
-              pinColor="#6D1B6D"
-            />
-            {routeCoordinates.length > 1 ? (
-              <Polyline
-                coordinates={routeCoordinates}
-                strokeColor="#6D1B6D"
-                strokeWidth={6}
+            >
+              <Marker
+                coordinate={{ latitude: origin.latitude, longitude: origin.longitude }}
+                title="Current location"
+                pinColor="#10B981"
               />
-            ) : null}
-          </MapView>
+              <Marker
+                coordinate={{ latitude: destination.latitude, longitude: destination.longitude }}
+                title={destination.name}
+                pinColor="#6D1B6D"
+              />
+              {routeCoordinates.length > 1 ? (
+                <Polyline coordinates={routeCoordinates} strokeColor="#6D1B6D" strokeWidth={6} />
+              ) : (
+                <Polyline coordinates={[origin, destination]} strokeColor="#6D1B6D" strokeWidth={4} lineDashPattern={[10, 10]} />
+              )}
+            </MapView>
+          )}
         </>
-      ) : (
-        <ThemedText style={styles.unavailable}>
-          Route is waiting for precise GPS and an internet connection.
-        </ThemedText>
       )}
 
-      <TouchableOpacity
-        style={styles.navigateButton}
-        onPress={() =>
-          void openGoogleMapsNavigation(
-            {
-              latitude: destination.latitude,
-              longitude: destination.longitude,
-            },
-            origin,
-          )
-        }
-      >
-        <Feather name="navigation" size={16} color="#FFFFFF" />
-        <ThemedText style={styles.navigateButtonText}>
-          Start turn-by-turn navigation
-        </ThemedText>
-      </TouchableOpacity>
+      {origin && destination && (
+        <View style={{ marginTop: 12 }}>
+          <TouchableOpacity
+            style={styles.navigateButton}
+            onPress={() =>
+              void openGoogleMapsNavigation(
+                { latitude: destination.latitude, longitude: destination.longitude },
+                origin
+              )
+            }
+          >
+            <Feather name="navigation" size={16} color="#FFFFFF" />
+            <ThemedText style={styles.navigateButtonText}>
+              Start turn-by-turn navigation
+            </ThemedText>
+          </TouchableOpacity>
+        </View>
+      )}
     </View>
   );
 }

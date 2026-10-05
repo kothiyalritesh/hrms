@@ -1,14 +1,16 @@
--- Migration: Fix pending_visits dashboard count (Module 22)
--- Description: The Pending Site Visit card should disappear once the destination is reached (status = CHECKED_IN).
-
 CREATE OR REPLACE FUNCTION public.rpc_employee_dashboard_summary()
 RETURNS jsonb
 LANGUAGE plpgsql
+STABLE
 SECURITY DEFINER
+SET search_path = public, pg_temp
 AS $$
 DECLARE
   v_user_id uuid := auth.uid();
-  v_today date := (now() AT TIME ZONE 'Asia/Kolkata')::date;
+  v_now timestamptz := now();
+  v_today date := (v_now AT TIME ZONE 'Asia/Kolkata')::date;
+  v_profile public.profiles%rowtype;
+  v_attendance jsonb;
   v_leave_balance jsonb;
   v_tasks jsonb;
   v_pending_tasks_count bigint := 0;
@@ -19,70 +21,110 @@ DECLARE
   v_is_escalation_member boolean := false;
 BEGIN
   IF v_user_id IS NULL THEN
-    RETURN jsonb_build_object('error', 'Unauthorized');
+    RETURN jsonb_build_object(
+      'success', false,
+      'error', 'AUTHENTICATION_REQUIRED',
+      'message', 'A valid authenticated session is required.'
+    );
   END IF;
 
-  -- 1. Leave balance
-  SELECT COALESCE(
-    jsonb_object_agg(
-      LOWER(b.leave_type), 
-      COALESCE(b.total_days, 0) + COALESCE(b.carried_over, 0) - COALESCE(b.used_days, 0) - COALESCE(b.locked_days, 0)
-    ),
-    '{}'::jsonb
-  )
-  INTO v_leave_balance
-  FROM public.employee_leave_balances b
-  WHERE b.user_id = v_user_id AND b.year = extract(year from v_today)::integer;
+  SELECT profile.* INTO v_profile
+  FROM public.profiles profile
+  WHERE profile.id = v_user_id;
 
-  -- 2. Tasks summary
-  SELECT 
-    COUNT(*),
-    COUNT(*) FILTER (WHERE type = 'site_visit'),
-    COALESCE(
-      jsonb_agg(
-        jsonb_build_object(
-          'id', id,
-          'title', title,
-          'type', type,
-          'due_date', due_date
-        ) ORDER BY due_date ASC
-      ) FILTER (WHERE type = 'site_visit' AND due_date >= v_today),
-      '[]'::jsonb
-    )
-  INTO v_pending_tasks_count, v_site_visit_tasks_count, v_tasks
-  FROM public.tasks
-  WHERE assigned_to = v_user_id AND status != 'COMPLETED';
+  IF NOT FOUND OR NOT COALESCE(v_profile.is_active, false) THEN
+    RETURN jsonb_build_object(
+      'success', false,
+      'error', 'ACTIVE_PROFILE_REQUIRED',
+      'message', 'An active employee profile is required.'
+    );
+  END IF;
 
-  -- 3. Unread notifications
-  SELECT COUNT(*)
-  INTO v_unread_notifications
-  FROM public.notifications
-  WHERE user_id = v_user_id AND read = false;
+  -- 1. Today's attendance
+  SELECT to_jsonb(attendance) INTO v_attendance
+  FROM public.attendance_logs attendance
+  WHERE attendance.user_id = v_user_id
+    AND attendance.date = v_today
+  ORDER BY attendance.created_at DESC
+  LIMIT 1;
+
+  -- 2. Leave balance
+  SELECT jsonb_build_object(
+    'sick', COALESCE(balance.sick, 0),
+    'casual', COALESCE(balance.casual, 0),
+    'earned', COALESCE(balance.earned, 0),
+    'comp_off', COALESCE(balance.comp_off, 0)
+  ) INTO v_leave_balance
+  FROM public.leave_balance balance
+  WHERE balance.user_id = v_user_id
+  LIMIT 1;
+
+  -- 3. Notifications count
+  SELECT count(*) INTO v_unread_notifications
+  FROM public.notifications notification
+  WHERE notification.user_id = v_user_id
+    AND notification.read = false;
 
   -- 4. Field visits count
-  -- FIX: User requirement explicitly stated "Once the employee reaches the destination: The Pending screen/card on the Dashboard should disappear/update."
-  -- We ONLY count 'PENDING' (not 'CHECKED_IN').
-  SELECT COUNT(*)
-  INTO v_pending_visits
-  FROM public.field_visits
-  WHERE user_id = v_user_id
-    AND date = v_today
-    AND status = 'PENDING';
+  SELECT count(*) INTO v_pending_visits
+  FROM public.field_visits visit
+  WHERE visit.user_id = v_user_id
+    AND visit.date = v_today
+    AND visit.status in ('PENDING', 'CHECKED_IN');
 
-  -- 5. Direct reports count (for managers)
-  SELECT COUNT(*)
-  INTO v_direct_reports
-  FROM public.profiles
-  WHERE reports_to = v_user_id AND is_active = true;
+  -- 5. Direct reports count
+  SELECT count(*) INTO v_direct_reports
+  FROM public.profiles report
+  WHERE report.reports_to = v_user_id
+    AND report.is_active = true;
 
-  -- 6. Escalation matrix check (for warnings/flags)
-  SELECT EXISTS (
-    SELECT 1 FROM public.profiles p
-    WHERE p.id = v_user_id AND p.role IN ('SYSTEM_ADMIN', 'SUPER_ADMIN', 'ADMIN', 'HR', 'HRD', 'ASSOCIATE_PARTNER')
+  -- 6. Escalation matrix check
+  SELECT exists (
+    SELECT 1 FROM public.escalation_matrix matrix WHERE matrix.user_id = v_user_id
   ) INTO v_is_escalation_member;
 
+  -- 7. Scalar task counts
+  SELECT
+    count(*),
+    count(*) FILTER (WHERE COALESCE(task.type, 'other') = 'site_visit')
+  INTO v_pending_tasks_count, v_site_visit_tasks_count
+  FROM public.tasks task
+  WHERE task.assigned_to = v_user_id
+    AND task.status = 'pending';
+
+  -- 8. Top 5 tasks only with essential fields
+  SELECT COALESCE(jsonb_agg(
+    jsonb_build_object(
+      'id', top_task.id,
+      'title', top_task.title,
+      'status', top_task.status,
+      'priority', top_task.priority,
+      'due_date', top_task.due_date,
+      'type', COALESCE(top_task.type, 'other')
+    ) ORDER BY top_task.due_date ASC NULLS LAST
+  ), '[]'::jsonb) INTO v_tasks
+  FROM (
+    SELECT task.id, task.title, task.status, task.priority, task.due_date, COALESCE(task.type, 'other') AS type
+    FROM public.tasks task
+    WHERE task.assigned_to = v_user_id
+      AND task.status = 'pending'
+    ORDER BY task.due_date ASC NULLS LAST
+    LIMIT 5
+  ) top_task;
+
   RETURN jsonb_build_object(
-    'leave_balance', COALESCE(v_leave_balance, jsonb_build_object('sick', 0, 'casual', 0, 'earned', 0, 'comp_off', 0)),
+    'success', true,
+    'user_id', v_user_id,
+    'server_now', v_now,
+    'business_date', v_today,
+    'timezone', 'Asia/Kolkata',
+    'attendance', v_attendance,
+    'base_latitude', v_profile.base_latitude,
+    'base_longitude', v_profile.base_longitude,
+    'leave_balance', COALESCE(
+      v_leave_balance,
+      jsonb_build_object('sick', 0, 'casual', 0, 'earned', 0, 'comp_off', 0)
+    ),
     'unread_notifications', v_unread_notifications,
     'pending_visits', v_pending_visits,
     'direct_reports', v_direct_reports,
@@ -93,3 +135,7 @@ BEGIN
   );
 END;
 $$;
+
+REVOKE ALL ON FUNCTION public.rpc_employee_dashboard_summary() FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.rpc_employee_dashboard_summary() TO authenticated;
+NOTIFY pgrst, 'reload schema';

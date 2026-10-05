@@ -14,7 +14,8 @@ import React, {
   useMemo,
   ReactNode,
 } from "react";
-import { supabase } from "@/lib/supabase";
+import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/contexts/AuthContext';
 
 // Permission key constants
 export const PERMISSIONS = {
@@ -32,25 +33,17 @@ export const PERMISSIONS = {
 
 export type PermissionKey = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
 
-export type PermissionScope = "GLOBAL" | "DEPARTMENT" | "BRANCH" | "TEAM" | "SELF";
+export type PermissionScope = "GLOBAL" | "DEPARTMENT" | "OFFICE" | "TEAM" | "SELF";
 
 export interface ScopedPermission {
   permission: string;
   scope: PermissionScope;
   scope_id?: string | null;
-  office_id?: string | null;
-  department?: string | null;
-  team_lead_id?: string | null;
-  team_name?: string | null;
 }
 
 export interface GrantScopeOptions {
   scope?: PermissionScope;
   scopeId?: string | null;
-  officeId?: string | null;
-  department?: string | null;
-  teamLeadId?: string | null;
-  teamName?: string | null;
 }
 
 export interface PermissionsContextValue {
@@ -90,6 +83,7 @@ export function PermissionsProvider({ children }: { children: ReactNode }) {
   const [scopedPermissions, setScopedPermissions] = useState<ScopedPermission[]>([]);
   const [loading, setLoading] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const { user } = useAuth();
 
   const refreshPermissions = useCallback(async () => {
     setLoading(true);
@@ -157,8 +151,11 @@ export function PermissionsProvider({ children }: { children: ReactNode }) {
   }, [refreshPermissions, clearPermissions]);
 
   const hasPermission = useCallback(
-    (key: string): boolean => permissions.includes(key),
-    [permissions],
+    (key: string): boolean => {
+      if (user?.role === "SYSTEM_ADMIN" || user?.role === "ADMIN") return true;
+      return permissions.includes(key);
+    },
+    [permissions, user?.role],
   );
 
   const getPermissionScope = useCallback(
@@ -169,12 +166,12 @@ export function PermissionsProvider({ children }: { children: ReactNode }) {
     [scopedPermissions],
   );
 
-  const getScopedPermission = useCallback(
-    (key: string): ScopedPermission | null => {
-      return scopedPermissions.find((p) => p.permission === key) ?? null;
-    },
-    [scopedPermissions],
-  );
+  const getScopedPermission = useCallback((key: string): ScopedPermission | null => {
+    if (user?.role === 'SYSTEM_ADMIN' || user?.role === 'ADMIN') {
+      return { permission: key, scope: 'GLOBAL', scope_id: null };
+    }
+    return scopedPermissions.find((p) => p.permission === key) ?? null;
+  }, [scopedPermissions, user?.role]);
 
   const canAccessUser = useCallback(
     (
@@ -190,39 +187,25 @@ export function PermissionsProvider({ children }: { children: ReactNode }) {
       if (perms.length === 0) return false;
 
       return perms.some((p) => {
-        // If GLOBAL with no multidimensional restrictions, allow access
-        if (p.scope === "GLOBAL" && !p.office_id && !p.department && !p.team_lead_id) {
-          return true;
-        }
+        if (p.scope === "GLOBAL") return true;
 
-        // Office check
-        if (p.office_id && p.office_id !== targetUser.office_id) {
-          return false;
-        }
+        if (p.scope === "OFFICE" && p.scope_id && p.scope_id === targetUser.office_id) return true;
 
-        // Department check
         if (
-          p.department &&
-          p.department.trim().toLowerCase() !== (targetUser.department ?? "").trim().toLowerCase()
-        ) {
-          return false;
-        }
+          p.scope === "DEPARTMENT" &&
+          p.scope_id &&
+          p.scope_id.trim().toLowerCase() === (targetUser.department ?? "").trim().toLowerCase()
+        ) return true;
 
-        // Team Lead check (target is the leader or reports to the leader)
         if (
-          p.team_lead_id &&
-          targetUser.id !== p.team_lead_id &&
-          targetUser.reports_to !== p.team_lead_id
-        ) {
-          return false;
-        }
+          p.scope === "TEAM" &&
+          p.scope_id &&
+          (targetUser.id === p.scope_id || targetUser.reports_to === p.scope_id)
+        ) return true;
 
-        // Legacy scope checks
-        if (p.scope === "SELF" && currentUserId && targetUser.id !== currentUserId) {
-          return false;
-        }
+        if (p.scope === "SELF" && currentUserId && targetUser.id === currentUserId) return true;
 
-        return true;
+        return false;
       });
     },
     [scopedPermissions, currentUserId],
@@ -277,18 +260,10 @@ export async function adminGrantPermission(
 
   let scope: PermissionScope = "GLOBAL";
   let sanitizedScopeId: string | null = null;
-  let officeId: string | null = null;
-  let department: string | null = null;
-  let teamLeadId: string | null = null;
-  let teamName: string | null = null;
 
   if (typeof scopeOrOptions === "object" && scopeOrOptions !== null) {
     scope = scopeOrOptions.scope || "GLOBAL";
     sanitizedScopeId = scopeOrOptions.scopeId?.trim() || null;
-    officeId = scopeOrOptions.officeId?.trim() || null;
-    department = scopeOrOptions.department?.trim() || null;
-    teamLeadId = scopeOrOptions.teamLeadId?.trim() || null;
-    teamName = scopeOrOptions.teamName?.trim() || null;
   } else if (typeof scopeOrOptions === "string") {
     scope = scopeOrOptions;
     sanitizedScopeId = legacyScopeId?.trim() || null;
@@ -299,10 +274,6 @@ export async function adminGrantPermission(
     p_permission: permission.trim(),
     p_scope: scope,
     p_scope_id: sanitizedScopeId,
-    p_office_id: officeId,
-    p_department: department,
-    p_team_lead_id: teamLeadId,
-    p_team_name: teamName,
   });
   if (error) return { success: false, error: error.message };
   const result = Array.isArray(data) ? data[0] : data;
@@ -333,10 +304,6 @@ export async function adminListAllPermissions(): Promise<
     permission: string;
     scope: PermissionScope;
     scope_id: string | null;
-    office_id: string | null;
-    department: string | null;
-    team_lead_id: string | null;
-    team_name: string | null;
     granted_at: string;
     granted_by: string | null;
   }>
@@ -344,7 +311,7 @@ export async function adminListAllPermissions(): Promise<
   const { data, error } = await supabase
     .from("user_permissions")
     .select(
-      "user_id, permission, scope, scope_id, office_id, department, team_lead_id, team_name, granted_at, granted_by",
+      "user_id, permission, scope, scope_id, created_at, created_by",
     )
     .is("revoked_at", null)
     .order("user_id")

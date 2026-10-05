@@ -378,7 +378,7 @@ const s = StyleSheet.create({
   },
   playbackBar: {
     position: "absolute",
-    bottom: 12,
+    top: 12,
     left: 12,
     right: 12,
     flexDirection: "row",

@@ -1,3 +1,16 @@
+/**
+ * Returns the current business date in IST (Asia/Kolkata) as "YYYY-MM-DD".
+ * Never uses the device's local timezone — safe on UTC servers and non-IST devices.
+ */
+export function getBusinessDateIST(): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+}
+
 export function addBusinessDays(date: string, days: number): string {
   const value = new Date(`${date}T12:00:00Z`);
   value.setUTCDate(value.getUTCDate() + days);

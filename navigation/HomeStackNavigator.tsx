@@ -57,7 +57,7 @@ export default function HomeStackNavigator() {
       <Stack.Screen
         name="LeaveScreen"
         component={LeaveScreen}
-        options={{ headerTitle: "Leave Management" }}
+        options={{ headerTitle: "Leave History" }}
       />
       <Stack.Screen
         name="Notifications"

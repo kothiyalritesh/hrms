@@ -48,7 +48,7 @@ interface LeaveRow {
   reason: string;
   applied_on?: string;
   created_at: string;
-  profiles?: { name?: string; employee_number?: string; office_id?: string; offices?: { name?: string } };
+  employee?: { name?: string; employee_number?: string; office_id?: string; office?: { name?: string } };
 }
 
 const toIso = (d: Date) => d.toISOString().slice(0, 10);
@@ -74,7 +74,7 @@ export default function LeaveUsageReportScreen() {
     try {
       const { data, error } = await supabase
         .from("leave_requests")
-        .select("id,user_id,leave_type,start_date,end_date,status,requested_days,reason,applied_on,created_at,profiles:user_id(name,employee_number,offices:office_id(name))")
+        .select("id,user_id,leave_type,start_date,end_date,status,requested_days,reason,applied_on,created_at,employee:profiles!user_id(name,employee_number,office:offices!office_id(name))")
         .gte("start_date", fromDate)
         .lte("start_date", toDate)
         .order("created_at", { ascending: false });
@@ -88,9 +88,9 @@ export default function LeaveUsageReportScreen() {
         if (!map.has(r.user_id)) {
           map.set(r.user_id, {
             id: r.user_id,
-            name: r.profiles?.name || "Unknown",
-            employee_number: r.profiles?.employee_number || null,
-            office: (r.profiles?.offices as any)?.name || null,
+            name: r.employee?.name || "Unknown",
+            employee_number: r.employee?.employee_number || null,
+            office: (r.employee?.office as any)?.name || null,
             total: 0, approved: 0, pending: 0, rejected: 0, by_type: {},
           });
         }
@@ -114,7 +114,7 @@ export default function LeaveUsageReportScreen() {
   const filteredRows = allRows.filter(r => {
     if (typeFilter !== "all" && r.leave_type !== typeFilter) return false;
     if (statusFilter !== "all" && r.status !== statusFilter) return false;
-    if (search && !((r.profiles?.name || "").toLowerCase().includes(search.toLowerCase()))) return false;
+    if (search && !((r.employee?.name || "").toLowerCase().includes(search.toLowerCase()))) return false;
     return true;
   });
 
@@ -215,7 +215,7 @@ export default function LeaveUsageReportScreen() {
                 <View key={r.id} style={[styles.card, { backgroundColor: theme.backgroundDefault }]}>
                   <View style={styles.cardRow}>
                     <View style={{ flex: 1 }}>
-                      <ThemedText style={{ fontWeight: "700" }}>{r.profiles?.name || "—"}</ThemedText>
+                      <ThemedText style={{ fontWeight: "700" }}>{r.employee?.name || "—"}</ThemedText>
                       <ThemedText type="caption" style={{ color: theme.textSecondary }}>{formatDate(r.start_date)} → {formatDate(r.end_date)} · {r.requested_days}d</ThemedText>
                     </View>
                     <View style={[styles.statBadge, { backgroundColor: sc.bg }]}>

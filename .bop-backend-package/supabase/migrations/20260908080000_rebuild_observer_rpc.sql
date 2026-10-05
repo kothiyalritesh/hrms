@@ -91,8 +91,6 @@ begin
       fv.visit_type,
       (fv.destination_coords->>'latitude')::double precision as dest_lat,
       (fv.destination_coords->>'longitude')::double precision as dest_lon,
-      fv.client_name,
-      fv.client_phone,
       coalesce(fv.client_name, fv.contact_name) as client_name,
       coalesce(fv.client_phone, fv.contact_phone) as client_phone,
       fv.created_at

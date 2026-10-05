@@ -15,6 +15,7 @@ import Feather from "@expo/vector-icons/Feather";
 import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ThemedText } from "@/components/ThemedText";
+import { PermissionGate } from "@/components/PermissionGate";
 import { toTitleCase } from "@/utils/format";
 import { ThemedView } from "@/components/ThemedView";
 import { Button } from "@/components/Button";
@@ -42,6 +43,9 @@ interface Employee {
   office_id?: string | null;
   role_name: string;
   office_name: string;
+  gender?: string;
+  date_of_joining?: string;
+  weekly_off_day?: number | null;
   team?: string | null;
   is_active: boolean;
   reporting_manager_name?: string;
@@ -68,6 +72,8 @@ interface BulkPreviewRow {
   role_name: string;
   office_id: string;
   office_name: string;
+  gender?: string;
+  date_of_joining?: string;
 }
 
 const EMPTY_FORM = {
@@ -77,7 +83,10 @@ const EMPTY_FORM = {
   employee_number: "",
   role_id: "",
   office_id: "",
+  gender: "MALE",
+  date_of_joining: "",
   team: "",
+  weekly_off_day: -1 as number | null,
 };
 
 const ADMIN_ROLES = ["SYSTEM_ADMIN", "ADMIN", "HR", "HRD"];
@@ -123,12 +132,11 @@ export default function UserManagementScreen() {
   };
 
   const downloadSampleCSV = () => {
+    // Phase 4: Expanded Sample CSV with all fields (backward compatible)
     const sample = [
-      "SN,Emp Name,CONTACT,TEAM,DESIGNATION,OFFICE",
-      "1,Neha Kapoor,9876543201,Noida Sales,Sales Manager,Noida Office",
-      "2,Rahul Sharma,9876543210,Noida Sales,Sales Executive,Noida Office",
-      "3,Priya Singh,9123456789,Noida Sales,Telecaller,Noida Office",
-      "4,Amit Kumar,9988776655,Noida Sales,Agent,Noida Office",
+      "SN,name,phone,email,role,office,employee_number,team,date_of_birth,gender,joining_date,weekly_off",
+      "1,Neha Kapoor,9876543201,neha@example.com,SALES_MANAGER,Noida Office,EMP001,Noida Sales,1990-05-15,FEMALE,2023-01-10,Sunday",
+      "2,Rahul Verma,9876543202,rahul@example.com,SALES_EXECUTIVE,Gurgaon Office,EMP002,,1992-08-22,MALE,2023-02-15,"
     ].join("\n");
     const blob = new Blob([sample], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
@@ -208,16 +216,29 @@ export default function UserManagementScreen() {
           return;
         }
 
-        const rows = rawData.slice(1)
-          .map((cols: any[], i: number) => ({
-            sn:          snIdx >= 0     ? String(cols[snIdx] ?? i + 1)     : String(i + 1),
-            name:        String(cols[nameIdx] ?? "").trim(),
-            phone:       phoneIdx >= 0  ? String(cols[phoneIdx] ?? "")    : "",
-            team:        teamIdx >= 0   ? String(cols[teamIdx] ?? "")     : "",
-            designation: roleIdx >= 0   ? String(cols[roleIdx] ?? "")     : "",
-            office:      officeIdx >= 0 ? String(cols[officeIdx] ?? "")   : "",
-          }))
-          .filter((r) => r.name.length > 0);
+        const emailIdx = findExact("email", "email address");
+          const empNumIdx = findExact("employee number", "emp no", "emp id", "employee id");
+          const dobIdx = findExact("date of birth", "dob", "birth date");
+          const genderIdx = findExact("gender", "sex");
+          const joiningDateIdx = findExact("joining date", "date of joining", "doj");
+          const weeklyOffIdx = findExact("weekly off", "week off", "day off");
+
+          const rows = rawData.slice(1)
+            .map((cols: any[], i: number) => ({
+              sn:          snIdx >= 0     ? String(cols[snIdx] ?? i + 1)     : String(i + 1),
+              name:        String(cols[nameIdx] ?? "").trim(),
+              phone:       phoneIdx >= 0  ? String(cols[phoneIdx] ?? "")    : "",
+              email:       emailIdx >= 0  ? String(cols[emailIdx] ?? "")    : null,
+              team:        teamIdx >= 0   ? String(cols[teamIdx] ?? "")     : null,
+              designation: roleIdx >= 0   ? String(cols[roleIdx] ?? "")     : "",
+              office:      officeIdx >= 0 ? String(cols[officeIdx] ?? "")   : "",
+              employee_number: empNumIdx >= 0 ? String(cols[empNumIdx] ?? "") : null,
+              date_of_birth: dobIdx >= 0 ? String(cols[dobIdx] ?? "") : null,
+              gender: genderIdx >= 0 ? String(cols[genderIdx] ?? "") : null,
+              joining_date: joiningDateIdx >= 0 ? String(cols[joiningDateIdx] ?? "") : null,
+              weekly_off_day: weeklyOffIdx >= 0 ? String(cols[weeklyOffIdx] ?? "") : null,
+            }))
+            .filter((r) => r.name.length > 0);
 
         if (!rows.length) {
           window.alert("No data rows found after the header row.");
@@ -269,15 +290,26 @@ export default function UserManagementScreen() {
             );
           }
 
+          const weeklyOffStr = String(row.weekly_off_day || '').trim().toLowerCase();
+          let weeklyOffParsed: number | null = null;
+          if (weeklyOffStr.startsWith('mon')) weeklyOffParsed = 1;
+          else if (weeklyOffStr.startsWith('tue')) weeklyOffParsed = 2;
+          else if (weeklyOffStr.startsWith('wed')) weeklyOffParsed = 3;
+          else if (weeklyOffStr.startsWith('thu')) weeklyOffParsed = 4;
+          else if (weeklyOffStr.startsWith('fri')) weeklyOffParsed = 5;
+          else if (weeklyOffStr.startsWith('sat')) weeklyOffParsed = 6;
+          else if (weeklyOffStr.startsWith('sun')) weeklyOffParsed = 0;
+
           return {
             row_number: row.sn,
             name: row.name,
             phone,
-            team: row.team.trim() || null,
+            team: (row.team || "").trim() || null,
             role_id: matchedRoles[0].id,
             role_name: matchedRoles[0].name,
             office_id: matchedOffices[0].id,
             office_name: matchedOffices[0].name,
+            weekly_off_day: weeklyOffParsed,
           };
         });
 
@@ -376,6 +408,9 @@ export default function UserManagementScreen() {
           reports_to,
           is_active,
           username,
+          gender,
+          date_of_joining,
+          weekly_off_day,
           roles(name),
           offices(name)
         `)
@@ -428,6 +463,9 @@ export default function UserManagementScreen() {
               ? managerNames.get(emp.reports_to) || "Manager unavailable"
               : undefined,
             username: emp.username,
+            gender: emp.gender,
+            date_of_joining: emp.date_of_joining,
+            weekly_off_day: emp.weekly_off_day,
           })) || [];
         setEmployees(formattedData);
         setEmployeeLoadError(null);
@@ -499,7 +537,10 @@ export default function UserManagementScreen() {
       employee_number: emp.employee_number || "",
       role_id: matchedRole?.id || "",
       office_id: matchedOffice?.id || "",
+      gender: emp.gender || "MALE",
+      date_of_joining: emp.date_of_joining || "",
       team: emp.team || "",
+      weekly_off_day: emp.weekly_off_day ?? -1,
     });
     setShowModal(true);
   };
@@ -531,6 +572,9 @@ export default function UserManagementScreen() {
             role_id: form.role_id || null,
             office_id: form.office_id || null,
             team: form.team || null,
+              gender: form.gender,
+              date_of_joining: form.date_of_joining || null,
+            weekly_off_day: form.weekly_off_day !== -1 ? form.weekly_off_day : null,
           },
         });
         const response = firstRpcRow<any>(data);
@@ -575,6 +619,8 @@ export default function UserManagementScreen() {
             role_id: form.role_id || null,
             office_id: form.office_id || null,
             team: form.team || null,
+              gender: form.gender,
+              date_of_joining: form.date_of_joining || null,
             is_active: true,
             },
           },
@@ -886,18 +932,19 @@ export default function UserManagementScreen() {
         <>
           <Spacer height={Spacing.sm} />
           <View style={{ flexDirection: "row", gap: Spacing.sm }}>
-            <Pressable
-              style={[styles.addButtonHalf, { backgroundColor: "#6D1B6D", flex: 1 }]}
-              onPress={openAddModal}
-            >
-              <Feather name="user-plus" size={20} color="#FFFFFF" />
-              <ThemedText style={styles.addButtonText}>Add Employee</ThemedText>
-            </Pressable>
+            <PermissionGate permission="employee.create">
+              <Pressable
+                style={[styles.addButtonHalf, { backgroundColor: "#6D1B6D", flex: 1 }]}
+                onPress={openAddModal}
+              >
+                <Feather name="user-plus" size={20} color="#FFFFFF" />
+                <ThemedText style={styles.addButtonText}>Add Employee</ThemedText>
+              </Pressable>
+            </PermissionGate>
             <Pressable
               style={[styles.addButtonHalf, { backgroundColor: "#10B981", flex: 1, opacity: bulkUploading ? 0.7 : 1 }]}
               onPress={handleBulkUpload}
-              disabled={bulkUploading}
-            >
+              disabled={bulkUploading}>
               <Feather name="upload" size={20} color="#FFFFFF" />
               <ThemedText style={styles.addButtonText}>
                 {bulkUploading ? "Uploading..." : "Bulk Upload"}
@@ -906,7 +953,7 @@ export default function UserManagementScreen() {
           </View>
           <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 6 }}>
             <ThemedText type="caption" style={{ color: theme.textSecondary, flex: 1 }}>
-              Columns: SN · Emp Name · CONTACT · TEAM · DESIGNATION · OFFICE
+              Columns: name, phone, email, role, office, employee_number, team, date_of_birth, gender, joining_date, weekly_off
             </ThemedText>
             <Pressable
               onPress={downloadSampleCSV}
@@ -1048,7 +1095,40 @@ export default function UserManagementScreen() {
                 onChangeText={(t) => setForm({ ...form, name: t })}
                 placeholder="Full name"
                 placeholderTextColor={theme.textSecondary}
-              />
+                />
+                <Spacer height={Spacing.md} />
+                <ThemedText type="small" style={styles.inputLabel}>Weekly Off Day (Optional)</ThemedText>
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
+                  {[
+                    { label: "Sun", value: 0 },
+                    { label: "Mon", value: 1 },
+                    { label: "Tue", value: 2 },
+                    { label: "Wed", value: 3 },
+                    { label: "Thu", value: 4 },
+                    { label: "Fri", value: 5 },
+                    { label: "Sat", value: 6 },
+                  ].map((d) => {
+                    const isSelected = form.weekly_off_day === d.value;
+                    return (
+                      <Pressable
+                        key={d.value}
+                        onPress={() => setForm({ ...form, weekly_off_day: isSelected ? -1 : d.value })}
+                        style={{
+                          paddingHorizontal: 12,
+                          paddingVertical: 6,
+                          borderRadius: 8,
+                          borderWidth: 1,
+                          borderColor: isSelected ? theme.primary : theme.border,
+                          backgroundColor: isSelected ? theme.primary + "15" : theme.backgroundSecondary,
+                        }}
+                      >
+                        <ThemedText type="caption" style={{ color: isSelected ? theme.primary : theme.textSecondary, fontWeight: "600" }}>
+                          {d.label}
+                        </ThemedText>
+                      </Pressable>
+                    );
+                  })}
+                </View>
               <Spacer height={Spacing.md} />
 
               <ThemedText type="small" style={styles.inputLabel}>
@@ -1109,6 +1189,48 @@ export default function UserManagementScreen() {
               <Spacer height={Spacing.md} />
 
               <ThemedText type="small" style={styles.inputLabel}>
+                Gender
+              </ThemedText>
+              <View
+                style={[
+                  styles.pickerContainer,
+                  { backgroundColor: theme.backgroundSecondary },
+                ]}
+              >
+                <Picker
+                  selectedValue={form.gender}
+                  onValueChange={(value) =>
+                    setForm({ ...form, gender: value })
+                  }
+                  style={{ color: theme.text, backgroundColor: Platform.OS === "web" ? theme.backgroundSecondary : "transparent" }} dropdownIconColor={theme.text}
+                >
+                  <Picker.Item label="Male" value="MALE" />
+                  <Picker.Item label="Female" value="FEMALE" />
+                </Picker>
+              </View>
+
+              <Spacer height={Spacing.md} />
+
+              <ThemedText type="small" style={styles.inputLabel}>
+                Date of Joining
+              </ThemedText>
+              <TextInput
+                style={[
+                  styles.modalInput,
+                  {
+                    backgroundColor: theme.backgroundSecondary,
+                    color: theme.text,
+                  },
+                ]}
+                value={form.date_of_joining}
+                onChangeText={(t) => setForm({ ...form, date_of_joining: t })}
+                placeholder="YYYY-MM-DD"
+                placeholderTextColor={theme.textSecondary}
+              />
+
+              <Spacer height={Spacing.md} />
+
+              <ThemedText type="small" style={styles.inputLabel}>
                 Role
               </ThemedText>
               {roles.length > 0 ? (
@@ -1123,7 +1245,7 @@ export default function UserManagementScreen() {
                     onValueChange={(value) =>
                       setForm({ ...form, role_id: value })
                     }
-                    style={{ color: theme.text }}
+                    style={{ color: theme.text, backgroundColor: Platform.OS === "web" ? theme.backgroundSecondary : "transparent" }} dropdownIconColor={theme.text}
                   >
                     <Picker.Item label="Select Role" value="" />
                     {roles.map((role) => (
@@ -1170,7 +1292,7 @@ export default function UserManagementScreen() {
                     onValueChange={(value) =>
                       setForm({ ...form, office_id: value })
                     }
-                    style={{ color: theme.text }}
+                    style={{ color: theme.text, backgroundColor: Platform.OS === "web" ? theme.backgroundSecondary : "transparent" }} dropdownIconColor={theme.text}
                   >
                     <Picker.Item label="Select Office" value="" />
                     {offices.map((office) => (
@@ -1541,7 +1663,7 @@ export default function UserManagementScreen() {
                 <Picker
                   selectedValue={adminForm.role}
                   onValueChange={(v) => setAdminForm({ ...adminForm, role: v })}
-                  style={{ color: theme.text }}
+                  style={{ color: theme.text, backgroundColor: Platform.OS === "web" ? theme.backgroundSecondary : "transparent" }} dropdownIconColor={theme.text}
                 >
                   {ADMIN_ROLES.map((r) => (
                     <Picker.Item key={r} label={r.replace(/_/g, " ")} value={r} />
@@ -1813,3 +1935,6 @@ const styles = StyleSheet.create({
     gap: 6, padding: Spacing.md, borderRadius: BorderRadius.md,
   },
 });
+
+
+

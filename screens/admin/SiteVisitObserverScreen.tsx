@@ -1,4 +1,4 @@
-/**
+﻿/**
  * SiteVisitObserverScreen.tsx
  * Site Visit Observer Panel (Live + Historical Intelligence Map)
  *
@@ -19,8 +19,7 @@ import {
   TouchableOpacity,
   ScrollView,
   ActivityIndicator,
-  Alert,
-} from "react-native";
+  Alert, useWindowDimensions, FlatList } from "react-native";
 import Feather from "@expo/vector-icons/Feather";
 import SiteVisitObserverMap from "@/components/SiteVisitObserverMap";
 import ObserverSummaryCards from "@/components/observer/ObserverSummaryCards";
@@ -28,10 +27,12 @@ import ObserverFilterBar from "@/components/observer/ObserverFilterBar";
 import ObserverDetailDrawer from "@/components/observer/ObserverDetailDrawer";
 import { ThemedText } from "@/components/ThemedText";
 import { ThemedView } from "@/components/ThemedView";
+import { ModuleErrorBoundary } from "@/components/ModuleErrorBoundary";
 import { useTheme } from "@/hooks/useTheme";
 import { Spacing, BorderRadius } from "@/constants/theme";
 import { supabase } from "@/lib/supabase";
 import { BusinessClockService } from "@/services/business-clock.service";
+import { getBusinessDateIST } from "@/utils/businessDate";
 import { toTitleCase } from "@/utils/format";
 import {
   SiteVisitObserverData,
@@ -44,13 +45,10 @@ import { computeRouteQuality } from "@/utils/gpsQuality";
 import { useRoutePlayback } from "@/hooks/useRoutePlayback";
 
 function getTodayISTString(): string {
-  const d = new Date();
-  const utc = d.getTime() + d.getTimezoneOffset() * 60000;
-  const ist = new Date(utc + 3600000 * 5.5);
-  return ist.toISOString().split("T")[0];
+  return getBusinessDateIST();
 }
 
-export default function SiteVisitObserverScreen() {
+function SiteVisitObserverScreenContent() {
   const { theme } = useTheme();
 
   const [todayStr, setTodayStr] = useState<string>(getTodayISTString());
@@ -117,9 +115,7 @@ export default function SiteVisitObserverScreen() {
   const loadObserverData = useCallback(async (date: string) => {
     setLoading(true);
     try {
-      const { data, error } = await supabase.rpc("get_site_visit_observer_data", {
-        p_date: date,
-      });
+      const { data, error } = await supabase.rpc("get_site_visit_observer_data", { p_date: date, p_employee_id: null, p_visit_id: null });
       if (error) throw error;
       if (data?.error === "PERMISSION_DENIED") {
         Alert.alert("Access Denied", "You do not have permission to view Site Visit Observer.");
@@ -155,10 +151,10 @@ export default function SiteVisitObserverScreen() {
           const updated = payload.new as any;
           if (!updated || !updated.user_id) return;
 
-          setObserverData((prev) => {
+          setObserverData((prev: any) => {
             if (!prev || !prev.employees) return prev;
 
-            const nextEmployees = prev.employees.map((emp) => {
+            const nextEmployees = prev.employees.map((emp: any) => {
               if (emp.employee_id === updated.user_id) {
                 const recordedTime = new Date(updated.recorded_at || updated.updated_at).getTime();
                 const nowTime = Date.now();
@@ -203,7 +199,10 @@ export default function SiteVisitObserverScreen() {
     };
   }, [isLiveMode]);
 
-  const allEmployees = observerData?.employees ?? [];
+  const { width } = useWindowDimensions();
+  const isDesktop = width >= 768;
+
+  const allEmployees = (observerData?.employees ?? []) as any[];
 
   // Extract unique departments for filter dropdown
   const departments = useMemo(() => {
@@ -216,13 +215,13 @@ export default function SiteVisitObserverScreen() {
 
   // Apply search & status filters
   const filteredEmployees = useMemo(() => {
-    return allEmployees.filter((emp) => {
+    return allEmployees.filter((emp: any) => {
       // 1. Text Search
       if (searchText.trim()) {
         const q = searchText.toLowerCase().trim();
         const matchName = emp.name.toLowerCase().includes(q);
         const matchNo = (emp.employee_no ?? "").toLowerCase().includes(q);
-        const matchProject = emp.visits?.some((v) =>
+        const matchProject = emp.visits?.some((v: any) =>
           (v.project_name || v.location_name || "").toLowerCase().includes(q),
         );
         if (!matchName && !matchNo && !matchProject) return false;
@@ -331,85 +330,159 @@ export default function SiteVisitObserverScreen() {
         onDepartmentChange={setSelectedDepartment}
       />
 
-      {/* Map View */}
-      <SiteVisitObserverMap
-        employees={filteredEmployees}
-        selectedEmployee={selectedEmployee}
-        selectedVisit={selectedVisit}
-        onSelectEmployee={(emp) => {
-          setSelectedEmployee(emp);
-          if (emp.visits && emp.visits.length > 0) {
-            setSelectedVisit(emp.visits[0]);
-          } else {
-            setSelectedVisit(null);
-          }
-        }}
-        polylineCoords={polylineCoords}
-        breadcrumbs={cleanedBreadcrumbs}
-        isPlaying={isPlaying}
-        activePlaybackPoint={activePlaybackPoint}
-        playbackIndex={playbackIndex}
-        playbackSpeed={playbackSpeed}
-        playbackProgress={playbackProgress}
-        elapsedTimeStr={elapsedTimeStr}
-        totalTimeStr={totalTimeStr}
-        onTogglePlay={togglePlay}
-        onRestart={restart}
-        onSetSpeed={setPlaybackSpeed}
-        onScrub={scrubToProgress}
-      />
+      {/* Map View & Layout Split */}
+      <View style={{ flex: 1, flexDirection: isDesktop ? 'row' : 'column' }}>
+        {/* Left/Top: Map */}
+        <View style={{ flex: isDesktop ? 0.6 : 1, position: 'relative' }}>
+          <SiteVisitObserverMap
+            employees={filteredEmployees}
+            selectedEmployee={selectedEmployee}
+            selectedVisit={selectedVisit}
+            onSelectEmployee={(emp: any) => {
+              setSelectedEmployee(emp);
+              if (emp.visits && emp.visits.length > 0) {
+                setSelectedVisit(emp.visits[0]);
+              } else {
+                setSelectedVisit(null);
+              }
+            }}
+            polylineCoords={polylineCoords}
+            breadcrumbs={cleanedBreadcrumbs}
+            isPlaying={isPlaying}
+            activePlaybackPoint={activePlaybackPoint}
+            playbackIndex={playbackIndex}
+            playbackSpeed={playbackSpeed}
+            playbackProgress={playbackProgress}
+            elapsedTimeStr={elapsedTimeStr}
+            totalTimeStr={totalTimeStr}
+            onTogglePlay={togglePlay}
+            onRestart={restart}
+            onSetSpeed={setPlaybackSpeed}
+            onScrub={scrubToProgress}
+          />
+          
+          {/* Mobile Bottom Panel overlay */}
+          {!isDesktop && (
+            selectedEmployee ? (
+              <ObserverDetailDrawer
+                employee={selectedEmployee}
+                selectedVisit={selectedVisit}
+                onSelectVisit={setSelectedVisit}
+                onClose={() => {
+                  setSelectedEmployee(null);
+                  setSelectedVisit(null);
+                }}
+                routeQuality={routeQuality}
+              />
+            ) : (
+              <View style={[s.bottomPanel, { backgroundColor: theme.backgroundDefault, borderTopColor: theme.border }]}>
+                <ThemedText type="caption" style={[s.panelTitle, { color: theme.textSecondary }]}>
+                  ACTIVE FIELD EMPLOYEES ({filteredEmployees.length})
+                </ThemedText>
 
-      {/* Bottom Panel: Detail Drawer if an employee is selected, else Horizontal Employee Chip selector */}
-      {selectedEmployee ? (
-        <ObserverDetailDrawer
-          employee={selectedEmployee}
-          selectedVisit={selectedVisit}
-          onSelectVisit={setSelectedVisit}
-          onClose={() => {
-            setSelectedEmployee(null);
-            setSelectedVisit(null);
-          }}
-          routeQuality={routeQuality}
-        />
-      ) : (
-        <View style={[s.bottomPanel, { backgroundColor: theme.backgroundDefault, borderTopColor: theme.border }]}>
-          <ThemedText type="caption" style={[s.panelTitle, { color: theme.textSecondary }]}>
-            ACTIVE FIELD EMPLOYEES ({filteredEmployees.length})
-          </ThemedText>
-
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.employeeScroll}>
-            {filteredEmployees.map((emp) => {
-              const isSelected = selectedEmployee?.employee_id === emp.employee_id;
-              return (
-                <TouchableOpacity
-                  key={`tab-${emp.employee_id}`}
-                  style={[
-                    s.employeeChip,
-                    { backgroundColor: theme.backgroundRoot, borderColor: theme.border },
-                    isSelected && { borderColor: theme.primary, backgroundColor: "#F3E8FF" },
-                  ]}
-                  onPress={() => {
-                    setSelectedEmployee(emp);
-                    if (emp.visits && emp.visits.length > 0) {
-                      setSelectedVisit(emp.visits[0]);
-                    } else {
-                      setSelectedVisit(null);
-                    }
-                  }}
-                >
-                  <ThemedText style={[s.empChipName, isSelected && { color: theme.primary }]}>
-                    {toTitleCase(emp.name)}
-                  </ThemedText>
-                  <ThemedText type="caption" style={{ color: theme.textSecondary }}>
-                    {emp.visits?.length ?? 0} visit{emp.visits?.length !== 1 ? "s" : ""}
-                  </ThemedText>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.employeeScroll}>
+                  {filteredEmployees.map((emp: any) => {
+                    const isSelected = (selectedEmployee as any)?.employee_id === emp.employee_id;
+                    return (
+                      <TouchableOpacity
+                        key={`tab-${emp.employee_id}`}
+                        style={[
+                          s.employeeChip,
+                          { backgroundColor: theme.backgroundRoot, borderColor: theme.border },
+                          isSelected && { borderColor: theme.primary, backgroundColor: "#F3E8FF" },
+                        ]}
+                        onPress={() => {
+                          setSelectedEmployee(emp);
+                          if (emp.visits && emp.visits.length > 0) {
+                            setSelectedVisit(emp.visits[0]);
+                          } else {
+                            setSelectedVisit(null);
+                          }
+                        }}
+                      >
+                        <ThemedText style={[s.empChipName, isSelected && { color: theme.primary }]}>
+                          {toTitleCase(emp.name)}
+                        </ThemedText>
+                        <ThemedText type="caption" style={{ color: theme.textSecondary }}>
+                          {emp.visits?.length ?? 0} visit{emp.visits?.length !== 1 ? "s" : ""}
+                        </ThemedText>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+            )
+          )}
         </View>
-      )}
-    </ThemedView>
+
+        {/* Desktop Right Side: Employee List or Details */}
+        {isDesktop && (
+          <View style={{ flex: 0.4, borderLeftWidth: 1, borderColor: theme.border, backgroundColor: theme.backgroundDefault }}>
+            {selectedEmployee ? (
+              <ObserverDetailDrawer
+                employee={selectedEmployee}
+                selectedVisit={selectedVisit}
+                onSelectVisit={setSelectedVisit}
+                onClose={() => {
+                  setSelectedEmployee(null);
+                  setSelectedVisit(null);
+                }}
+                routeQuality={routeQuality}
+              />
+            ) : (
+              <View style={{ flex: 1 }}>
+                <View style={{ padding: 16, borderBottomWidth: 1, borderBottomColor: theme.border }}>
+                  <ThemedText type="h3">Active Field Employees</ThemedText>
+                  <ThemedText type="caption" style={{ color: theme.textSecondary }}>
+                    {filteredEmployees.length} matching result{filteredEmployees.length !== 1 ? 's' : ''}
+                  </ThemedText>
+                </View>
+                <FlatList
+                  data={filteredEmployees}
+                  keyExtractor={(e: any) => e.employee_id}
+                  contentContainerStyle={{ padding: 16, gap: 12 }}
+                  renderItem={({ item: emp }: any) => {
+                    const isSelected = (selectedEmployee as any)?.employee_id === emp.employee_id;
+                    const trackingStatus = emp.tracking?.status ?? emp.tracking_status;
+                    return (
+                      <TouchableOpacity
+                        style={[
+                          s.desktopEmpCard,
+                          { backgroundColor: theme.backgroundRoot, borderColor: theme.border },
+                          isSelected && { borderColor: theme.primary, backgroundColor: "#F3E8FF" }
+                        ]}
+                        onPress={() => {
+                          setSelectedEmployee(emp);
+                          if (emp.visits && emp.visits.length > 0) {
+                            setSelectedVisit(emp.visits[0]);
+                          } else {
+                            setSelectedVisit(null);
+                          }
+                        }}
+                      >
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                          <View style={{ flex: 1 }}>
+                            <ThemedText style={{ fontWeight: "600", fontSize: 16 }}>{toTitleCase(emp.name)}</ThemedText>
+                            <ThemedText type="caption" style={{ color: theme.textSecondary }}>
+                              {emp.department || "No Dept"} • {emp.visits?.length ?? 0} visit{emp.visits?.length !== 1 ? 's' : ''}
+                            </ThemedText>
+                          </View>
+                          <View style={[s.statusBadgeDesktop, { backgroundColor: trackingStatus === 'IN_TRANSIT' ? '#3B82F620' : trackingStatus === 'AT_SITE' ? '#10B98120' : '#6B728020' }]}>
+                            <ThemedText type="caption" style={{ color: trackingStatus === 'IN_TRANSIT' ? '#3B82F6' : trackingStatus === 'AT_SITE' ? '#10B981' : '#6B7280', fontSize: 10, fontWeight: 'bold' }}>
+                              {trackingStatus?.replace('_', ' ')}
+                            </ThemedText>
+                          </View>
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  }}
+                />
+              </View>
+            )}
+          </View>
+        )}
+      </View>
+</ThemedView>
   );
 }
 
@@ -483,6 +556,8 @@ const s = StyleSheet.create({
     letterSpacing: 0.5,
     marginBottom: 8,
   },
+  desktopEmpCard: { padding: 12, borderRadius: 8, borderWidth: 1 },
+  statusBadgeDesktop: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
   employeeScroll: {
     flexGrow: 0,
     marginBottom: 8,
@@ -499,3 +574,14 @@ const s = StyleSheet.create({
     fontWeight: "700",
   },
 });
+
+
+
+
+export default function SiteVisitObserverScreen() {
+  return (
+    <ModuleErrorBoundary moduleName="Site Visit Observer">
+      <SiteVisitObserverScreenContent />
+    </ModuleErrorBoundary>
+  );
+}

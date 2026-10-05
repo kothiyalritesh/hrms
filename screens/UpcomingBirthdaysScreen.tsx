@@ -1,6 +1,9 @@
-import React, { useEffect, useState } from "react";
+﻿import React, { useEffect, useState } from "react";
 import { View, FlatList, StyleSheet, Platform, ActivityIndicator } from "react-native";
 import Feather from "@expo/vector-icons/Feather";
+import { useNavigation } from "@react-navigation/native";
+import { NativeStackNavigationProp } from "@react-navigation/native-stack";
+import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
 import { ThemedText } from "@/components/ThemedText";
 import { PageHeader } from "@/components/PageHeader";
@@ -49,6 +52,9 @@ function BirthdayCard({ item }: { item: Birthday }) {
 
 export default function UpcomingBirthdaysScreen() {
   const { theme } = useTheme();
+    const navigation = useNavigation<NativeStackNavigationProp<any>>();
+  const { user } = useAuth();
+  const isHRAdmin = ["SYSTEM_ADMIN", "ADMIN", "HR", "HRD"].includes(user?.role?.toUpperCase() || "");
   const [birthdays, setBirthdays] = useState<Birthday[]>([]);
   const [loading,   setLoading]   = useState(true);
 
@@ -134,3 +140,4 @@ const styles = StyleSheet.create({
     flex: 1, alignItems: "center", justifyContent: "center",
   },
 });
+

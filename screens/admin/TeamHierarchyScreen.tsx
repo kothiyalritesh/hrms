@@ -6,6 +6,7 @@ import {
 import Feather from "@expo/vector-icons/Feather";
 import { useFocusEffect } from "@react-navigation/native";
 import { ThemedText } from "@/components/ThemedText";
+import { ModuleErrorBoundary } from "@/components/ModuleErrorBoundary";
 import { useTheme } from "@/hooks/useTheme";
 import { Spacing, BorderRadius, Colors } from "@/constants/theme";
 import Spacer from "@/components/Spacer";
@@ -490,8 +491,15 @@ export default function TeamHierarchyScreen() {
   const agents = profiles.filter((p) => isAgent(p.role));
 
   const teamNames = Array.from(
-    new Set(agents.map((p) => p.team?.trim()).filter(Boolean) as string[])
-  ).sort();
+    agents.reduce((acc, p) => {
+      const raw = p.team?.trim();
+      if (raw) {
+        const key = raw.toLowerCase();
+        if (!acc.has(key)) acc.set(key, raw);
+      }
+      return acc;
+    }, new Map<string, string>()).values()
+  ).sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
 
   // Determine the AP head of a team by finding which AP most members report to
   const getTeamHeadId = (teamName: string): string | null => {
@@ -850,7 +858,7 @@ export default function TeamHierarchyScreen() {
                 <View style={{ flex: 1 }}>
                   <ThemedText type="body" style={{ fontWeight: "800" }}>{teamName}</ThemedText>
                   <ThemedText type="caption" style={{ color: theme.textSecondary }}>
-                    {teamMembers.length} member{teamMembers.length !== 1 ? "s" : ""}
+                    {allTeamMembers.length} member{allTeamMembers.length !== 1 ? "s" : ""}
                     {head ? ` · Head: ${head.name}` : " · No head set"}
                   </ThemedText>
                 </View>

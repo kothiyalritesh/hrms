@@ -1,3 +1,4 @@
+import * as Notifications from 'expo-notifications';
 import NetInfo from "@react-native-community/netinfo";
 import * as Location from "expo-location";
 import * as TaskManager from "expo-task-manager";
@@ -109,7 +110,7 @@ class LocationTrackingCoordinator {
     await initializeNotificationInfrastructure();
     await requestNotificationPermission();
     if (Platform.OS !== "web" && !this.notificationSubscription) {
-      const Notifications = { addNotificationResponseReceivedListener: () => ({ remove: () => {} }), getLastNotificationResponseAsync: async () => null };
+      
       this.notificationSubscription =
         Notifications.addNotificationResponseReceivedListener((response) => {
           void this.handleNotificationResponse(response);

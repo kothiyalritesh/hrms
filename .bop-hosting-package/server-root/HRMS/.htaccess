@@ -1,5 +1,9 @@
 Options -MultiViews
 
+<IfModule mod_mime.c>
+  AddType application/manifest+json .webmanifest
+</IfModule>
+
 <IfModule mod_headers.c>
   <FilesMatch "^(index\.html|sw\.js|manifest\.webmanifest)$">
     Header always set Cache-Control "no-cache, no-store, must-revalidate"

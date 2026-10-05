@@ -74,7 +74,7 @@ export default function SiteVisitObserverMap({
       mapRef.current.fitToCoordinates(
         breadcrumbs.map((b) => ({ latitude: b.latitude, longitude: b.longitude })),
         {
-          edgePadding: { top: 60, right: 60, bottom: 200, left: 60 },
+          edgePadding: { top: 120, right: 60, bottom: 60, left: 60 },
           animated: true,
         },
       );
@@ -91,7 +91,7 @@ export default function SiteVisitObserverMap({
 
       if (coords.length > 0) {
         mapRef.current.fitToCoordinates(coords, {
-          edgePadding: { top: 60, right: 60, bottom: 200, left: 60 },
+          edgePadding: { top: 120, right: 60, bottom: 60, left: 60 },
           animated: true,
         });
       }
@@ -265,7 +265,7 @@ const s = StyleSheet.create({
   },
   playbackBar: {
     position: "absolute",
-    bottom: 12,
+    top: 12,
     left: 12,
     right: 12,
     flexDirection: "row",

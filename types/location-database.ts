@@ -82,3 +82,67 @@ export interface FieldVisitJourneyAdditions {
   arrival_confirmation_count: number;
   departure_confirmation_count: number;
 }
+
+export type GpsQualityStatus = "HIGH" | "MEDIUM" | "LOW" | "STALE" | "UNKNOWN" | string;
+export type TrackingHealthStatus = "ACTIVE" | "DELAYED" | "STALE" | "COMPLETED" | string;
+export type TrackingTelemetrySource = "GPS" | "NETWORK" | "FUSED" | "MOCK" | string;
+
+export interface SiteVisitObserverVisit {
+  visit_id: string;
+  status: string;
+  location_name: string | null;
+  project_name: string | null;
+  checkin_time: string | null;
+  checkout_time: string | null;
+  visit_type: string | null;
+  destination_lat: number | null;
+  destination_lon: number | null;
+  client_name: string | null;
+  client_phone: string | null;
+}
+
+export interface SiteVisitObserverEmployee {
+  employee_id: string;
+  name: string;
+  employee_no: string | null;
+  role: string | null;
+  department: string | null;
+  office_name: string | null;
+  tracking: {
+    status: string;
+    signal_status: string;
+    tracking_health: TrackingHealthStatus;
+    gps_quality: GpsQualityStatus;
+    latitude: number | null;
+    longitude: number | null;
+    accuracy: number | null;
+    battery_level: number | null;
+    speed_mps: number | null;
+    source: TrackingTelemetrySource | null;
+    last_location_at: string | null;
+    last_uploaded_at: string | null;
+    pending_ping_count: number;
+    updated_at: string | null;
+  };
+  visits: SiteVisitObserverVisit[];
+  latest_lat: number | null;
+  latest_lon: number | null;
+  tracking_status: string;
+  updated_at: string | null;
+}
+
+export interface SiteVisitObserverSummary {
+  total_visits: number;
+  in_transit: number;
+  at_site: number;
+  completed: number;
+  signal_lost: number;
+}
+
+export interface SiteVisitObserverData {
+  date: string;
+  mode: "LIVE" | "HISTORICAL";
+  is_live: boolean;
+  summary: SiteVisitObserverSummary;
+  employees: SiteVisitObserverEmployee[];
+}
