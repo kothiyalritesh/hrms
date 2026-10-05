@@ -33,7 +33,7 @@ export default function LocationComparisonMap({
       const { AdvancedMarkerElement, PinElement } =
         await loadAdvancedMarkerLibrary((window as any).google);
       const selectedPin = new PinElement({
-        glyph: "S",
+        glyphText: "S",
         background: "#2563EB",
         borderColor: "#ffffff",
         glyphColor: "#ffffff",
@@ -42,10 +42,10 @@ export default function LocationComparisonMap({
         map,
         position: { lat: selected.latitude, lng: selected.longitude },
         title: selected.name,
-        content: selectedPin.element,
+        content: selectedPin,
       });
       const actualPin = new PinElement({
-        glyph: "A",
+        glyphText: "A",
         background: "#F97316",
         borderColor: "#ffffff",
         glyphColor: "#ffffff",
@@ -54,7 +54,7 @@ export default function LocationComparisonMap({
         map,
         position: { lat: actual.latitude, lng: actual.longitude },
         title: actual.name,
-        content: actualPin.element,
+        content: actualPin,
       });
       new maps.Circle({
         map,

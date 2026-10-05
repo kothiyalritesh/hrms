@@ -1,7 +1,7 @@
 import { supabase } from "@/lib/supabase";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-export type PermissionScopeType = "ALL" | "TEAM" | "SELF" | "DEPARTMENT" | "OFFICE" | "PROJECT" | "CUSTOM";
+export type PermissionScopeType = "GLOBAL" | "OFFICE" | "OFFICE_TREE" | "TEAM" | "TEAM_TREE" | "REPORTS_TO" | "ASSIGNED" | "SELF";
 
 export interface EffectivePermission {
   permission: string;
@@ -49,7 +49,7 @@ export const PermissionService = {
     AsyncStorage.removeItem(CACHE_KEY).catch(() => {});
   },
 
-  hasPermission(permissionKey: string, scopeType: PermissionScopeType = "ALL", scopeId: string | null = null): boolean {
+  hasPermission(permissionKey: string, scopeType: PermissionScopeType = "GLOBAL", scopeId: string | null = null): boolean {
     if (!cachedPermissions) return false;
     if (cachedPermissions.is_system_admin) return true;
 

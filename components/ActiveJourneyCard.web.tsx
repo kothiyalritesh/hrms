@@ -40,8 +40,23 @@ export default function ActiveJourneyCard({
       return;
     }
     let disposed = false;
-      let directionsRenderer: any = null;
       let activeWatchId: number | undefined = undefined;
+
+    // Decode Google encoded polyline format
+    function decodePolyline(encoded: string): Array<{ lat: number; lng: number }> {
+      const points: Array<{ lat: number; lng: number }> = [];
+      let index = 0, lat = 0, lng = 0;
+      while (index < encoded.length) {
+        let b, shift = 0, result = 0;
+        do { b = encoded.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+        lat += result & 1 ? ~(result >> 1) : result >> 1;
+        shift = 0; result = 0;
+        do { b = encoded.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+        lng += result & 1 ? ~(result >> 1) : result >> 1;
+        points.push({ lat: lat / 1e5, lng: lng / 1e5 });
+      }
+      return points;
+    }
 
     void loadGoogleMaps()
       .then(async (maps) => {
@@ -106,39 +121,62 @@ export default function ActiveJourneyCard({
 
             if (!routeDrawn) {
               routeDrawn = true;
-              const service = new maps.DirectionsService();
-              directionsRenderer = new maps.DirectionsRenderer({
-                map,
-                suppressMarkers: true,
-                polylineOptions: { strokeColor: "#6D1B6D", strokeWeight: 5 },
-              });
-              service.route(
+              // Use Routes API (replaces deprecated DirectionsService/DirectionsRenderer)
+              const routesApiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
+              fetch(
+                `https://routes.googleapis.com/directions/v2:computeRoutes`,
                 {
-                  origin,
-                  destination,
-                  travelMode: maps.TravelMode.DRIVING,
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                    "X-Goog-Api-Key": routesApiKey,
+                    "X-Goog-FieldMask": "routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline",
+                  },
+                  body: JSON.stringify({
+                    origin: { location: { latLng: { latitude: origin.lat, longitude: origin.lng } } },
+                    destination: { location: { latLng: { latitude: destination.lat, longitude: destination.lng } } },
+                    travelMode: "DRIVE",
+                  }),
                 },
-                (result: any, status: string) => {
+              )
+                .then((r) => r.json())
+                .then((data) => {
                   if (disposed) return;
-                  if (status === "OK" && result) {
-                    directionsRenderer.setDirections(result);
-                    if (result.routes[0]?.legs[0]?.distance?.text) {
-                      setDistanceText(result.routes[0].legs[0].distance.text + " away");
+                  const route = data?.routes?.[0];
+                  if (route?.polyline?.encodedPolyline) {
+                    const decoded = decodePolyline(route.polyline.encodedPolyline);
+                    new maps.Polyline({
+                      map,
+                      path: decoded,
+                      strokeColor: "#6D1B6D",
+                      strokeWeight: 5,
+                    });
+                    const bounds = new maps.LatLngBounds();
+                    for (const p of decoded) bounds.extend(p);
+                    map.fitBounds(bounds, 48);
+                    if (route.distanceMeters) {
+                      const km = route.distanceMeters / 1000;
+                      setDistanceText((km < 1 ? `${route.distanceMeters} m` : `${km.toFixed(1)} km`) + " away");
                     }
                     return;
                   }
-                  const bounds = new maps.LatLngBounds();
-                  bounds.extend(origin);
-                  bounds.extend(destination);
-                  new maps.Polyline({
-                    map,
-                    path: [origin, destination],
-                    strokeColor: "#6D1B6D",
-                    strokeWeight: 4,
-                  });
-                  map.fitBounds(bounds, 48);
-                },
-              );
+                  // Fallback: straight-line polyline
+                  drawFallbackPolyline();
+                })
+                .catch(() => { if (!disposed) drawFallbackPolyline(); });
+
+              function drawFallbackPolyline() {
+                const bounds = new maps.LatLngBounds();
+                bounds.extend(origin);
+                bounds.extend(destination);
+                new maps.Polyline({
+                  map,
+                  path: [origin, destination],
+                  strokeColor: "#6D1B6D",
+                  strokeWeight: 4,
+                });
+                map.fitBounds(bounds, 48);
+              }
             }
           },
           () => {},
@@ -152,7 +190,6 @@ export default function ActiveJourneyCard({
 
     return () => {
       disposed = true;
-      directionsRenderer?.setMap(null);
       if (activeWatchId !== undefined) navigator.geolocation.clearWatch(activeWatchId);
     };
   }, [

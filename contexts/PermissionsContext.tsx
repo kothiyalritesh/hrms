@@ -33,7 +33,7 @@ export const PERMISSIONS = {
 
 export type PermissionKey = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
 
-export type PermissionScope = "GLOBAL" | "DEPARTMENT" | "BRANCH" | "TEAM" | "SELF";
+export type PermissionScope = "GLOBAL" | "OFFICE" | "OFFICE_TREE" | "TEAM" | "TEAM_TREE" | "REPORTS_TO" | "ASSIGNED" | "SELF";
 
 export interface ScopedPermission {
   permission: string;

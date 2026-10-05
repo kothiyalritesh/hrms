@@ -43,7 +43,6 @@ export default function MapPickerModal({
   const inputRef = useRef<HTMLInputElement>(null);
   const mapInstanceRef = useRef<any>(null);
   const markerRef = useRef<any>(null);
-  const geocoderRef = useRef<any>(null);
   const [pickedLat, setPickedLat] = useState(initialLat);
   const [pickedLon, setPickedLon] = useState(initialLon);
   const [pickedName, setPickedName] = useState(initialName);
@@ -98,22 +97,27 @@ export default function MapPickerModal({
           });
           markerRef.current = marker;
 
-          const geocoder = new google.maps.Geocoder();
-          geocoderRef.current = geocoder;
+          const geocoderRef_unused = null; // Geocoder replaced by Nominatim
+          const nominatimReverseGeocode = async (lat: number, lng: number): Promise<string | null> => {
+            try {
+              const res = await fetch(
+                `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lng)}`,
+                { headers: { Accept: "application/json" } },
+              );
+              if (!res.ok) return null;
+              const json = await res.json();
+              return typeof json?.display_name === "string" ? json.display_name : null;
+            } catch { return null; }
+          };
           const updatePickedLocation = (lat: number, lng: number) => {
             setPickedLat(lat);
             setPickedLon(lng);
-            geocoder.geocode(
-              { location: { lat, lng } },
-              (results: any[], status: string) => {
-                if (status === "OK" && results?.[0]?.formatted_address) {
-                  setPickedName(results[0].formatted_address);
-                }
-              },
-            );
+            void nominatimReverseGeocode(lat, lng).then((addr) => {
+              if (addr) setPickedName(addr);
+            });
           };
 
-          marker.addListener("dragend", () => {
+          marker.addEventListener("gmp-dragend", () => {
             updatePickedLocation(
               markerCoordinate(marker.position, "lat"),
               markerCoordinate(marker.position, "lng"),
@@ -128,27 +132,33 @@ export default function MapPickerModal({
           // Resolve a meaningful label even when the user confirms the initial pin.
           updatePickedLocation(initialLat, initialLon);
 
-          // Places Autocomplete on the input
+          // Places Autocomplete using PlaceAutocompleteElement (replaces deprecated Autocomplete)
           if (inputRef.current) {
-            const autocomplete = new google.maps.places.Autocomplete(
-              inputRef.current,
-              {
-                fields: ["geometry", "name", "formatted_address"],
-                componentRestrictions: { country: "in" },
-              },
-            );
-            autocomplete.addListener("place_changed", () => {
-              const place = autocomplete.getPlace();
-              if (!place.geometry?.location) return;
-              const lat = place.geometry.location.lat();
-              const lng = place.geometry.location.lng();
+            const { PlaceAutocompleteElement } = await google.maps.importLibrary("places") as any;
+            const placeAuto = new PlaceAutocompleteElement({
+              componentRestrictions: { country: "in" },
+            });
+            // Hide the built-in input and use our styled one as a trigger
+            placeAuto.style.display = "none";
+            inputRef.current.parentElement?.appendChild(placeAuto);
+            // Forward typed text to the element
+            inputRef.current.addEventListener("input", () => {
+              placeAuto.value = inputRef.current?.value ?? "";
+            });
+            placeAuto.addEventListener("gmp-placeselect", async (event: any) => {
+              const place = event.place;
+              await place.fetchFields({ fields: ["location", "displayName", "formattedAddress"] });
+              if (!place.location) return;
+              const lat = place.location.lat();
+              const lng = place.location.lng();
               map.setCenter({ lat, lng });
               map.setZoom(17);
               marker.position = { lat, lng };
               setPickedLat(lat);
               setPickedLon(lng);
-              const name = place.name || place.formatted_address || "";
+              const name = place.displayName || place.formattedAddress || "";
               setPickedName(name);
+              if (inputRef.current) inputRef.current.value = name;
             });
           }
 
@@ -193,14 +203,15 @@ export default function MapPickerModal({
         markerRef.current?.setPosition({ lat, lng });
         mapInstanceRef.current?.setCenter({ lat, lng });
         mapInstanceRef.current?.setZoom(17);
-        geocoderRef.current?.geocode(
-          { location: { lat, lng } },
-          (results: any[], status: string) => {
-            if (status === "OK" && results?.[0]?.formatted_address) {
-              setPickedName(results[0].formatted_address);
-            }
-          },
-        );
+        void fetch(
+          `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lng)}`,
+          { headers: { Accept: "application/json" } },
+        )
+          .then((r) => r.json())
+          .then((json) => {
+            if (typeof json?.display_name === "string") setPickedName(json.display_name);
+          })
+          .catch(() => {});
         setLocationError("");
         setLocating(false);
       },

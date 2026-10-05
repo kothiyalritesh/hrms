@@ -10,6 +10,8 @@ import { supabase } from "@/lib/supabase";
 import { Picker } from "@react-native-picker/picker";
 import Feather from "@expo/vector-icons/Feather";
 
+const SCOPE_MATRIX: Record<string, string[]> = {"EMPLOYEES": ["GLOBAL", "OFFICE", "OFFICE_TREE", "TEAM", "TEAM_TREE", "SELF"], "ATTENDANCE": ["GLOBAL", "OFFICE", "OFFICE_TREE", "TEAM", "TEAM_TREE", "SELF"], "REGULARIZATION": ["GLOBAL", "OFFICE", "OFFICE_TREE", "TEAM", "TEAM_TREE", "SELF"], "FIELD_VISITS": ["GLOBAL", "OFFICE", "OFFICE_TREE", "TEAM", "TEAM_TREE", "ASSIGNED", "SELF"], "LIVE_TRACKING": ["GLOBAL", "OFFICE", "OFFICE_TREE", "TEAM", "TEAM_TREE", "ASSIGNED"], "LEAVES": ["GLOBAL", "OFFICE", "OFFICE_TREE", "TEAM", "TEAM_TREE", "SELF"], "TASKS": ["GLOBAL", "OFFICE", "OFFICE_TREE", "TEAM", "TEAM_TREE", "ASSIGNED", "SELF"], "TEAMS": ["GLOBAL", "OFFICE", "OFFICE_TREE", "TEAM", "TEAM_TREE"], "OFFICES": ["GLOBAL", "OFFICE", "OFFICE_TREE", "TEAM"], "DASHBOARD": ["GLOBAL", "OFFICE", "OFFICE_TREE", "TEAM", "TEAM_TREE", "SELF"], "REPORTS": ["GLOBAL", "OFFICE", "OFFICE_TREE", "TEAM", "TEAM_TREE", "SELF"], "NOTIFICATIONS": ["GLOBAL", "OFFICE", "OFFICE_TREE", "TEAM", "TEAM_TREE"], "AUDIT_LOGS": ["GLOBAL", "OFFICE", "OFFICE_TREE"], "PERMISSIONS": ["GLOBAL"], "BIOMETRIC": ["GLOBAL", "OFFICE", "OFFICE_TREE"]};
+
 export default function PermissionsManagerScreen() {
   const { theme } = useTheme();
   const [loading, setLoading] = useState(true);
@@ -282,16 +284,25 @@ export default function PermissionsManagerScreen() {
                   
                   <ThemedText type="small" style={{ color: theme.textSecondary, marginBottom: 8 }}>Scope Type</ThemedText>
                   <View style={[styles.pickerWrapper, { backgroundColor: theme.backgroundSecondary, marginBottom: Spacing.xl }]}>
-                    <Picker dropdownIconColor={theme.text} itemStyle={{ color: theme.text }} selectedValue={configScopeType} onValueChange={setConfigScopeType} style={{ color: theme.text, height: Platform.OS === "web" ? 40 : undefined, outline: "none", borderWidth: 0, backgroundColor: theme.backgroundSecondary } as any}>
-                      <Picker.Item label="GLOBAL (All Data)" value="GLOBAL" />
-                      <Picker.Item label="OFFICE (Location Specific)" value="OFFICE" />
-                      <Picker.Item label="DEPARTMENT" value="DEPARTMENT" />
-                      <Picker.Item label="TEAM (Team members only)" value="TEAM" />
-                      <Picker.Item label="SELF (Only own data)" value="SELF" />
+                    <Picker 
+                      dropdownIconColor={theme.text} 
+                      itemStyle={{ color: theme.text }} 
+                      selectedValue={configScopeType} 
+                      onValueChange={setConfigScopeType} 
+                      style={{ color: theme.text, height: Platform.OS === "web" ? 40 : undefined, outline: "none", borderWidth: 0, backgroundColor: theme.backgroundSecondary } as any}
+                    >
+                      {(!activePermConfig || (SCOPE_MATRIX[activePermConfig.module] || []).includes("GLOBAL")) && <Picker.Item label="GLOBAL" value="GLOBAL" />}
+                      {(!activePermConfig || (SCOPE_MATRIX[activePermConfig.module] || []).includes("OFFICE")) && <Picker.Item label="OFFICE (Office Only)" value="OFFICE" />}
+                      {(!activePermConfig || (SCOPE_MATRIX[activePermConfig.module] || []).includes("OFFICE_TREE")) && <Picker.Item label="OFFICE_TREE (Office + Teams)" value="OFFICE_TREE" />}
+                      {(!activePermConfig || (SCOPE_MATRIX[activePermConfig.module] || []).includes("TEAM")) && <Picker.Item label="TEAM (Team Only)" value="TEAM" />}
+                      {(!activePermConfig || (SCOPE_MATRIX[activePermConfig.module] || []).includes("TEAM_TREE")) && <Picker.Item label="TEAM_TREE (Team & Sub-teams)" value="TEAM_TREE" />}
+                      {(!activePermConfig || (SCOPE_MATRIX[activePermConfig.module] || []).includes("REPORTS_TO")) && <Picker.Item label="REPORTS_TO (Self-reports)" value="REPORTS_TO" />}
+                      {(!activePermConfig || (SCOPE_MATRIX[activePermConfig.module] || []).includes("ASSIGNED")) && <Picker.Item label="ASSIGNED (Assigned to me)" value="ASSIGNED" />}
+                      {(!activePermConfig || (SCOPE_MATRIX[activePermConfig.module] || []).includes("SELF")) && <Picker.Item label="SELF (Only own data)" value="SELF" />}
                     </Picker>
                   </View>
 
-                  {["OFFICE", "TEAM"].includes(configScopeType) && (
+                  {["OFFICE", "OFFICE_TREE", "TEAM", "TEAM_TREE"].includes(configScopeType) && (
                     <>
                       <ThemedText type="small" style={{ color: theme.textSecondary, marginBottom: 8 }}>Target Resource ID (Optional)</ThemedText>
                       <TextInput

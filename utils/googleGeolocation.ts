@@ -42,31 +42,25 @@ export async function googleGeolocate(opts: { considerIp?: boolean } = {}): Prom
 
 // ── Reverse geocoding (coords → human address) ─────────────────────────────────
 
-const GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json";
-
 // Simple in-memory cache so we don't re-hit the API for the same spot.
 const _revCache = new Map<string, string>();
 
 /**
- * Turn coordinates into a human-readable street address via Google Geocoding API.
- * Works on web and native. Returns null on error / missing key (caller should
- * fall back to showing the raw coordinates).
+ * Turn coordinates into a human-readable street address via Nominatim.
+ * Works on web and native. Returns null on error.
  */
 export async function reverseGeocode(lat: number, lng: number): Promise<string | null> {
-  if (!MAPS_API_KEY) return null;
   const key = `${lat.toFixed(5)},${lng.toFixed(5)}`;
   const cached = _revCache.get(key);
   if (cached) return cached;
   try {
-    const res = await fetch(`${GEOCODE_URL}?latlng=${lat},${lng}&key=${MAPS_API_KEY}`);
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lng)}`,
+      { headers: { Accept: "application/json" } },
+    );
     if (!res.ok) return null;
     const json = await res.json();
-    if (json.status !== "OK" || !json.results?.length) return null;
-    // Prefer a street-level result; fall back to the first formatted address.
-    const street = json.results.find((r: any) =>
-      r.types?.some((t: string) => ["street_address", "premise", "route"].includes(t))
-    );
-    const addr: string = (street ?? json.results[0]).formatted_address;
+    const addr: string | undefined = json?.display_name;
     if (addr) _revCache.set(key, addr);
     return addr ?? null;
   } catch {
