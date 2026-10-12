@@ -14,7 +14,6 @@ import {
   TouchableOpacity,
 } from "react-native";
 import Feather from "@expo/vector-icons/Feather";
-import * as ImagePicker from "expo-image-picker";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { useFocusEffect } from "@react-navigation/native";
 import { ScreenScrollView } from "@/components/ScreenScrollView";
@@ -23,6 +22,7 @@ import { formatDate } from "@/utils/format";
 import { Button } from "@/components/Button";
 import { useTheme } from "@/hooks/useTheme";
 import { useAuth } from "@/contexts/AuthContext";
+import { usePermissions } from "@/hooks/usePermissions";
 import { Spacing, BorderRadius, Colors } from "@/constants/theme";
 import Spacer from "@/components/Spacer";
 import {
@@ -154,7 +154,6 @@ export default function EventManagementScreen() {
   });
   const [address, setAddress] = useState("");
   const [coords, setCoords] = useState<{ latitude: number; longitude: number } | null>(null);
-  const [photoUri, setPhotoUri] = useState<string | null>(null);
   const [grantMarketingCompOff, setGrantMarketingCompOff] = useState(false);
   const [lateGraceMinutes, setLateGraceMinutes] = useState("10");
   const [audienceMode, setAudienceMode] = useState<
@@ -176,7 +175,8 @@ export default function EventManagementScreen() {
   const [attendees, setAttendees] = useState<EventAttendee[]>([]);
   const [attendeesLoading, setAttendeesLoading] = useState(false);
   const [showAttendees, setShowAttendees] = useState(false);
-  const isAllowed = ALLOWED_ROLES.includes(user?.role ?? "");
+  const { hasPermission } = usePermissions();
+  const isAllowed = hasPermission("events.manage");
 
   const resolvedEmployeeIds = useMemo(() => {
     if (audienceMode === "all") {
@@ -273,7 +273,7 @@ export default function EventManagementScreen() {
   }
 
   const resetForm = () => {
-    setTitle(""); setDescription(""); setAddress(""); setCoords(null); setPhotoUri(null);
+    setTitle(""); setDescription(""); setAddress(""); setCoords(null);
     setGrantMarketingCompOff(false);
     setLateGraceMinutes("10");
     setAudienceMode("individual");
@@ -287,44 +287,6 @@ export default function EventManagementScreen() {
     const e = new Date(now); e.setHours(18, 0, 0, 0); setEndTime(e);
   };
 
-  const pickPhoto = async () => {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ["images"],
-      quality: 0.7,
-    });
-    if (!result.canceled && result.assets[0]) setPhotoUri(result.assets[0].uri);
-  };
-
-  const uploadPhoto = async (uri: string): Promise<string | null> => {
-    try {
-      // Derive a clean extension — avoid blob: URIs producing bad paths
-      const uriLower = uri.toLowerCase();
-      const ext = uriLower.includes(".png") ? "png"
-        : uriLower.includes(".webp") ? "webp"
-        : "jpg";
-      const fileName = `event_${Date.now()}.${ext}`;
-
-      const response = await fetch(uri);
-      if (!response.ok) return null;
-      const blob = await response.blob();
-
-      const { error } = await supabase.storage
-        .from("event-photos")
-        .upload(fileName, blob, {
-          contentType: `image/${ext}`,
-          upsert: true,
-        });
-      if (error) {
-        console.warn("[EventPhoto] upload error:", error.message);
-        return null;
-      }
-      return supabase.storage.from("event-photos").getPublicUrl(fileName).data.publicUrl;
-    } catch (e) {
-      console.warn("[EventPhoto] upload exception:", e);
-      return null;
-    }
-  };
-
   const handleSave = async () => {
     if (!title.trim()) { Alert.alert("Validation", "Event title is required."); return; }
     if (!address || !coords) { Alert.alert("Validation", "Please search and select a location."); return; }
@@ -335,9 +297,6 @@ export default function EventManagementScreen() {
 
     setSaving(true);
     try {
-      let photo_url: string | undefined;
-      if (photoUri) photo_url = (await uploadPhoto(photoUri)) ?? undefined;
-
       const pad = (n: number) => String(n).padStart(2, "0");
       const eventDateValue = `${eventDate.getFullYear()}-${pad(eventDate.getMonth() + 1)}-${pad(eventDate.getDate())}`;
 
@@ -350,7 +309,6 @@ export default function EventManagementScreen() {
         address,
         latitude: coords.latitude,
         longitude: coords.longitude,
-        photo_url,
         checkin_radius_m: 200,
         comp_off_enabled: grantMarketingCompOff,
         comp_off_team: "ALL_ATTENDEES",
@@ -502,15 +460,50 @@ export default function EventManagementScreen() {
               </ThemedText>
             </View>
 
-            <View style={styles.detailGrid}>
-              <ThemedText type="caption">Participants: {selectedEvent?.participant_count ?? "—"}</ThemedText>
-              <ThemedText type="caption">On Time: {selectedEvent?.on_time_count ?? 0}</ThemedText>
-              <ThemedText type="caption">Late: {selectedEvent?.late_count ?? 0}</ThemedText>
-              <ThemedText type="caption">Comp-Off Eligible: {selectedEvent?.comp_off_eligible_count ?? 0}</ThemedText>
-              <ThemedText type="caption" numberOfLines={2}>
-                Teams: {[...(selectedEvent?.assigned_team_names ?? []), ...(selectedEvent?.assigned_departments ?? [])].join(", ") || "Individual / All Employees"}
+            <View
+              style={[
+                styles.detailGrid,
+                {
+                  backgroundColor: theme.backgroundSecondary,
+                  borderColor: theme.border,
+                },
+              ]}
+            >
+              <ThemedText type="caption" style={{ color: theme.textSecondary }}>
+                Participants:{" "}
+                <ThemedText type="caption" style={{ color: theme.text, fontWeight: "700" }}>
+                  {selectedEvent?.participant_count ?? "—"}
+                </ThemedText>
               </ThemedText>
-              <ThemedText type="caption" numberOfLines={2}>Location: {selectedEvent?.address}</ThemedText>
+              <ThemedText type="caption" style={{ color: theme.textSecondary }}>
+                On Time:{" "}
+                <ThemedText type="caption" style={{ color: Colors.light.success, fontWeight: "700" }}>
+                  {selectedEvent?.on_time_count ?? 0}
+                </ThemedText>
+                {"   ·   "}
+                Late:{" "}
+                <ThemedText type="caption" style={{ color: Colors.light.error, fontWeight: "700" }}>
+                  {selectedEvent?.late_count ?? 0}
+                </ThemedText>
+              </ThemedText>
+              <ThemedText type="caption" style={{ color: theme.textSecondary }}>
+                Comp-Off Eligible:{" "}
+                <ThemedText type="caption" style={{ color: theme.text, fontWeight: "700" }}>
+                  {selectedEvent?.comp_off_eligible_count ?? 0}
+                </ThemedText>
+              </ThemedText>
+              <ThemedText type="caption" numberOfLines={2} style={{ color: theme.textSecondary }}>
+                Teams:{" "}
+                <ThemedText type="caption" style={{ color: theme.text }}>
+                  {[...(selectedEvent?.assigned_team_names ?? []), ...(selectedEvent?.assigned_departments ?? [])].join(", ") || "Individual / All Employees"}
+                </ThemedText>
+              </ThemedText>
+              <ThemedText type="caption" numberOfLines={2} style={{ color: theme.textSecondary }}>
+                Location:{" "}
+                <ThemedText type="caption" style={{ color: theme.text }}>
+                  {selectedEvent?.address}
+                </ThemedText>
+              </ThemedText>
             </View>
 
             <ScrollView showsVerticalScrollIndicator={false} style={{ marginTop: Spacing.md }}>
@@ -771,17 +764,6 @@ export default function EventManagementScreen() {
 
               <Spacer height={Spacing.sm} />
 
-              {/* Photo */}
-              <Pressable onPress={pickPhoto} style={styles.photoBtn}>
-                <Feather name="image" size={16} color={theme.primary} />
-                <ThemedText type="small" style={{ color: theme.primary }}>
-                  {photoUri ? "Change Photo" : "Add Event Photo"}
-                </ThemedText>
-              </Pressable>
-              {photoUri ? (
-                <Image source={{ uri: photoUri }} style={styles.previewImg} />
-              ) : null}
-
               <Spacer height={Spacing.xl} />
 
               <Button onPress={handleSave} disabled={saving}>
@@ -876,10 +858,10 @@ const styles = StyleSheet.create({
   },
   detailGrid: {
     marginTop: Spacing.sm,
-    gap: 4,
-    padding: Spacing.sm,
-    borderRadius: BorderRadius.sm,
-    backgroundColor: "#F9FAFB",
+    gap: 6,
+    padding: Spacing.md,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
   },
   audienceBox: {
     marginBottom: Spacing.md,

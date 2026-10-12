@@ -1,4 +1,15 @@
+const fs = require("fs");
+const path = require("path");
 const releaseConfig = require("./release.config.json");
+
+const easProjectId =
+  process.env.EXPO_PUBLIC_EAS_PROJECT_ID || "49f3f4fa-06cd-45ed-b80e-cec0d93bf6a9";
+// Firebase client config (not a secret: it only identifies the app). Without
+// it the APK cannot receive push notifications. An EAS file variable
+// GOOGLE_SERVICES_JSON still takes precedence.
+const localGoogleServices = fs.existsSync(path.join(__dirname, "google-services.json"))
+  ? "./google-services.json"
+  : undefined;
 const enableReactCompiler =
   process.env.EXPO_PUBLIC_ENABLE_REACT_COMPILER === "true";
 
@@ -8,6 +19,11 @@ const expoBaseUrl =
     ? ""
     : `/${configuredBasePath.replace(/^\/+|\/+$/g, "")}`;
 
+const googleMapsApiKey =
+  process.env.GOOGLE_MAPS_ANDROID_KEY ||
+  process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ||
+  "AIzaSyANgUrLzyb_Q26_ztZTet3CYGayZUmQgQA";
+
 module.exports = ({ config }) => ({
   ...config,
   version: releaseConfig.version,
@@ -16,7 +32,7 @@ module.exports = ({ config }) => ({
     config: {
       ...(config.ios?.config || {}),
       googleMapsApiKey:
-        process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || undefined,
+        process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || googleMapsApiKey,
     },
   },
   android: {
@@ -28,16 +44,26 @@ module.exports = ({ config }) => ({
     googleServicesFile:
       process.env.GOOGLE_SERVICES_JSON ||
       config.android?.googleServicesFile ||
-      undefined,
+      localGoogleServices,
     config: {
       ...(config.android?.config || {}),
       googleMaps: {
         ...(config.android?.config?.googleMaps || {}),
-        apiKey: process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || undefined,
+        apiKey: googleMapsApiKey,
       },
     },
   },
   web: config.web,
+  // EAS Update (over-the-air updates of the app's own code). Without a URL
+  // expo-updates is disabled in the APK. fallbackToCacheTimeout 0: never delay
+  // startup waiting for an update; a new update is downloaded in the
+  // background and applied on the next launch.
+  updates: {
+    ...(config.updates || {}),
+    url: `https://u.expo.dev/${easProjectId}`,
+    fallbackToCacheTimeout: 0,
+    checkAutomatically: "ON_LOAD",
+  },
   experiments: {
     ...(config.experiments || {}),
     baseUrl: expoBaseUrl,
@@ -55,11 +81,10 @@ module.exports = ({ config }) => ({
     webBasePath: expoBaseUrl || "/",
     requiredBackendSchemaVersion: releaseConfig.requiredBackendSchemaVersion,
     buildId: process.env.EXPO_PUBLIC_BUILD_ID || releaseConfig.buildId,
+    androidMapsConfigured: true,
     eas: {
       ...(config.extra?.eas || {}),
-      projectId:
-        process.env.EXPO_PUBLIC_EAS_PROJECT_ID ||
-        "49f3f4fa-06cd-45ed-b80e-cec0d93bf6a9",
+      projectId: easProjectId,
     },
   },
 });

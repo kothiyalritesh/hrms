@@ -168,7 +168,12 @@ export const EventService = {
         acknowledgedAt: row.acknowledged_at ?? null,
         event: Array.isArray(row.events) ? row.events[0] : row.events,
       }))
-      .filter((row: EventAnnouncement) => !!row.event);
+      .filter((row: EventAnnouncement) => !!row.event)
+      // one card per event even if the event was announced more than once
+      .filter(
+        (row: EventAnnouncement, index: number, rows: EventAnnouncement[]) =>
+          rows.findIndex((other) => other.eventId === row.eventId) === index,
+      );
   },
 
   async acknowledgeEvent(eventId: string, userId: string): Promise<string> {
@@ -205,7 +210,13 @@ export const EventService = {
         Array.isArray(row.events) ? row.events[0] : row.events,
       )
       .filter(Boolean)
-      .sort((a: Event, b: Event) => a.start_time.localeCompare(b.start_time));
+      .filter(
+        (event: Event, index: number, list: Event[]) =>
+          list.findIndex((other) => other.id === event.id) === index,
+      )
+      .sort((a: Event, b: Event) =>
+        String(a.start_time ?? "").localeCompare(String(b.start_time ?? "")),
+      );
   },
 
   /** Today's events with the employee's check-in/check-out state. */
@@ -295,9 +306,10 @@ export const EventService = {
   async getEventAttendees(eventId: string): Promise<EventAttendee[]> {
     const { data, error } = await fetchAllPages<any>((from, to) =>
       supabase.from("event_checkins")
-        .select(
-          "id, checkin_time, distance_metres, checkout_time, checkout_distance_metres, arrival_status, late_minutes, comp_off_eligible_days, user_id, profiles(name, role)",
-        )
+        // AFTER (explicit foreign key constraint hint)
+.select(
+  "id, checkin_time, distance_metres, checkout_time, checkout_distance_metres, arrival_status, late_minutes, comp_off_eligible_days, user_id, profiles!event_checkins_user_id_fkey(name, full_name, role)",
+)
         .eq("event_id", eventId)
         .order("checkin_time", { ascending: true })
         .order("id")
@@ -307,7 +319,7 @@ export const EventService = {
     return (data ?? []).map((row: any) => ({
       id: row.id,
       user_id: row.user_id,
-      name: row.profiles?.name ?? "Unknown",
+      name: row.profiles?.name || row.profiles?.full_name || "Unknown",
       role: row.profiles?.role ?? "",
       checkin_time: row.checkin_time,
       distance_metres: row.distance_metres,
