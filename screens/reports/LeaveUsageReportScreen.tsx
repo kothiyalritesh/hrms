@@ -2,28 +2,33 @@
  * LeaveUsageReportScreen
  * Read-only leave report — per-employee totals across applied / approved / rejected / pending.
  */
-import React, { useCallback, useState } from "react";
-import {
-  ActivityIndicator, Alert, Pressable,
-  RefreshControl, ScrollView, StyleSheet, TextInput, View,
-} from "react-native";
-import Feather from "@expo/vector-icons/Feather";
+import React, { useCallback, useRef, useState } from "react";
+import { RefreshControl, ScrollView, StyleSheet, View } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { ThemedText } from "@/components/ThemedText";
 import { useTheme } from "@/hooks/useTheme";
-import { BorderRadius, Colors, Spacing } from "@/constants/theme";
+import { BorderRadius, Spacing } from "@/constants/theme";
 import { supabase } from "@/lib/supabase";
-import { getBusinessDateIST } from "@/utils/businessDate";
+import { businessMonthStart, formatBusinessDate, getBusinessDateIST } from "@/utils/businessDate";
+import { fetchAllPages } from "@/utils/supabasePagination";
+import { exportSheets, formatIstDateTime } from "@/utils/exportWorkbook";
+import {
+  ReportChip,
+  ReportChipRow,
+  ReportDateRange,
+  ReportFilterBar,
+  ReportIconButton,
+  ReportMeta,
+  ReportNotice,
+  ReportSearch,
+  ReportState,
+  reportErrorMessage,
+  type DateRange,
+} from "@/components/reports/ReportUI";
 
 const LEAVE_TYPE_COLORS: Record<string, string> = {
   casual: "#6366F1", sick: "#EF4444", earned: "#10B981",
   wfh: "#F59E0B", comp_off: "#8B5CF6",
-};
-const STATUS_COLORS = {
-  pending:   { bg: "#FEF3C7", text: "#92400E" },
-  approved:  { bg: "#D1FAE5", text: "#065F46" },
-  rejected:  { bg: "#FEE2E2", text: "#991B1B" },
-  cancelled: { bg: "#F3F4F6", text: "#6B7280" },
 };
 
 interface EmployeeLeave {
@@ -52,15 +57,21 @@ interface LeaveRow {
   employee?: { name?: string; employee_number?: string; office_id?: string; office?: { name?: string } };
 }
 
-const toIso = (d: Date) => getBusinessDateIST(d);
 const TYPES = ["all", "casual", "sick", "earned", "wfh", "comp_off"];
 const STATUSES = ["all", "pending", "approved", "rejected"];
 
+const typeLabel = (t: string) =>
+  t === "all" ? "All types" : t === "wfh" ? "WFH" : t === "comp_off" ? "Comp-off" : t[0].toUpperCase() + t.slice(1);
+const statusLabel = (s: string) => (s === "all" ? "Any status" : s[0].toUpperCase() + s.slice(1));
+
 export default function LeaveUsageReportScreen() {
   const { theme } = useTheme();
-  const now = new Date();
-  const [fromDate, setFromDate] = useState(toIso(new Date(now.getFullYear(), now.getMonth(), 1)));
-  const [toDate, setToDate] = useState(toIso(now));
+  const todayIST = getBusinessDateIST();
+  // Queries run for the applied range only, not on every keystroke.
+  const [range, setRange] = useState<DateRange>(() => ({ from: businessMonthStart(todayIST), to: todayIST }));
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -69,18 +80,37 @@ export default function LeaveUsageReportScreen() {
   const [allRows, setAllRows] = useState<LeaveRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const requestId = useRef(0);
+
+  const statusColors: Record<string, { bg: string; text: string }> = {
+    pending: { bg: theme.warningBg, text: theme.warningText },
+    approved: { bg: theme.successBg, text: theme.successText },
+    rejected: { bg: theme.errorBg, text: theme.errorText },
+    cancelled: { bg: theme.backgroundSecondary, text: theme.textSecondary },
+  };
 
   const load = useCallback(async () => {
+    const id = ++requestId.current;
     setLoading(true);
     try {
-      const { data, error } = await supabase
+      setLoadError(null);
+      // Every leave that overlaps the range (one starting before it counts too).
+      const { data, error } = await fetchAllPages<any>((from, to) => supabase
         .from("leave_requests")
         .select("id,user_id,leave_type,start_date,end_date,status,requested_days,reason,applied_on,created_at,employee:profiles!user_id(name,employee_number,office:offices!office_id(name))")
-        .gte("start_date", fromDate)
-        .lte("start_date", toDate)
-        .order("created_at", { ascending: false });
+        .lte("start_date", range.to)
+        .gte("end_date", range.from)
+        .order("created_at", { ascending: false })
+        .order("id")
+        .range(from, to));
       if (error) throw error;
-      const rows = (data ?? []) as LeaveRow[];
+      if (id !== requestId.current) return;
+      const rows = ((data ?? []) as LeaveRow[]).map((r) => ({
+        ...r,
+        status: String(r.status || "").toLowerCase(),
+        leave_type: String(r.leave_type || "").toLowerCase(),
+        requested_days: Number(r.requested_days) || 0,
+      }));
       setAllRows(rows);
 
       // Aggregate by employee
@@ -96,6 +126,7 @@ export default function LeaveUsageReportScreen() {
           });
         }
         const emp = map.get(r.user_id)!;
+        if (r.status === "cancelled") continue;
         emp.total += r.requested_days;
         if (r.status === "approved") emp.approved += r.requested_days;
         else if (r.status === "pending") emp.pending += r.requested_days;
@@ -104,128 +135,188 @@ export default function LeaveUsageReportScreen() {
       }
       setEmployees(Array.from(map.values()).sort((a, b) => b.total - a.total));
     } catch (e: any) {
-      Alert.alert("Error", e.message);
+      if (id !== requestId.current) return;
+      setAllRows([]);
+      setEmployees([]);
+      setLoadError(reportErrorMessage(e, "Could not load leave records."));
     } finally {
-      setLoading(false);
+      if (id === requestId.current) setLoading(false);
     }
-  }, [fromDate, toDate]);
+  }, [range]);
 
-  useFocusEffect(useCallback(() => { load(); }, [load]));
+  useFocusEffect(useCallback(() => { void load(); }, [load]));
 
-  const filteredRows = allRows.filter(r => {
+  const q = search.trim().toLowerCase();
+  const filteredRows = allRows.filter((r) => {
     if (typeFilter !== "all" && r.leave_type !== typeFilter) return false;
     if (statusFilter !== "all" && r.status !== statusFilter) return false;
-    if (search && !((r.employee?.name || "").toLowerCase().includes(search.toLowerCase()))) return false;
+    if (q && !((r.employee?.name || "").toLowerCase().includes(q))) return false;
     return true;
   });
 
-  const filteredEmps = employees.filter(e =>
-    !search || e.name.toLowerCase().includes(search.toLowerCase())
-  );
+  const filteredEmps = employees.filter((e) => !q || e.name.toLowerCase().includes(q));
 
-  const Chip = ({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) => (
-    <Pressable onPress={onPress} style={[styles.chip, { backgroundColor: active ? theme.primary : theme.backgroundSecondary, borderColor: active ? theme.primary : theme.border }]}>
-      <ThemedText type="caption" style={{ color: active ? "#fff" : theme.text, fontWeight: "600", textTransform: "capitalize" }}>{label}</ThemedText>
-    </Pressable>
-  );
+  const exportExcel = async () => {
+    if (exporting) return;
+    setExporting(true);
+    setNotice(null);
+    try {
+      await exportSheets(`leave_usage_${range.from}_to_${range.to}.xlsx`, [
+        {
+          name: "Summary",
+          columns: ["Employee No", "Employee", "Office", "Total days", "Approved", "Pending", "Rejected", ...TYPES.filter((t) => t !== "all")],
+          widths: [12, 26, 20, 10, 9, 8, 9, 8, 8, 8, 8, 9],
+          rows: filteredEmps.map((e) => [
+            e.employee_number ?? "", e.name, e.office ?? "", e.total, e.approved, e.pending, e.rejected,
+            ...TYPES.filter((t) => t !== "all").map((t) => e.by_type[t] ?? 0),
+          ]),
+        },
+        {
+          name: "Requests",
+          columns: ["Employee No", "Employee", "Leave type", "From", "To", "Days", "Status", "Reason", "Applied on"],
+          widths: [12, 26, 12, 12, 12, 6, 10, 40, 20],
+          rows: filteredRows.map((r) => [
+            r.employee?.employee_number ?? "", r.employee?.name ?? "", r.leave_type.replace(/_/g, " "),
+            r.start_date, r.end_date, r.requested_days, r.status, r.reason ?? "",
+            formatIstDateTime(r.applied_on || r.created_at),
+          ]),
+        },
+      ]);
+    } catch (e: any) {
+      setNotice(`Export failed: ${e?.message || "please try again."}`);
+    } finally {
+      setExporting(false);
+    }
+  };
 
-  const formatDate = (d: string) => new Date(d + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
+  const shortDate = (d: string) => formatBusinessDate(d).replace(/ \d{4}$/, "");
 
   return (
-    <View style={[styles.root, { backgroundColor: theme.backgroundSecondary }]}>
-      <View style={[styles.header, { backgroundColor: theme.backgroundDefault, borderBottomColor: theme.border }]}>
-        {/* Date range */}
-        <View style={styles.dateRow}>
-          <TextInput style={[styles.dateInput, { backgroundColor: theme.backgroundSecondary, color: theme.text, borderColor: theme.border }]} value={fromDate} onChangeText={setFromDate} placeholder="From YYYY-MM-DD" placeholderTextColor={theme.textSecondary} />
-          <TextInput style={[styles.dateInput, { backgroundColor: theme.backgroundSecondary, color: theme.text, borderColor: theme.border }]} value={toDate} onChangeText={setToDate} placeholder="To YYYY-MM-DD" placeholderTextColor={theme.textSecondary} />
-          <Pressable onPress={load} style={[styles.goBtn, { backgroundColor: theme.primary }]}><Feather name="search" size={16} color="#fff" /></Pressable>
-        </View>
-        {/* Search */}
-        <View style={[styles.searchBar, { backgroundColor: theme.backgroundSecondary, borderColor: theme.border, marginTop: 8 }]}>
-          <Feather name="search" size={14} color={theme.textSecondary} />
-          <TextInput style={{ flex: 1, color: theme.text, fontSize: 13, marginLeft: 6 }} placeholder="Search employee…" placeholderTextColor={theme.textSecondary} value={search} onChangeText={setSearch} />
-        </View>
-        {/* View toggle */}
-        <View style={{ flexDirection: "row", gap: Spacing.sm, marginTop: 8 }}>
-          <Chip label="Summary" active={view === "summary"} onPress={() => setView("summary")} />
-          <Chip label="Detail" active={view === "detail"} onPress={() => setView("detail")} />
-        </View>
-        {/* Type filter (detail only) */}
+    <View style={[styles.root, { backgroundColor: theme.backgroundRoot }]}>
+      <ReportFilterBar>
+        <ReportDateRange
+          applied={range}
+          onApply={setRange}
+          trailing={
+            <ReportIconButton
+              icon="download"
+              label="Excel"
+              tone="neutral"
+              onPress={exportExcel}
+              busy={exporting}
+              disabled={loading || allRows.length === 0}
+            />
+          }
+        />
+        <ReportSearch value={search} onChangeText={setSearch} />
+        <ReportChipRow>
+          <ReportChip label="Per employee" active={view === "summary"} onPress={() => setView("summary")} />
+          <ReportChip label="All requests" active={view === "detail"} onPress={() => setView("detail")} />
+        </ReportChipRow>
         {view === "detail" && (
           <>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 8 }}>
-              <View style={{ flexDirection: "row", gap: 6 }}>
-                {TYPES.map(t => <Chip key={t} label={t === "comp_off" ? "Comp Off" : t} active={typeFilter === t} onPress={() => setTypeFilter(t)} />)}
-              </View>
-            </ScrollView>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 6 }}>
-              <View style={{ flexDirection: "row", gap: 6 }}>
-                {STATUSES.map(s => <Chip key={s} label={s} active={statusFilter === s} onPress={() => setStatusFilter(s)} />)}
-              </View>
-            </ScrollView>
+            <ReportChipRow>
+              {TYPES.map((t) => <ReportChip key={t} label={typeLabel(t)} active={typeFilter === t} onPress={() => setTypeFilter(t)} />)}
+            </ReportChipRow>
+            <ReportChipRow>
+              {STATUSES.map((s) => <ReportChip key={s} label={statusLabel(s)} active={statusFilter === s} onPress={() => setStatusFilter(s)} />)}
+            </ReportChipRow>
           </>
         )}
-      </View>
+        {!loading && !loadError ? (
+          <ReportMeta>
+            {formatBusinessDate(range.from)} – {formatBusinessDate(range.to)} ·{" "}
+            {view === "summary"
+              ? `${filteredEmps.length} employee${filteredEmps.length === 1 ? "" : "s"}`
+              : `${filteredRows.length} request${filteredRows.length === 1 ? "" : "s"}`}
+          </ReportMeta>
+        ) : null}
+        {notice ? <ReportNotice kind="error" text={notice} onDismiss={() => setNotice(null)} /> : null}
+      </ReportFilterBar>
 
-      {loading ? (
-        <View style={styles.center}><ActivityIndicator color={theme.primary} size="large" /></View>
+      {loading && !refreshing ? (
+        <ReportState kind="loading" title="Loading leave records…" />
       ) : (
         <ScrollView
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }} tintColor={theme.primary} />}
-          contentContainerStyle={{ padding: Spacing.md, gap: Spacing.sm }}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }}
+              tintColor={theme.primary}
+            />
+          }
+          contentContainerStyle={styles.body}
         >
-          {view === "summary" ? (
+          {loadError ? (
+            <ReportState kind="error" title="Could not load leave records" message={loadError} onRetry={() => void load()} />
+          ) : view === "summary" ? (
             filteredEmps.length === 0 ? (
-              <View style={styles.center}><ThemedText style={{ color: theme.textSecondary }}>No leave data in this period</ThemedText></View>
-            ) : filteredEmps.map(emp => (
-              <View key={emp.id} style={[styles.card, { backgroundColor: theme.backgroundDefault }]}>
+              <ReportState
+                kind="empty"
+                icon="briefcase"
+                title={q ? "No matching employees" : "No leave in this period"}
+                message={q ? "Try a different name." : "No leave requests overlap the selected dates."}
+              />
+            ) : filteredEmps.map((emp) => (
+              <View key={emp.id} style={[styles.card, { backgroundColor: theme.backgroundDefault, borderColor: theme.border }]}>
                 <View style={styles.cardRow}>
-                  <View style={{ flex: 1 }}>
-                    <ThemedText style={{ fontWeight: "700" }}>{emp.name}</ThemedText>
-                    <ThemedText type="caption" style={{ color: theme.textSecondary }}>{emp.office || "—"}{emp.employee_number ? ` · #${emp.employee_number}` : ""}</ThemedText>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <ThemedText style={{ fontWeight: "700" }} numberOfLines={1}>{emp.name}</ThemedText>
+                    <ThemedText type="caption" style={{ color: theme.textSecondary }} numberOfLines={1}>
+                      {emp.office || "No office"}{emp.employee_number ? ` · #${emp.employee_number}` : ""}
+                    </ThemedText>
                   </View>
-                  <ThemedText style={{ fontWeight: "800", fontSize: 18, color: theme.primary }}>{emp.total}d</ThemedText>
+                  <View style={{ alignItems: "flex-end" }}>
+                    <ThemedText style={{ fontWeight: "800", fontSize: 18, color: theme.primary }}>{emp.total}</ThemedText>
+                    <ThemedText type="caption" style={{ color: theme.textSecondary }}>days</ThemedText>
+                  </View>
                 </View>
                 <View style={styles.statRow}>
-                  <View style={[styles.statBadge, { backgroundColor: Colors.light.successBg }]}>
-                    <ThemedText type="caption" style={{ color: Colors.light.successText, fontWeight: "700" }}>✓ {emp.approved}d approved</ThemedText>
+                  <View style={[styles.statBadge, { backgroundColor: statusColors.approved.bg }]}>
+                    <ThemedText type="caption" style={{ color: statusColors.approved.text, fontWeight: "700" }}>{emp.approved} approved</ThemedText>
                   </View>
-                  <View style={[styles.statBadge, { backgroundColor: "#FEF3C7" }]}>
-                    <ThemedText type="caption" style={{ color: "#92400E", fontWeight: "700" }}>⏳ {emp.pending}d pending</ThemedText>
+                  <View style={[styles.statBadge, { backgroundColor: statusColors.pending.bg }]}>
+                    <ThemedText type="caption" style={{ color: statusColors.pending.text, fontWeight: "700" }}>{emp.pending} pending</ThemedText>
                   </View>
-                  <View style={[styles.statBadge, { backgroundColor: Colors.light.errorBg }]}>
-                    <ThemedText type="caption" style={{ color: Colors.light.errorText, fontWeight: "700" }}>✗ {emp.rejected}d rejected</ThemedText>
+                  <View style={[styles.statBadge, { backgroundColor: statusColors.rejected.bg }]}>
+                    <ThemedText type="caption" style={{ color: statusColors.rejected.text, fontWeight: "700" }}>{emp.rejected} rejected</ThemedText>
                   </View>
                 </View>
-                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
-                  {Object.entries(emp.by_type).map(([t, d]) => (
-                    <View key={t} style={[styles.typeChip, { backgroundColor: (LEAVE_TYPE_COLORS[t] || "#999") + "20" }]}>
-                      <ThemedText type="caption" style={{ color: LEAVE_TYPE_COLORS[t] || "#999", fontWeight: "700", textTransform: "capitalize" }}>{t.replace("_", " ")}: {d}d</ThemedText>
-                    </View>
-                  ))}
-                </View>
+                {Object.keys(emp.by_type).length > 0 ? (
+                  <View style={styles.statRow}>
+                    {Object.entries(emp.by_type).map(([t, d]) => (
+                      <View key={t} style={[styles.typeChip, { backgroundColor: (LEAVE_TYPE_COLORS[t] || "#999999") + "20" }]}>
+                        <ThemedText type="caption" style={{ color: LEAVE_TYPE_COLORS[t] || theme.textSecondary, fontWeight: "700" }}>
+                          {typeLabel(t)}: {d}d
+                        </ThemedText>
+                      </View>
+                    ))}
+                  </View>
+                ) : null}
               </View>
             ))
           ) : (
             filteredRows.length === 0 ? (
-              <View style={styles.center}><ThemedText style={{ color: theme.textSecondary }}>No matching records</ThemedText></View>
-            ) : filteredRows.map(r => {
-              const sc = STATUS_COLORS[r.status as keyof typeof STATUS_COLORS] || STATUS_COLORS.pending;
-              const tc = LEAVE_TYPE_COLORS[r.leave_type] || "#999";
+              <ReportState kind="empty" icon="filter" title="No matching requests" message="Change the type, status or search filters." />
+            ) : filteredRows.map((r) => {
+              const sc = statusColors[r.status] || statusColors.pending;
+              const tc = LEAVE_TYPE_COLORS[r.leave_type] || "#999999";
               return (
-                <View key={r.id} style={[styles.card, { backgroundColor: theme.backgroundDefault }]}>
+                <View key={r.id} style={[styles.card, { backgroundColor: theme.backgroundDefault, borderColor: theme.border }]}>
                   <View style={styles.cardRow}>
-                    <View style={{ flex: 1 }}>
-                      <ThemedText style={{ fontWeight: "700" }}>{r.employee?.name || "—"}</ThemedText>
-                      <ThemedText type="caption" style={{ color: theme.textSecondary }}>{formatDate(r.start_date)} → {formatDate(r.end_date)} · {r.requested_days}d</ThemedText>
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <ThemedText style={{ fontWeight: "700" }} numberOfLines={1}>{r.employee?.name || "—"}</ThemedText>
+                      <ThemedText type="caption" style={{ color: theme.textSecondary }}>
+                        {shortDate(r.start_date)} – {shortDate(r.end_date)} · {r.requested_days}d
+                      </ThemedText>
                     </View>
                     <View style={[styles.statBadge, { backgroundColor: sc.bg }]}>
                       <ThemedText type="caption" style={{ color: sc.text, fontWeight: "700", textTransform: "capitalize" }}>{r.status}</ThemedText>
                     </View>
                   </View>
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 6 }}>
+                  <View style={[styles.cardRow, { marginTop: 6 }]}>
                     <View style={[styles.typeChip, { backgroundColor: tc + "20" }]}>
-                      <ThemedText type="caption" style={{ color: tc, fontWeight: "700", textTransform: "capitalize" }}>{r.leave_type.replace("_", " ")}</ThemedText>
+                      <ThemedText type="caption" style={{ color: tc, fontWeight: "700" }}>{typeLabel(r.leave_type)}</ThemedText>
                     </View>
                     <ThemedText type="caption" style={{ color: theme.textSecondary, flex: 1 }} numberOfLines={1}>{r.reason}</ThemedText>
                   </View>
@@ -241,18 +332,11 @@ export default function LeaveUsageReportScreen() {
 }
 
 const styles = StyleSheet.create({
-  root:      { flex: 1 },
-  header:    { padding: Spacing.md, borderBottomWidth: 1 },
-  dateRow:   { flexDirection: "row", gap: Spacing.sm, alignItems: "center" },
-  dateInput: { flex: 1, borderWidth: 1, borderRadius: BorderRadius.sm, paddingHorizontal: Spacing.sm, paddingVertical: 8, fontSize: 12 },
-  goBtn:     { width: 40, height: 40, borderRadius: BorderRadius.sm, alignItems: "center", justifyContent: "center" },
-  searchBar: { flexDirection: "row", alignItems: "center", borderWidth: 1, borderRadius: BorderRadius.full, paddingHorizontal: Spacing.md, paddingVertical: 6 },
-  chip:      { paddingHorizontal: Spacing.md, paddingVertical: 6, borderRadius: BorderRadius.full, borderWidth: 1 },
-  center:    { alignItems: "center", justifyContent: "center", padding: 40 },
-  card:      { borderRadius: BorderRadius.lg, padding: Spacing.md },
-  cardRow:   { flexDirection: "row", alignItems: "center" },
-  statRow:   { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 8 },
+  root: { flex: 1 },
+  body: { padding: Spacing.md, gap: Spacing.sm },
+  card: { borderRadius: BorderRadius.md, padding: Spacing.md, borderWidth: 1 },
+  cardRow: { flexDirection: "row", alignItems: "center", gap: Spacing.sm },
+  statRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 8 },
   statBadge: { paddingHorizontal: Spacing.sm, paddingVertical: 3, borderRadius: BorderRadius.full },
-  typeChip:  { paddingHorizontal: Spacing.sm, paddingVertical: 3, borderRadius: BorderRadius.sm },
+  typeChip: { paddingHorizontal: Spacing.sm, paddingVertical: 3, borderRadius: BorderRadius.sm },
 });
-

@@ -378,20 +378,13 @@ describe("production hardening contracts", () => {
     expect(connector).toContain('target.protocol === "re-hrms:"');
   });
 
-  it("falls back to the bundled Android HRMS when the hosted root times out", () => {
+  it("always opens the built-in HRMS on Android (no hosted-page retry screen)", () => {
     const app = read("App.tsx");
-    const shell = read("components/AndroidHrmsShell.tsx");
-    expect(app).toContain("useBundledAndroidApp");
-    expect(app).toContain("setUseBundledAndroidApp(true)");
-    expect(app).toContain('"android_shell.hosted_hrms_unreachable"');
-    expect(shell).toContain("onUseBundledApp(reason)");
-    expect(shell).toContain("Open built-in HRMS");
-    expect(shell).toContain('cacheMode="LOAD_NO_CACHE"');
-    expect(shell).toContain("cacheEnabled={false}");
-    expect(shell).toContain("?build=${encodeURIComponent(HOSTED_BUILD_ID)}");
-    expect(shell).toContain("}, 7_000)");
-    const updates = read("components/AutomaticUpdates.tsx");
-    expect(updates).toContain("}, 8_000)");
+    expect(app).not.toContain("<AndroidHrmsShell");
+    expect(app).toContain("return <FullHrmsApp />;");
+    // Native maps cannot crash an APK built without a Maps key.
+    const safeMap = read("components/SafeMapView.tsx");
+    expect(safeMap).toContain("androidMapsConfigured");
   });
 
   it("resolves pgcrypto digest inside the confirmed checkout RPC", () => {
@@ -469,7 +462,11 @@ describe("production hardening contracts", () => {
     expect(service).toContain('supabase.rpc("rpc_admin_dashboard_summary")');
     expect(screen).not.toContain('supabase.from("profiles")');
     expect(service).toContain("if (timer) clearTimeout(timer)");
-    expect(screen).toContain('value={hasLoaded ? stats.totalEmployees : "—"}');
+    // counts the viewer has no permission for come back null and are hidden
+    expect(screen).toContain('value={hasLoaded && stats.totalEmployees != null ? stats.totalEmployees : "—"}');
+    expect(read("supabase/migrations/20261007110000_scoped_admin_surface.sql")).toContain(
+      "public.authorized_user_ids('attendance.view')",
+    );
     expect(migration).toContain("perform public.require_profile_admin()");
     expect(migration).toContain("'business_date', v_today");
     expect(migration).toContain("count(distinct attendance.user_id)");
@@ -500,8 +497,11 @@ describe("production hardening contracts", () => {
   });
 
   it("uses bounded visible pages for unbounded employee and admin histories", () => {
+    // My Activity loads bounded pages with "Load older activity"
+    const activity = read("screens/MyActivityLogsScreen.tsx");
+    expect(activity).toContain("p_limit: PAGE_SIZE");
+    expect(activity).toContain("Load older activity");
     for (const file of [
-      "screens/MyActivityLogsScreen.tsx",
       "screens/NotificationsScreen.tsx",
       "screens/admin/AuditLogsScreen.tsx",
       "screens/admin/NotificationManagementScreen.tsx",
@@ -813,7 +813,10 @@ describe("production hardening contracts", () => {
   it("uses the deployed task ownership column and records task creators", () => {
     const employeeTasks = read("screens/TasksScreen.tsx");
     const adminTasks = read("screens/admin/TaskProjectControlScreen.tsx");
-    expect(employeeTasks).toContain("assigned_by.eq.${user.id}");
+    // The employee list now comes from rpc_my_tasks (assigned to me,
+    // created/assigned by me, or shared along the reporting hierarchy).
+    expect(employeeTasks).toContain("TaskSharingService.getMyTasks");
+    expect(read("services/task-sharing.service.ts")).toContain('"rpc_my_tasks"');
     expect(employeeTasks).not.toContain("created_by.eq.${user.id}");
     expect(employeeTasks).toContain("assigned_by: user?.id || null");
     expect(adminTasks).toContain("assigned_by: user?.id || null");

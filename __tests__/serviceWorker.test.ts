@@ -38,7 +38,7 @@ describe("production service worker", () => {
   it("only caches executable or shell assets and bounds cache growth", () => {
     expect(source).toContain("isStaticAsset || isShellAsset");
     expect(source).toContain("const RELEASE_SCRIPTS = __BOP_PRECACHE_ASSETS__");
-    expect(source).toContain("cache.addAll(CRITICAL_SHELL)");
+    expect(source).toContain("cache.addAll(CRITICAL_SHELL.map(");
     expect(source).toContain("Promise.allSettled");
     expect(source).toContain("RELEASE_SCRIPTS.map");
     expect(source).toContain("MAX_CACHE_ENTRIES");

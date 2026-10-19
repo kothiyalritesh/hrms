@@ -6,12 +6,13 @@ import {
 import Feather from "@expo/vector-icons/Feather";
 import { useFocusEffect } from "@react-navigation/native";
 import { ThemedText } from "@/components/ThemedText";
-import { formatDate, toTitleCase } from "@/utils/format";
+import { toTitleCase } from "@/utils/format";
 import { useTheme } from "@/hooks/useTheme";
 import { Spacing, BorderRadius } from "@/constants/theme";
 import { supabase } from "@/lib/supabase";
 import { BusinessClockService } from "@/services/business-clock.service";
-import { addBusinessDays } from "@/utils/businessDate";
+import { addBusinessDays, formatBusinessDate, getBusinessDateIST } from "@/utils/businessDate";
+import { ReportNotice, ReportState, reportErrorMessage } from "@/components/reports/ReportUI";
 
 interface CheckedInUser {
   id: string;
@@ -45,13 +46,15 @@ function toUTC(iso: string | null): Date | null {
 
 function fmtTime(iso: string | null) {
   if (!iso) return "—";
-  return toUTC(iso)!.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  // Always IST, whatever the viewer's device timezone is.
+  return toUTC(iso)!.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true, timeZone: "Asia/Kolkata" });
 }
 
 function MiniMap({ lat, lon, name }: { lat: number; lon: number; name: string }) {
+  const { theme } = useTheme();
   if (Platform.OS !== "web") {
     return (
-      <View style={styles.noMapBox}>
+      <View style={[styles.noMapBox, { backgroundColor: theme.backgroundSecondary }]}>
         <Feather name="map-pin" size={12} color="#9CA3AF" />
         <ThemedText type="caption" style={{ color: "#9CA3AF", marginLeft: 4, fontSize: 10 }}>
           {lat.toFixed(5)}, {lon.toFixed(5)}
@@ -156,9 +159,9 @@ function BlockedCard({ item }: { item: BlockedUser }) {
       {expanded && (
         <View style={{ marginTop: 6, gap: 4 }}>
           {item.failure_reason ? (
-            <View style={[styles.reasonBox, { backgroundColor: "#FEE2E2" }]}>
-              <Feather name="alert-triangle" size={11} color="#EF4444" />
-              <ThemedText type="caption" style={{ color: "#EF4444", marginLeft: 4, flex: 1, fontSize: 10 }}>
+            <View style={[styles.reasonBox, { backgroundColor: theme.errorBg }]}>
+              <Feather name="alert-triangle" size={11} color={theme.error} />
+              <ThemedText type="caption" style={{ color: theme.errorText, marginLeft: 4, flex: 1, fontSize: 10 }}>
                 {item.failure_reason}
               </ThemedText>
             </View>
@@ -167,7 +170,7 @@ function BlockedCard({ item }: { item: BlockedUser }) {
             <View style={{ marginTop: 2 }}>
               <View style={styles.coordRow}>
                 <Feather name="map-pin" size={11} color={color} />
-                <ThemedText type="caption" style={{ color: "#6B7280", marginLeft: 3, flex: 1, fontSize: 10 }}>
+                <ThemedText type="caption" style={{ color: theme.textSecondary, marginLeft: 3, flex: 1, fontSize: 10 }}>
                   {item.latitude!.toFixed(6)}, {item.longitude!.toFixed(6)}
                 </ThemedText>
                 {Platform.OS === "web" && (
@@ -195,12 +198,16 @@ export default function CheckInLogsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState("");
   const [activeTab, setActiveTab] = useState<"checkedin" | "blocked">("checkedin");
+  const [businessDate, setBusinessDate] = useState<string>(() => getBusinessDateIST());
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const loadLogs = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
 
     try {
       const localDate = await BusinessClockService.getDate(true);
+      setBusinessDate(localDate);
       const dayStart = new Date(`${localDate}T00:00:00+05:30`);
       const dayEnd = new Date(
         `${addBusinessDays(localDate, 1)}T00:00:00+05:30`,
@@ -211,12 +218,13 @@ export default function CheckInLogsScreen() {
       for (const p of profiles ?? []) profileMap[p.id] = { name: toTitleCase(p.name) || "Unknown", role: p.role || "—" };
 
       // TODAY's successful check-ins from attendance_logs
-      const { data: attLogs } = await supabase
+      const { data: attLogs, error: logErr } = await supabase
         .from("attendance_logs")
         .select("id, user_id, checkin_time, checkin_location, distance_from_office, status, checkin_location_name, checkin_source")
         .eq("date", localDate)
         .not("checkin_time", "is", null)
         .order("checkin_time", { ascending: false });
+      if (logErr) throw logErr;
 
       setCheckedIn((attLogs ?? []).map((a: any) => ({
         id: a.id,
@@ -242,6 +250,7 @@ export default function CheckInLogsScreen() {
 
       if (attErr) {
         console.error("[CheckInLogs] checkin_attempts query error:", attErr.message);
+        setLoadError(`Blocked attempts could not be loaded: ${reportErrorMessage(attErr)}`);
       }
       setBlocked((attempts ?? []).map((a: any) => ({
         id: a.id,
@@ -257,6 +266,9 @@ export default function CheckInLogsScreen() {
       })));
     } catch (err) {
       console.error("CheckInLogs error:", err);
+      setCheckedIn([]);
+      setBlocked([]);
+      setLoadError(reportErrorMessage(err));
     }
     setLoading(false);
   }, []);
@@ -277,7 +289,7 @@ export default function CheckInLogsScreen() {
     (u.nearest_office_name ?? "").toLowerCase().includes(search.toLowerCase())
   );
 
-  const today = formatDate(new Date());
+  const today = formatBusinessDate(businessDate);
 
   return (
     <ScrollView
@@ -293,22 +305,28 @@ export default function CheckInLogsScreen() {
         </ThemedText>
       </View>
 
+      {loadError ? (
+        <View style={{ marginBottom: Spacing.md }}>
+          <ReportNotice kind="error" text={loadError} onDismiss={() => setLoadError(null)} />
+        </View>
+      ) : null}
+
       {/* Summary row */}
       <View style={styles.summaryRow}>
-        <View style={[styles.summaryCard, { backgroundColor: "#DCFCE7", flex: 1 }]}>
-          <Feather name="check-circle" size={20} color="#10B981" />
-          <ThemedText type="h3" style={{ color: "#10B981", marginTop: 4 }}>{checkedIn.length}</ThemedText>
-          <ThemedText type="caption" style={{ color: "#065F46", fontWeight: "600" }}>Checked In Today</ThemedText>
+        <View style={[styles.summaryCard, { backgroundColor: theme.successBg, flex: 1 }]}>
+          <Feather name="check-circle" size={20} color={theme.success} />
+          <ThemedText type="h3" style={{ color: theme.success, marginTop: 4 }}>{checkedIn.length}</ThemedText>
+          <ThemedText type="caption" style={[styles.summaryLabel, { color: theme.successText }]}>Checked in</ThemedText>
         </View>
-        <View style={[styles.summaryCard, { backgroundColor: "#FEE2E2", flex: 1 }]}>
-          <Feather name="x-circle" size={20} color="#EF4444" />
-          <ThemedText type="h3" style={{ color: "#EF4444", marginTop: 4 }}>{blocked.filter(b => b.status === "blocked").length}</ThemedText>
-          <ThemedText type="caption" style={{ color: "#991B1B", fontWeight: "600" }}>Geo-fence Blocked</ThemedText>
+        <View style={[styles.summaryCard, { backgroundColor: theme.errorBg, flex: 1 }]}>
+          <Feather name="x-circle" size={20} color={theme.error} />
+          <ThemedText type="h3" style={{ color: theme.error, marginTop: 4 }}>{blocked.filter(b => b.status === "blocked").length}</ThemedText>
+          <ThemedText type="caption" style={[styles.summaryLabel, { color: theme.errorText }]}>Geofence blocked</ThemedText>
         </View>
-        <View style={[styles.summaryCard, { backgroundColor: "#FEF3C7", flex: 1 }]}>
-          <Feather name="alert-circle" size={20} color="#F59E0B" />
-          <ThemedText type="h3" style={{ color: "#F59E0B", marginTop: 4 }}>{blocked.filter(b => b.status === "failed").length}</ThemedText>
-          <ThemedText type="caption" style={{ color: "#92400E", fontWeight: "600" }}>GPS Failed</ThemedText>
+        <View style={[styles.summaryCard, { backgroundColor: theme.warningBg, flex: 1 }]}>
+          <Feather name="alert-circle" size={20} color={theme.warning} />
+          <ThemedText type="h3" style={{ color: theme.warning, marginTop: 4 }}>{blocked.filter(b => b.status === "failed").length}</ThemedText>
+          <ThemedText type="caption" style={[styles.summaryLabel, { color: theme.warningText }]}>GPS failed</ThemedText>
         </View>
       </View>
 
@@ -328,27 +346,35 @@ export default function CheckInLogsScreen() {
       {/* Tab switcher */}
       <View style={styles.tabRow}>
         <Pressable
-          style={[styles.tab, activeTab === "checkedin" && { backgroundColor: "#10B981" }]}
+          accessibilityRole="tab"
+          accessibilityState={{ selected: activeTab === "checkedin" }}
+          style={[styles.tab, activeTab === "checkedin"
+            ? { backgroundColor: theme.success, borderColor: theme.success }
+            : { backgroundColor: theme.backgroundDefault, borderColor: theme.border }]}
           onPress={() => setActiveTab("checkedin")}
         >
-          <Feather name="check-circle" size={14} color={activeTab === "checkedin" ? "#fff" : "#10B981"} />
-          <ThemedText type="caption" style={{ color: activeTab === "checkedin" ? "#fff" : "#10B981", fontWeight: "700", marginLeft: 4 }}>
-            Checked In ({filteredCheckedIn.length})
+          <Feather name="check-circle" size={14} color={activeTab === "checkedin" ? "#fff" : theme.success} />
+          <ThemedText type="caption" numberOfLines={1} style={{ color: activeTab === "checkedin" ? "#fff" : theme.success, fontWeight: "700", marginLeft: 4 }}>
+            Checked in ({filteredCheckedIn.length})
           </ThemedText>
         </Pressable>
         <Pressable
-          style={[styles.tab, activeTab === "blocked" && { backgroundColor: "#EF4444" }]}
+          accessibilityRole="tab"
+          accessibilityState={{ selected: activeTab === "blocked" }}
+          style={[styles.tab, activeTab === "blocked"
+            ? { backgroundColor: theme.error, borderColor: theme.error }
+            : { backgroundColor: theme.backgroundDefault, borderColor: theme.border }]}
           onPress={() => setActiveTab("blocked")}
         >
-          <Feather name="x-circle" size={14} color={activeTab === "blocked" ? "#fff" : "#EF4444"} />
-          <ThemedText type="caption" style={{ color: activeTab === "blocked" ? "#fff" : "#EF4444", fontWeight: "700", marginLeft: 4 }}>
-            Blocked / Failed ({filteredBlocked.length})
+          <Feather name="x-circle" size={14} color={activeTab === "blocked" ? "#fff" : theme.error} />
+          <ThemedText type="caption" numberOfLines={1} style={{ color: activeTab === "blocked" ? "#fff" : theme.error, fontWeight: "700", marginLeft: 4 }}>
+            Blocked / failed ({filteredBlocked.length})
           </ThemedText>
         </Pressable>
       </View>
 
-      {loading ? (
-        <ThemedText type="caption" style={{ color: theme.textSecondary, textAlign: "center", marginTop: 32 }}>Loading...</ThemedText>
+      {loading && !refreshing ? (
+        <ReportState kind="loading" title="Loading today's check-ins…" />
       ) : activeTab === "checkedin" ? (
         filteredCheckedIn.length === 0 ? (
           <View style={[styles.emptyCard, { backgroundColor: theme.backgroundDefault }]}>
@@ -364,13 +390,13 @@ export default function CheckInLogsScreen() {
         )
       ) : (
         filteredBlocked.length === 0 ? (
-          <View style={[styles.emptyCard, { backgroundColor: "#DCFCE7" }]}>
-            <Feather name="shield" size={28} color="#10B981" />
-            <ThemedText type="caption" style={{ color: "#065F46", marginTop: 8, fontWeight: "600" }}>
+          <View style={[styles.emptyCard, { backgroundColor: theme.successBg }]}>
+            <Feather name="shield" size={28} color={theme.success} />
+            <ThemedText type="caption" style={{ color: theme.successText, marginTop: 8, fontWeight: "600" }}>
               {search ? "No matches" : "No blocked attempts today"}
             </ThemedText>
             {!search && (
-              <ThemedText type="caption" style={{ color: "#6B7280", marginTop: 4, textAlign: "center" }}>
+              <ThemedText type="caption" style={{ color: theme.textSecondary, marginTop: 4, textAlign: "center" }}>
                 Blocked attempts are logged when a user tries to check in from outside the geo-fence.
               </ThemedText>
             )}
@@ -395,9 +421,10 @@ const styles = StyleSheet.create({
     flexDirection: "row", gap: Spacing.sm, marginBottom: Spacing.md,
   },
   summaryCard: {
-    alignItems: "center", padding: Spacing.md,
+    alignItems: "center", paddingVertical: Spacing.md, paddingHorizontal: Spacing.xs,
     borderRadius: BorderRadius.md, gap: 2,
   },
+  summaryLabel: { fontWeight: "600", textAlign: "center" },
   searchBar: {
     flexDirection: "row", alignItems: "center", gap: 8,
     padding: Spacing.md, borderRadius: BorderRadius.md,
@@ -408,8 +435,8 @@ const styles = StyleSheet.create({
   },
   tab: {
     flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center",
-    padding: Spacing.md, borderRadius: BorderRadius.md,
-    borderWidth: 1.5, borderColor: "transparent",
+    paddingVertical: Spacing.md, paddingHorizontal: Spacing.sm, borderRadius: BorderRadius.md,
+    borderWidth: 1,
     gap: 4,
   },
   rowCard: {
@@ -428,7 +455,7 @@ const styles = StyleSheet.create({
   },
   noMapBox: {
     flexDirection: "row", alignItems: "center",
-    padding: 6, backgroundColor: "#F3F4F6", borderRadius: BorderRadius.sm,
+    padding: 6, borderRadius: BorderRadius.sm,
   },
   emptyCard: {
     alignItems: "center", padding: Spacing.xl,

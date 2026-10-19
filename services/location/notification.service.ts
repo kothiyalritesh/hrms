@@ -74,6 +74,7 @@ export async function initializeNotificationInfrastructure() {
         enableVibrate: true,
         vibrationPattern: [0, 300, 200, 300],
         showBadge: true,
+        lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
       }),
       Notifications.setNotificationChannelAsync(MANAGER_UPDATES_CHANNEL_ID, {
         name: "Employee Journey Updates",
@@ -81,7 +82,9 @@ export async function initializeNotificationInfrastructure() {
         importance: Notifications.AndroidImportance.HIGH,
         sound: "default",
         enableVibrate: true,
+        vibrationPattern: [0, 300, 200, 300],
         showBadge: true,
+        lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
       }),
       Notifications.setNotificationChannelAsync(EVENT_NOTIFICATION_CHANNEL_ID, {
         name: "HRMS Events",
@@ -102,7 +105,9 @@ export async function initializeNotificationInfrastructure() {
           importance: Notifications.AndroidImportance.HIGH,
           sound: "default",
           enableVibrate: true,
+        vibrationPattern: [0, 300, 200, 300],
           showBadge: true,
+        lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
         },
       ),
       Notifications.setNotificationChannelAsync(FIELD_VISIT_NOTIFICATION_CHANNEL_ID, {
@@ -111,7 +116,9 @@ export async function initializeNotificationInfrastructure() {
         importance: Notifications.AndroidImportance.HIGH,
         sound: "default",
         enableVibrate: true,
+        vibrationPattern: [0, 300, 200, 300],
         showBadge: true,
+        lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
       }),
       Notifications.setNotificationChannelAsync(LEAVE_NOTIFICATION_CHANNEL_ID, {
         name: "Leave and Regularization",
@@ -119,7 +126,9 @@ export async function initializeNotificationInfrastructure() {
         importance: Notifications.AndroidImportance.HIGH,
         sound: "default",
         enableVibrate: true,
+        vibrationPattern: [0, 300, 200, 300],
         showBadge: true,
+        lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
       }),
       Notifications.setNotificationChannelAsync(TASK_NOTIFICATION_CHANNEL_ID, {
         name: "Task Updates",
@@ -127,7 +136,9 @@ export async function initializeNotificationInfrastructure() {
         importance: Notifications.AndroidImportance.HIGH,
         sound: "default",
         enableVibrate: true,
+        vibrationPattern: [0, 300, 200, 300],
         showBadge: true,
+        lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
       }),
       Notifications.setNotificationChannelAsync(ANNOUNCEMENT_NOTIFICATION_CHANNEL_ID, {
         name: "HR Announcements",
@@ -223,6 +234,34 @@ export async function requestNotificationPermission() {
 export async function isNotificationPermissionGranted() {
   if (Platform.OS === "web") return false;
   return (await Notifications.getPermissionsAsync()).granted;
+}
+
+/**
+ * Whether HRMS alerts can reach this phone's notification panel with sound:
+ * app-level permission, and any HRMS channel the user has silenced in Android
+ * settings (channel settings belong to the user once created). The ongoing
+ * tracking notice is silent by design and is not reported.
+ */
+export async function getNotificationStatus(): Promise<{
+  granted: boolean;
+  canAskAgain: boolean;
+  mutedChannels: string[];
+}> {
+  if (Platform.OS === "web") return { granted: false, canAskAgain: false, mutedChannels: [] };
+  const permission = await Notifications.getPermissionsAsync();
+  let mutedChannels: string[] = [];
+  if (Platform.OS === "android" && permission.granted) {
+    const channels = await Notifications.getNotificationChannelsAsync().catch(() => []);
+    mutedChannels = (channels ?? [])
+      .filter((c) => c.id.startsWith("hrms_") && c.id !== TRACKING_CHANNEL_ID)
+      .filter((c) => c.importance < Notifications.AndroidImportance.DEFAULT)
+      .map((c) => c.name || c.id);
+  }
+  return {
+    granted: permission.granted,
+    canAskAgain: permission.canAskAgain !== false,
+    mutedChannels,
+  };
 }
 
 const ATTENDANCE_REMINDER_IDS_KEY = "@hrms_attendance_reminder_ids_v1";
@@ -420,7 +459,11 @@ export async function handleNotificationResponse(
   }
   const fieldVisitId =
     typeof data.fieldVisitId === "string" ? data.fieldVisitId : null;
-  if (!fieldVisitId) return;
+  if (!fieldVisitId) {
+    // Announcements, leave, tasks…: open the screen the notification names.
+    await openNotificationDeepLink(data.deepLink);
+    return;
+  }
   const [{ data: visit }, { data: authData }] = await Promise.all([
     supabase
       .from("field_visits")
@@ -449,8 +492,39 @@ export async function handleNotificationResponse(
     }
     return;
   }
-  const deepLink = typeof data.deepLink === "string" ? data.deepLink : null;
-  if (deepLink) await Linking.openURL(deepLink);
+  await openNotificationDeepLink(data.deepLink);
+}
+
+/**
+ * Server notifications carry web paths such as "/HRMS/notifications"; the app
+ * opens the same screen through its own re-hrms:// links.
+ */
+export function toAppDeepLink(deepLink: unknown): string {
+  const fallback = "re-hrms://notifications";
+  if (typeof deepLink !== "string" || !deepLink.trim()) return fallback;
+  const link = deepLink.trim();
+  if (link.startsWith("re-hrms://")) return link;
+  let path = link;
+  if (/^https?:\/\//i.test(link)) {
+    try {
+      const url = new URL(link);
+      path = url.pathname + url.search;
+    } catch {
+      return fallback;
+    }
+  }
+  if (!path.startsWith("/")) return fallback;
+  path = path.replace(/^\/HRMS(?=\/|$)/i, "").replace(/^\/+/, "");
+  return `re-hrms://${path}`;
+}
+
+async function openNotificationDeepLink(deepLink: unknown) {
+  if (Platform.OS === "web") return;
+  try {
+    await Linking.openURL(toAppDeepLink(deepLink));
+  } catch {
+    await Linking.openURL("re-hrms://notifications").catch(() => {});
+  }
 }
 
 async function getDeviceRegistrationId() {
@@ -469,18 +543,24 @@ export async function registerDevicePushToken(_userId: string) {
     Constants.easConfig?.projectId ??
     null;
   if (!projectId) return null;
-  const token = (
-    await Notifications.getExpoPushTokenAsync({ projectId: String(projectId) })
-  ).data;
-  const deviceId = await getDeviceRegistrationId();
-  const { error } = await supabase.rpc("rpc_register_device_push_token", {
-    p_token: token,
-    p_platform: Platform.OS,
-    p_device_id: deviceId,
-    p_app_version: Constants.expoConfig?.version ?? null,
-  });
-  if (error) return null;
-  return token;
+  try {
+    const token = (
+      await Notifications.getExpoPushTokenAsync({ projectId: String(projectId) })
+    ).data;
+    const deviceId = await getDeviceRegistrationId();
+    const { error } = await supabase.rpc("rpc_register_device_push_token", {
+      p_token: token,
+      p_platform: Platform.OS,
+      p_device_id: deviceId,
+      p_app_version: Constants.expoConfig?.version ?? null,
+    });
+    if (error) throw error;
+    return token;
+  } catch (error) {
+    // Without a token the phone receives no pushes at all; make it visible.
+    console.warn("[Push] Device registration failed", error);
+    throw error;
+  }
 }
 
 export async function deactivateCurrentDevicePushToken() {

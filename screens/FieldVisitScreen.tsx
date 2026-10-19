@@ -15,7 +15,7 @@ import { useTheme } from "@/hooks/useTheme";
 import MeetingDetailModal, { MeetingDetails } from "@/components/MeetingDetailModal";
 import VisitDetailModal from "@/components/VisitDetailModal";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { getCurrentGPS } from "@/utils/gps";
+import { getCurrentGPS, gpsFailureMessage } from "@/utils/gps";
 import { OfficeService } from "@/services/office.service";
 import CurrentLocationFallbackModal from "@/components/CurrentLocationFallbackModal";
 import { GPSCoords } from "@/utils/gps";
@@ -23,6 +23,7 @@ import {
   CurrentLocationVisitService,
   validateFreshLocation,
 } from "@/services/current-location-visit.service";
+import VisitCheckoutModal from "@/components/VisitCheckoutModal";
 import { locationTrackingCoordinator } from "@/services/location/LocationTrackingCoordinator";
 import ActiveJourneyCard from "@/components/ActiveJourneyCard";
 import { Destination } from "@/services/location/types";
@@ -42,6 +43,25 @@ const STATUS_CONFIG: Record<string, { color: string; bg: string; label: string; 
   MISSED:     { color: "#EF4444", bg: "#FEE2E2", label: "Missed",      icon: "x-circle" as const },
   IN_TRANSIT: { color: "#8B5CF6", bg: "#EDE9FE", label: "In Transit",  icon: "navigation" as const },
 };
+
+// Lighter tones of the status colours so pills and accents stay readable on
+// dark surfaces. Light mode keeps the original colours.
+const DARK_TONE: Record<string, string> = {
+  "#F59E0B": "#FBBF24",
+  "#D97706": "#FBBF24",
+  "#3B82F6": "#7DB3FF",
+  "#10B981": "#34D399",
+  "#059669": "#34D399",
+  "#EF4444": "#F87171",
+  "#DC2626": "#F87171",
+  "#8B5CF6": "#B9A2FF",
+};
+
+function pillColors(color: string, bg: string, isDark: boolean) {
+  if (!isDark) return { color, bg };
+  const tone = DARK_TONE[color] ?? color;
+  return { color: tone, bg: tone + "26" };
+}
 
 // Use window.alert/confirm on web — Edge always allows these from user gesture
 function webAlert(msg: string) {
@@ -66,6 +86,16 @@ function haversineMetres(
 }
 
 /** Find the nearest office to the given GPS coordinates. Returns office ID or null. */
+function checkoutErrorMessage(error: any): string {
+  const message = String(error?.message || error || "");
+  if (message.includes("GPS_ACCURACY_NOT_ACCEPTABLE")) return "Your location is not accurate enough (more than 100 m). Step outside or wait a moment and try again.";
+  if (message.includes("STALE_LOCATION_EVIDENCE")) return "Your location reading is too old. Try again.";
+  if (message.includes("MOCK_LOCATION_DETECTED")) return "A fake-location app was detected. Turn it off to check out.";
+  if (message.includes("FIELD_VISIT_CHECKOUT_NOT_ALLOWED")) return "This visit is not checked in, so it cannot be checked out.";
+  if (/failed to send|network|fetch|timeout/i.test(message)) return "No internet connection. Check your connection and try again.";
+  return message || "Check-out failed. Please try again.";
+}
+
 async function findNearestOffice(lat: number, lon: number): Promise<string | null> {
   try {
     const offices = await OfficeService.getAllOffices();
@@ -95,13 +125,43 @@ export default function FieldVisitScreen() {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
   const { user } = useAuth();
-  const { theme } = useTheme();
+  const { theme, isDark } = useTheme();
+  // Colours that differ between light and dark mode. Light values are the
+  // original hardcoded ones so light mode looks unchanged.
+  const c = {
+    accent: isDark ? "#E2A6E2" : "#6D1B6D",
+    spinner: isDark ? "#E2A6E2" : "#60045d",
+    muted: isDark ? theme.textSecondary : "#6B7280",
+    warnBg: isDark ? theme.warningBg : "#FFFBEB",
+    warnBorder: isDark ? "#5C3A12" : "#FDE68A",
+    warnText: isDark ? theme.warningText : "#92400E",
+    warnStrong: isDark ? theme.warningText : "#78350F",
+    pendingBorder: isDark ? "#8A5A12" : "#F59E0B",
+    errorText: isDark ? theme.errorText : "#991B1B",
+    errorIcon: isDark ? theme.error : "#DC2626",
+    pendingError: isDark ? theme.errorText : "#B91C1C",
+    addNextBg: isDark ? theme.backgroundSecondary : "#F5EEF5",
+    addNextBorder: isDark ? "#A838A8" : "#6D1B6D",
+    doneBg: isDark ? theme.successBg : "#E4F4EE",
+    doneBorder: isDark ? theme.success : "#12966E",
+    doneText: isDark ? theme.successText : "#0A7354",
+    notesBg: isDark ? theme.infoBg : "#E3EEFB",
+    notesBorder: isDark ? theme.info : "#1A5FD4",
+    notesLabel: isDark ? theme.infoText : "#123E9C",
+    notesText: isDark ? theme.infoText : "#1A3070",
+    gps: isDark ? "#34D399" : "#10B981",
+    arrivedIcon: isDark ? "#34D399" : "#10B981",
+    leftIcon: isDark ? "#F87171" : "#EF4444",
+  };
   const insets = useSafeAreaInsets();
   const [visits, setVisits] = useState<FieldVisit[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [attendanceError, setAttendanceError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [checkoutVisit, setCheckoutVisit] = useState<FieldVisit | null>(null);
+  const [checkoutStep, setCheckoutStep] = useState<string | null>(null);
   const [isCheckedOut, setIsCheckedOut] = useState(false);
   const [showNextModal, setShowNextModal] = useState(false);
   const [initialVisitType, setInitialVisitType] = useState<
@@ -121,17 +181,29 @@ export default function FieldVisitScreen() {
     try {
       const { data, error } = await FieldVisitService.getTodayVisits(user.id);
       if (error) throw error;
-      const { data: att } = await AttendanceService.getToday(user.id);
       setVisits(data);
+      setLoadError(null);
       if (route.params?.fieldVisitId) {
         const linkedVisit = data.find(
           (visit) => visit.id === route.params.fieldVisitId,
         );
         if (linkedVisit) setDetailVisit(linkedVisit);
       }
-      setIsCheckedOut(!!att?.checkout_time);
-      setPendingUploads(await CurrentLocationVisitService.getQueue());
-      setLoadError(null);
+      let attendanceFailure: string | null = null;
+      try {
+        const { data: att } = await AttendanceService.getToday(user.id);
+        setIsCheckedOut(!!att?.checkout_time);
+      } catch (attErr: any) {
+        attendanceFailure = "Today's attendance status could not be loaded. Pull down to refresh.";
+        void reportNonFatalError("field_visit.load_attendance", attErr);
+      }
+      try {
+        setPendingUploads(await CurrentLocationVisitService.getQueue());
+      } catch (queueErr: any) {
+        attendanceFailure = attendanceFailure || "Pending uploads could not be loaded. Pull down to refresh.";
+        void reportNonFatalError("field_visit.load_queue", queueErr);
+      }
+      setAttendanceError(attendanceFailure);
     } catch (error: any) {
       const message =
         error?.message ||
@@ -171,7 +243,7 @@ export default function FieldVisitScreen() {
     try {
       const gps = await getGPS();
       if (!gps) {
-        webAlert("Could not get your location. Please enable GPS and try again.");
+        webAlert(gpsFailureMessage());
         setActionLoading(null);
         return;
       }
@@ -299,7 +371,8 @@ export default function FieldVisitScreen() {
           Math.cos((gps.latitude * Math.PI) / 180) *
           Math.sin(dLon / 2) ** 2;
         const dist = Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
-        if (!quality.valid || dist + Math.max(0, gps.accuracy ?? 0) > maxRadius) {
+        // Same rule as the server: up to 50 m of reported GPS error is allowed.
+        if (!quality.valid || dist - Math.min(Math.max(0, gps.accuracy ?? 100), 50) > maxRadius) {
           setLocationVerification({ visit: {
             ...visit,
             predefined_site_id: selectedSiteId ?? undefined,
@@ -326,83 +399,67 @@ export default function FieldVisitScreen() {
         `Checked In\n\nAt ${visit.location_name} · ${fmt(confirmedVisit?.checkin_time)}\nGPS: ${gps.latitude.toFixed(5)}, ${gps.longitude.toFixed(5)}`,
       );
     } catch (e: any) {
-      webAlert(`Error\n\n${e.message || "Failed to check in."}`);
+      webAlert(`Error\n\n${String(e?.message || "").includes("ANOTHER_VISIT_IN_PROGRESS") ? "You are still checked in at another visit. Check out of it first." : e.message || "Failed to check in."}`);
     } finally {
       setActionLoading(null);
     }
   };
 
-  // ── Simple Check Out — confirm dialog, then checkout ──
-  const handleCheckOut = async (visit: FieldVisit) => {
-    if (Platform.OS === "web") {
-      const ok = window.confirm("You are checking out of \"" + visit.location_name + "\"");
-      if (!ok) return;
-      // Web: confirmed, proceed to checkout
-      setActionLoading(visit.id);
-      try {
-        const gps = await getGPS();
-        if (!gps) {
-          throw new Error("GPS is required to check out. Enable location and try again.");
-        }
-        const quality = validateFreshLocation(gps);
-        if (!quality.valid) throw new Error(quality.reason);
-        const nearestOfficeId = await findNearestOffice(gps.latitude, gps.longitude);
-        const { error } = await FieldVisitService.checkOut(visit.id, gps, undefined, nearestOfficeId || undefined);
-        if (error) throw error;
-        await loadVisits().catch(() => {
-          console.warn("Field-visit checkout succeeded; refresh was deferred");
-        });
-      } catch (e: any) {
-        console.error("[FieldVisit] Checkout error:", e);
-        window.alert("Checkout Failed\n\n" + (e.message || "Unknown error. Please try again."));
-      } finally {
-        setActionLoading(null);
+  // ── Check Out — optional notes; GPS is recorded and checked by the server ──
+  const handleCheckOut = (visit: FieldVisit) => {
+    setCheckoutVisit(visit);
+    setCheckoutStep(null);
+  };
+
+  const completeCheckout = async (notes: string): Promise<string | null> => {
+    const visit = checkoutVisit;
+    if (!visit) return "No visit selected.";
+    try {
+      setCheckoutStep("Getting your location…");
+      const gps = await getGPS();
+      if (!gps) return `GPS is required to check out. ${gpsFailureMessage()}`;
+      const quality = validateFreshLocation(gps);
+      if (!quality.valid) return quality.reason || "Your location is not accurate enough. Try again in the open.";
+      setCheckoutStep("Completing visit…");
+      const nearestOfficeId = await findNearestOffice(gps.latitude, gps.longitude);
+      const { error } = await FieldVisitService.checkOut(visit.id, gps, notes || undefined, nearestOfficeId || undefined);
+      if (error) return checkoutErrorMessage(error);
+      setCheckoutVisit(null);
+      await loadVisits().catch(() => {
+        console.warn("Field-visit checkout succeeded; refresh was deferred");
+      });
+      return null;
+    } catch (e: any) {
+      return checkoutErrorMessage(e);
+    } finally {
+      setCheckoutStep(null);
+    }
+  };
+
+  const markMissed = async (visit: FieldVisit) => {
+    setActionLoading(visit.id);
+    try {
+      const { error } = await FieldVisitService.markMissed(visit.id);
+      if (error) {
+        webAlert(`Could not mark as missed\n\n${error?.message || "Please try again."}`);
+        return;
       }
-    } else {
-      // Mobile: use Alert.alert with OK/Cancel
-      Alert.alert(
-        "Check Out",
-        "You are checking out of \"" + visit.location_name + "\"",
-        [
-          { text: "Cancel", style: "cancel" },
-          {
-            text: "OK",
-            onPress: async () => {
-              setActionLoading(visit.id);
-              try {
-                const gps = await getGPS();
-                if (!gps) {
-                  throw new Error("GPS is required to check out. Enable location and try again.");
-                }
-                const quality = validateFreshLocation(gps);
-                if (!quality.valid) throw new Error(quality.reason);
-                const nearestOfficeId = await findNearestOffice(gps.latitude, gps.longitude);
-                const { error } = await FieldVisitService.checkOut(visit.id, gps, undefined, nearestOfficeId || undefined);
-                if (error) throw error;
-                await loadVisits().catch(() => {
-                  console.warn("Field-visit checkout succeeded; refresh was deferred");
-                });
-              } catch (e: any) {
-                console.error("[FieldVisit] Checkout error:", e);
-                Alert.alert("Checkout Failed", e.message || "Unknown error. Please try again.");
-              } finally {
-                setActionLoading(null);
-              }
-            }
-          },
-        ]
-      );
+      await loadVisits();
+    } catch (e: any) {
+      webAlert(`Could not mark as missed\n\n${e?.message || "Please try again."}`);
+    } finally {
+      setActionLoading(null);
     }
   };
 
   const handleMarkMissed = (visit: FieldVisit) => {
     const ok = Platform.OS === "web" ? window.confirm(`Mark visit to ${visit.location_name} as missed?`) : false;
     if (Platform.OS === "web") {
-      if (ok) FieldVisitService.markMissed(visit.id).then(() => loadVisits());
+      if (ok) void markMissed(visit);
     } else {
       Alert.alert("Mark as Missed?", `Mark visit to ${visit.location_name} as missed?`, [
         { text: "Cancel", style: "cancel" },
-        { text: "Mark Missed", style: "destructive", onPress: async () => { await FieldVisitService.markMissed(visit.id); await loadVisits(); } },
+        { text: "Mark Missed", style: "destructive", onPress: () => { void markMissed(visit); } },
       ]);
     }
   };
@@ -414,12 +471,21 @@ export default function FieldVisitScreen() {
   const completed = visits.filter((v) => v.status === "COMPLETED");
   const missed = visits.filter((v) => v.status === "MISSED");
   const hasActiveVisit = active.length > 0;
-  const journeyVisit = visits.find(
-    (visit) =>
-      (visit.status === "PENDING" || visit.status === "IN_TRANSIT") &&
-      Number.isFinite(visit.destination_coords?.latitude) &&
-      Number.isFinite(visit.destination_coords?.longitude),
-  );
+  const hasDestinationCoords = (visit: FieldVisit) =>
+    Number.isFinite(visit.destination_coords?.latitude) &&
+    Number.isFinite(visit.destination_coords?.longitude);
+  // A visit being travelled to wins; otherwise the visit the user is checked
+  // in at (the tracking coordinator treats both as the active destination).
+  const journeyVisit =
+    visits.find(
+      (visit) =>
+        (visit.status === "PENDING" || visit.status === "IN_TRANSIT") &&
+        hasDestinationCoords(visit),
+    ) ??
+    visits.find(
+      (visit) => visit.status === "CHECKED_IN" && hasDestinationCoords(visit),
+    );
+  const journeyOnSite = journeyVisit?.status === "CHECKED_IN";
   const journeyDestination: Destination | null =
     journeyVisit?.destination_coords
       ? {
@@ -436,7 +502,7 @@ export default function FieldVisitScreen() {
         }
       : null;
 
-  if (loading) return <ThemedView style={s.container}><ActivityIndicator color="#60045d" style={{ marginTop: 60 }} /></ThemedView>;
+  if (loading) return <ThemedView style={s.container}><ActivityIndicator color={c.spinner} style={{ marginTop: 60 }} /></ThemedView>;
 
   return (
     <ThemedView style={s.container}>
@@ -465,6 +531,7 @@ export default function FieldVisitScreen() {
                   : undefined,
                 checkinRadiusM: 500,
                 notes: details.notes,
+                idempotencyKey: details.idempotencyKey,
               });
               if (fvErr) throw fvErr;
               await loadVisits();
@@ -503,6 +570,7 @@ export default function FieldVisitScreen() {
               notes,
               googlePlaceId: (details as any).googlePlaceId,
               locationSource: (details as any).locationSource,
+              idempotencyKey: details.idempotencyKey,
             });
             if (createErr) throw createErr;
 
@@ -515,6 +583,13 @@ export default function FieldVisitScreen() {
           setInitialVisitType(undefined);
         }} />
       <VisitDetailModal visit={detailVisit} onClose={() => setDetailVisit(null)} />
+      <VisitCheckoutModal
+        visible={!!checkoutVisit}
+        placeName={checkoutVisit ? (checkoutVisit as any).project_name || checkoutVisit.location_name || "Site visit" : ""}
+        stepLabel={checkoutStep}
+        onSubmit={completeCheckout}
+        onClose={() => setCheckoutVisit(null)}
+      />
       <CurrentLocationFallbackModal
         visit={locationVerification?.visit || null}
         initialLocation={locationVerification?.location || null}
@@ -536,7 +611,7 @@ export default function FieldVisitScreen() {
       />
 
       <ScrollView style={s.scroll} contentContainerStyle={{ paddingTop: insets.top + 16, paddingBottom: insets.bottom + 80 }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#60045d" />} showsVerticalScrollIndicator={false}>
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={c.spinner} colors={[c.spinner]} progressBackgroundColor={theme.backgroundDefault} />} showsVerticalScrollIndicator={false}>
 
         <View style={[s.summaryRow, { backgroundColor: "#6D1B6D" }]}>
           {[{ label: "En Route", count: pending.length, color: "#F59E0B" }, { label: "Active", count: active.length, color: "#3B82F6" },
@@ -551,21 +626,31 @@ export default function FieldVisitScreen() {
         <Spacer height={16} />
 
         {Platform.OS === "web" && !nativeBridge.isAvailable() ? (
-          <View style={s.webTrackingNotice}>
-            <Feather name="info" size={16} color="#92400E" />
-            <ThemedText style={s.webTrackingNoticeText}>
+          <View style={[s.webTrackingNotice, { backgroundColor: c.warnBg, borderColor: c.warnBorder }]}>
+            <Feather name="info" size={16} color={c.warnText} />
+            <ThemedText style={[s.webTrackingNoticeText, { color: c.warnText }]}>
               Web/PWA tracking works only while this page is active. Reliable
               locked-screen and background arrival tracking requires the Android app.
             </ThemedText>
           </View>
         ) : null}
 
-        <ActiveJourneyCard fallbackDestination={journeyDestination} />
+        <ActiveJourneyCard
+          fallbackDestination={journeyDestination}
+          onSite={journeyOnSite}
+        />
+
+        {attendanceError && !loadError ? (
+          <View style={[s.webTrackingNotice, { backgroundColor: c.warnBg, borderColor: c.warnBorder }]}>
+            <Feather name="alert-circle" size={16} color={c.warnText} />
+            <ThemedText style={[s.webTrackingNoticeText, { color: c.warnText }]}>{attendanceError}</ThemedText>
+          </View>
+        ) : null}
 
         {pendingUploads.length > 0 && (
-          <View style={s.pendingUploads}>
+          <View style={[s.pendingUploads, { backgroundColor: c.warnBg, borderColor: c.pendingBorder }]}>
             <View style={s.pendingHeader}>
-              <ThemedText style={s.pendingTitle}>
+              <ThemedText style={[s.pendingTitle, { color: c.warnText }]}>
                 Pending uploads ({pendingUploads.length})
               </ThemedText>
               <TouchableOpacity
@@ -576,25 +661,25 @@ export default function FieldVisitScreen() {
                   );
                 }}
               >
-                <ThemedText style={s.pendingRetry}>Retry now</ThemedText>
+                <ThemedText style={[s.pendingRetry, { color: c.accent }]}>Retry now</ThemedText>
               </TouchableOpacity>
             </View>
             {pendingUploads.map((item) => (
-              <View key={item.idempotencyKey} style={s.pendingItem}>
-                <ThemedText style={s.pendingName}>
+              <View key={item.idempotencyKey} style={[s.pendingItem, { borderTopColor: c.warnBorder }]}>
+                <ThemedText style={[s.pendingName, { color: c.warnStrong }]}>
                   {item.locationName || "Current location evidence"}
                 </ThemedText>
-                <ThemedText style={s.pendingMeta}>
+                <ThemedText style={[s.pendingMeta, { color: c.warnText }]}>
                   Attempts: {item.retryCount ?? 0}
                   {item.photo ? "" : " · No photo (optional)"}
                 </ThemedText>
                 {item.lastError ? (
-                  <ThemedText style={s.pendingError}>
+                  <ThemedText style={[s.pendingError, { color: c.pendingError }]}>
                     {item.lastError}
                   </ThemedText>
                 ) : null}
                 {item.nextRetryAt ? (
-                  <ThemedText style={s.pendingMeta}>
+                  <ThemedText style={[s.pendingMeta, { color: c.warnText }]}>
                     Next retry: {fmt(item.nextRetryAt)}
                   </ThemedText>
                 ) : null}
@@ -605,11 +690,11 @@ export default function FieldVisitScreen() {
 
         {loadError ? (
           <View style={s.emptyState}>
-            <Feather name="alert-circle" size={34} color="#DC2626" />
-            <ThemedText style={[s.emptyTitle, { color: "#991B1B" }]}>
+            <Feather name="alert-circle" size={34} color={c.errorIcon} />
+            <ThemedText style={[s.emptyTitle, { color: c.errorText }]}>
               Field visits unavailable
             </ThemedText>
-            <ThemedText style={s.emptySub}>{loadError}</ThemedText>
+            <ThemedText style={[s.emptySub, { color: c.muted }]}>{loadError}</ThemedText>
             <Spacer height={16} />
             <TouchableOpacity
               style={s.addFirstBtn}
@@ -626,7 +711,7 @@ export default function FieldVisitScreen() {
           <View style={s.emptyState}>
             <ThemedText style={s.emptyEmoji}>📍</ThemedText>
             <ThemedText style={s.emptyTitle}>No field visits today</ThemedText>
-            <ThemedText style={s.emptySub}>Tap below to log where you're going.</ThemedText>
+            <ThemedText style={[s.emptySub, { color: c.muted }]}>Tap below to log where you're going.</ThemedText>
             <Spacer height={20} />
             {!isCheckedOut && (
               <TouchableOpacity style={s.addFirstBtn} onPress={() => setShowNextModal(true)}>
@@ -638,23 +723,24 @@ export default function FieldVisitScreen() {
         ) : (
           <>
             {!hasActiveVisit && !isCheckedOut && (
-              <TouchableOpacity style={s.addNextBtn} onPress={() => setShowNextModal(true)}>
-                <Feather name="plus" size={15} color="#60045d" />
-                <ThemedText style={s.addNextBtnText}>Add Next Stop</ThemedText>
+              <TouchableOpacity style={[s.addNextBtn, { backgroundColor: c.addNextBg, borderColor: c.addNextBorder }]} onPress={() => setShowNextModal(true)}>
+                <Feather name="plus" size={15} color={c.accent} />
+                <ThemedText style={[s.addNextBtnText, { color: c.accent }]}>Add Next Stop</ThemedText>
               </TouchableOpacity>
             )}
             {isCheckedOut && (
-              <View style={s.dayDoneBanner}>
-                <ThemedText style={s.dayDoneText}>🏠 You've gone home. No more stops can be added for today.</ThemedText>
+              <View style={[s.dayDoneBanner, { backgroundColor: c.doneBg, borderColor: c.doneBorder }]}>
+                <ThemedText style={[s.dayDoneText, { color: c.doneText }]}>🏠 You've gone home. No more stops can be added for today.</ThemedText>
               </View>
             )}
 
             {visits.map((visit) => {
               const isMarkedLocation = !!visit.location_match_status && visit.location_match_status !== "MATCHED";
               const reviewLabel = visit.verification_status === "APPROVED" ? "Verified field visit" : visit.verification_status === "REJECTED" ? "Rejected" : visit.verification_status === "NEEDS_INFORMATION" ? "Needs information" : visit.verification_status === "FLAGGED" ? "Flagged" : visit.status === "CHECKED_IN" ? "Active · Pending verification" : "Pending verification";
-              const cfg = isMarkedLocation
+              const rawCfg = isMarkedLocation
                 ? { color: visit.verification_status === "APPROVED" ? "#059669" : visit.verification_status === "REJECTED" ? "#DC2626" : "#D97706", bg: visit.verification_status === "APPROVED" ? "#D1FAE5" : visit.verification_status === "REJECTED" ? "#FEE2E2" : "#FEF3C7", label: reviewLabel, icon: "shield" as const }
-                : STATUS_CONFIG[visit.status];
+                : STATUS_CONFIG[visit.status] ?? { color: "#6B7280", bg: "#F3F4F6", label: visit.status, icon: "circle" as const };
+              const cfg = { ...rawCfg, ...pillColors(rawCfg.color, rawCfg.bg, isDark) };
               const isActioning = actionLoading === visit.id;
               const typeLabel = visit.visit_type === "site" ? "🏗️ Site" : visit.visit_type === "others" ? "📌 Other" : "🤝 Meeting";
               const meetingLabel = visit.meeting_type === "client" ? "👤 Client" : visit.meeting_type === "channel_partner" ? "🏘️ Channel Partner" : "";
@@ -667,7 +753,7 @@ export default function FieldVisitScreen() {
                 : visit.location_address;
 
               return (
-                <TouchableOpacity key={visit.id} style={[s.card, { backgroundColor: theme.backgroundDefault }]} onPress={() => setDetailVisit(visit)} activeOpacity={0.85}>
+                <TouchableOpacity key={visit.id} style={[s.card, { backgroundColor: theme.backgroundDefault }, isDark && { borderWidth: 1, borderColor: theme.border }]} onPress={() => setDetailVisit(visit)} activeOpacity={0.85}>
                   <View style={s.cardTitleRow}>
                     <ThemedText style={s.cardTitle} numberOfLines={1}>{displayLocationName}</ThemedText>
                     <View style={[s.statusBadge, { backgroundColor: cfg.bg }]}>
@@ -677,20 +763,20 @@ export default function FieldVisitScreen() {
                   </View>
 
                   <View style={s.cardMeta}>
-                    <ThemedText style={s.metaText}>{typeLabel}</ThemedText>
-                    {meetingLabel ? <ThemedText style={s.metaText}> · {meetingLabel}</ThemedText> : null}
-                    {hasCheckinGps && <ThemedText style={[s.metaText, { color: "#10B981" }]}> · 📍 GPS Logged</ThemedText>}
+                    <ThemedText style={[s.metaText, { color: c.muted }]}>{typeLabel}</ThemedText>
+                    {meetingLabel ? <ThemedText style={[s.metaText, { color: c.muted }]}> · {meetingLabel}</ThemedText> : null}
+                    {hasCheckinGps && <ThemedText style={[s.metaText, { color: c.gps }]}> · 📍 GPS Logged</ThemedText>}
                   </View>
 
-                  {locationAddress ? <ThemedText style={s.addressText} numberOfLines={2}>📌 {locationAddress}</ThemedText> : null}
+                  {locationAddress ? <ThemedText style={[s.addressText, { color: c.muted }]} numberOfLines={2}>📌 {locationAddress}</ThemedText> : null}
 
                   {visit.contact_name ? <ThemedText style={s.contactText}>👤 {visit.contact_name}{visit.contact_phone ? ` · ${visit.contact_phone}` : ""}</ThemedText> : null}
-                  {visit.project_name ? <ThemedText style={s.projectText}>🏗️ {visit.project_name}</ThemedText> : null}
+                  {visit.project_name ? <ThemedText style={[s.projectText, { color: c.accent }]}>🏗️ {visit.project_name}</ThemedText> : null}
 
                   {(visit.checkin_time || visit.checkout_time) ? (
                     <View style={s.timesRow}>
-                      {visit.checkin_time ? <View style={s.timeItem}><Feather name="log-in" size={11} color="#10B981" /><ThemedText style={s.timeText}>Arrived: {fmt(visit.checkin_time)}</ThemedText></View> : null}
-                      {visit.checkout_time ? <View style={s.timeItem}><Feather name="log-out" size={11} color="#EF4444" /><ThemedText style={s.timeText}>Left: {fmt(visit.checkout_time)}</ThemedText></View> : null}
+                      {visit.checkin_time ? <View style={s.timeItem}><Feather name="log-in" size={11} color={c.arrivedIcon} /><ThemedText style={s.timeText}>Arrived: {fmt(visit.checkin_time)}</ThemedText></View> : null}
+                      {visit.checkout_time ? <View style={s.timeItem}><Feather name="log-out" size={11} color={c.leftIcon} /><ThemedText style={s.timeText}>Left: {fmt(visit.checkout_time)}</ThemedText></View> : null}
                     </View>
                   ) : null}
 
@@ -736,19 +822,19 @@ export default function FieldVisitScreen() {
                   })()}
 
                   {(visit as any).checkout_notes ? (
-                    <View style={s.notesBox}>
-                      <ThemedText style={s.notesLabel}>📝 Meeting Notes</ThemedText>
-                      <ThemedText style={s.notesText}>{(visit as any).checkout_notes}</ThemedText>
+                    <View style={[s.notesBox, { backgroundColor: c.notesBg, borderLeftColor: c.notesBorder }]}>
+                      <ThemedText style={[s.notesLabel, { color: c.notesLabel }]}>📝 Meeting Notes</ThemedText>
+                      <ThemedText style={[s.notesText, { color: c.notesText }]}>{(visit as any).checkout_notes}</ThemedText>
                     </View>
                   ) : null}
 
-                  {visit.status === "PENDING" && !isMarkedLocation && (
+                  {(visit.status === "PENDING" || visit.status === "IN_TRANSIT") && !isMarkedLocation && (
                     <View style={s.actions}>
                       <TouchableOpacity style={[s.actionBtn, s.actionBtnPrimary]} onPress={(e) => { e.stopPropagation?.(); handleCheckIn(visit); }} disabled={isActioning}>
                         {isActioning ? <ActivityIndicator color="#fff" size="small" /> : <><Feather name="map-pin" size={14} color="#fff" /><ThemedText style={s.actionBtnText}>I've Arrived — Check In</ThemedText></>}
                       </TouchableOpacity>
                       <TouchableOpacity style={[s.actionBtn, s.actionBtnGhost]} onPress={(e) => { e.stopPropagation?.(); handleMarkMissed(visit); }} disabled={isActioning}>
-                        <ThemedText style={s.actionBtnGhostText}>Mark Missed</ThemedText>
+                        <ThemedText style={[s.actionBtnGhostText, { color: c.muted }]}>Mark Missed</ThemedText>
                       </TouchableOpacity>
                     </View>
                   )}

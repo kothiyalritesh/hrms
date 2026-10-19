@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   StyleSheet,
   View,
@@ -23,7 +23,9 @@ import { formatDate, toTitleCase } from "@/utils/format";
 import { useAuth } from "@/contexts/AuthContext";
 import { Spacing, BorderRadius, Colors } from "@/constants/theme";
 import Spacer from "@/components/Spacer";
+import { MyComplianceCard } from "@/components/MyComplianceCard";
 import { supabase } from "@/lib/supabase";
+import { addBusinessDays, getBusinessDateIST } from "@/utils/businessDate";
 import * as ImagePicker from "expo-image-picker";
 import releaseConfig from "@/release.config.json";
 import DeviceSessionsModal from "@/components/DeviceSessionsModal";
@@ -96,26 +98,44 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
   const [avatarMime, setAvatarMime] = useState<string>("image/jpeg");
   const [avatarUploading, setAvatarUploading] = useState(false);
   const [displayAvatar, setDisplayAvatar] = useState<string | null>(null);
-  const [offices, setOffices] = useState<any[]>([]);
-  const [currentOfficeId, setCurrentOfficeId] = useState<string | null>(null);
-  const [showOfficePicker, setShowOfficePicker] = useState(false);
+  const [officeName, setOfficeName] = useState<string | null>(null);
   const [showDeviceSessions, setShowDeviceSessions] = useState(false);
   const [team, setTeam] = useState<string | null>(null);
   const [dateOfJoining, setDateOfJoining] = useState<string | null>(null);
   const [historyTimeline, setHistoryTimeline] = useState<any[]>([]);
+  const [timelineError, setTimelineError] = useState<string | null>(null);
+  const [profileError, setProfileError] = useState<string | null>(null);
+  const [homeAddress, setHomeAddress] = useState<string | null>(null);
+  const [editAddress, setEditAddress] = useState("");
+
+  const loadTimeline = useCallback(async () => {
+    if (!user?.id) return;
+    // Own last days through the permission-checked RPC (the view itself is
+    // not readable by employees).
+    const end = getBusinessDateIST();
+    const start = addBusinessDays(end, -9);
+    const { data, error } = await supabase
+      .rpc('rpc_attendance_canonical_range', {
+        p_start_date: start,
+        p_end_date: end,
+        p_office_id: null,
+        p_team_id: null,
+        p_user_id: user.id,
+      })
+      .select('work_date, effective_status, effective_checkin, active_name, active_site_name')
+      .order('work_date', { ascending: false })
+      .limit(5);
+    if (error) {
+      setTimelineError("Recent history could not be loaded.");
+      return;
+    }
+    setTimelineError(null);
+    setHistoryTimeline((data || []) as any[]);
+  }, [user?.id]);
 
   useEffect(() => {
-    if (!user?.id) return;
-    const loadTimeline = async () => {
-      const { data } = await supabase.from('v_attendance_daily_canonical')
-        .select('work_date, effective_status, active_name, active_site_name, latest_tracking_status')
-        .eq('user_id', user.id)
-        .order('work_date', { ascending: false })
-        .limit(5);
-      if (data) setHistoryTimeline(data);
-    };
-    loadTimeline();
-  }, [user?.id]);
+    void loadTimeline();
+  }, [loadTimeline]);
 
 
   useEffect(() => {
@@ -143,37 +163,48 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
     };
   }, [user?.avatar]);
 
-  useEffect(() => {
+  const loadProfileDetails = useCallback(async () => {
     if (!user?.id) return;
-    supabase
-      .from("offices")
-      .select("id, name")
-      .eq("is_active", true)
-      .then(({ data }: { data: any[] | null }) => {
-        setOffices(data || []);
-      });
-    supabase
-      .from("profiles")
-      .select("office_id, team, joining_date, date_of_joining")
-      .eq("id", user.id)
-      .maybeSingle()
-      .then(({ data }: { data: any }) => {
-        setCurrentOfficeId(data?.office_id || null);
-        setTeam(data?.team || null);
-        setDateOfJoining(data?.joining_date || data?.date_of_joining || null);
-      });
+    const [officesResult, profileResult] = await Promise.all([
+      supabase.from("offices").select("id, name").eq("is_active", true),
+      supabase
+        .from("profiles")
+        .select("office_id, team, joining_date, date_of_joining, home_address")
+        .eq("id", user.id)
+        .maybeSingle(),
+    ]);
+    if (profileResult.error) {
+      console.warn("[Profile] details could not be loaded:", profileResult.error.message);
+      setProfileError("Profile details could not be loaded.");
+      return;
+    }
+    setProfileError(null);
+    const data: any = profileResult.data;
+    const officeId: string | null = data?.office_id || null;
+    setTeam(data?.team || null);
+    setDateOfJoining(data?.joining_date || data?.date_of_joining || null);
+    setHomeAddress(data?.home_address || null);
+    let name: string | null =
+      ((officesResult.data || []) as any[]).find((o) => o.id === officeId)?.name || null;
+    // An inactive assigned office is missing from the active list.
+    if (officeId && !name) {
+      const { data: office } = await supabase
+        .from("offices")
+        .select("name")
+        .eq("id", officeId)
+        .maybeSingle();
+      name = (office as any)?.name || null;
+    }
+    setOfficeName(name);
   }, [user?.id]);
 
-  const handleSaveOffice = async (officeId: string) => {
-    setShowOfficePicker(false);
-    Alert.alert(
-      "Office Assignment Protected",
-      "Office assignments can only be changed by an authorized HR administrator.",
-    );
-  };
+  useEffect(() => {
+    void loadProfileDetails();
+  }, [loadProfileDetails]);
 
   const openEditModal = () => {
     setEditName(user?.name || "");
+    setEditAddress(homeAddress || "");
     setAvatarUri(null);
     setAvatarBase64(null);
     setAvatarFile(null);
@@ -246,8 +277,12 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
 
   const uploadAvatar = async (): Promise<string | null> => {
     try {
-      const ext = avatarMime.split("/")[1] || "jpg";
-      const fileName = `avatars/${user!.id}.${ext}`;
+      const ext = (avatarMime.split("/")[1] || "jpg").replace(/[^a-z0-9]/gi, "") || "jpg";
+      // A new object name on every change: the stored path changes, so the
+      // profile, signed URL and any CDN/browser cache all pick up the new
+      // picture (re-using avatars/<id>.jpg kept showing the first photo).
+      // Storage policy requires the part before the first "." to be the uid.
+      const fileName = `avatars/${user!.id}.${Date.now()}.${ext}`;
       let uploadError: any = null;
 
       if (avatarFile) {
@@ -318,9 +353,14 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
       Alert.alert("Error", "Name cannot be empty");
       return;
     }
+    if (!editAddress.trim()) {
+      Alert.alert("Error", "Address cannot be empty. It is a mandatory field.");
+      return;
+    }
     setAvatarUploading(true);
     try {
-      let avatarUrl = user?.avatar || null;
+      const previousAvatar = user?.avatar || null;
+      let avatarUrl = previousAvatar;
       if (avatarUri || avatarBase64 || avatarFile) {
         const uploaded = await uploadAvatar();
         if (uploaded) avatarUrl = uploaded;
@@ -330,12 +370,33 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
             "Profile picture upload failed, but name was saved.",
           );
       }
-      await updateUser({
-        name: editName.trim(),
-        ...(avatarUrl ? { avatar: avatarUrl } : {}),
-      });
+      
+      // Address is saved by the same server function as name/avatar; users
+      // cannot update the profiles table directly.
+      const newAddress = editAddress.trim();
+      await updateUser(
+        {
+          name: editName.trim(),
+          ...(avatarUrl ? { avatar: avatarUrl } : {}),
+        },
+        newAddress && newAddress !== homeAddress ? { home_address: newAddress } : undefined,
+      );
+      if (newAddress) setHomeAddress(newAddress);
+      if (
+        previousAvatar &&
+        avatarUrl !== previousAvatar &&
+        previousAvatar.startsWith(`avatars/${user!.id}.`)
+      ) {
+        // best effort: the old picture is no longer referenced
+        void supabase.storage.from("profile-pics").remove([previousAvatar]).then(() => undefined, () => undefined);
+      }
+      setAvatarUri(null);
+      setAvatarBase64(null);
+      setAvatarFile(null);
       setShowEditModal(false);
-      Alert.alert("✅ Profile Updated", "Your profile has been saved.");
+      Alert.alert("Profile updated", "Your profile has been saved.");
+    } catch (error: any) {
+      Alert.alert("Profile not saved", error?.message || "Please try again.");
     } finally {
       setAvatarUploading(false);
     }
@@ -430,7 +491,23 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
 
         <Spacer height={Spacing.xl} />
 
+        <MyComplianceCard />
+
+        <Spacer height={Spacing.xl} />
+
         <View style={styles.infoCard}>
+          {profileError ? (
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <ThemedText type="caption" style={{ color: Colors.light.error, flex: 1 }}>
+                {profileError}
+              </ThemedText>
+              <Pressable onPress={() => void loadProfileDetails()}>
+                <ThemedText type="caption" style={{ color: theme.primary, fontWeight: "700" }}>
+                  Retry
+                </ThemedText>
+              </Pressable>
+            </View>
+          ) : null}
           <View
             style={[
               styles.infoRow,
@@ -458,6 +535,17 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
               </ThemedText>
               <ThemedText type="body">
                 {formatDate(dateOfJoining || (user as any)?.date_of_joining || (user as any)?.joining_date || user?.created_at)}
+              </ThemedText>
+            </View>
+          </View>
+          <View style={[styles.infoRow, { backgroundColor: theme.backgroundDefault }]}>
+            <Feather name="map-pin" size={18} color={theme.textSecondary} />
+            <View style={styles.infoContent}>
+              <ThemedText type="caption" style={{ color: theme.textSecondary }}>
+                Home Address
+              </ThemedText>
+              <ThemedText type="body">
+                {homeAddress || "Not set — Update profile"}
               </ThemedText>
             </View>
           </View>
@@ -520,10 +608,7 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
           <MenuItem
             icon="map-pin"
             title="My Office"
-            subtitle={
-              offices.find((o) => o.id === currentOfficeId)?.name ||
-              "Not assigned — tap to set"
-            }
+            subtitle={officeName || "Not assigned — contact HR"}
             onPress={() =>
               Alert.alert(
                 "Office Assignment",
@@ -593,7 +678,14 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
           <View style={{ marginTop: Spacing.xl, marginBottom: Spacing.xl }}>
             <ThemedText type="h4" style={{ marginBottom: Spacing.md, paddingHorizontal: Spacing.xs }}>Recent History</ThemedText>
             <View style={{ backgroundColor: theme.backgroundDefault, borderRadius: 14, padding: Spacing.lg, ...(Platform.OS === 'web' ? { boxShadow: "0 2px 8px rgba(0,0,0,0.05)" } : { shadowColor: '#000', shadowOffset: {width: 0, height: 2}, shadowOpacity: 0.05, shadowRadius: 8, elevation: 2}) }}>
-              {historyTimeline.length === 0 ? (
+              {timelineError ? (
+                <View style={{ alignItems: 'center', gap: 6 }}>
+                  <ThemedText style={{ color: Colors.light.error, textAlign: 'center' }}>{timelineError}</ThemedText>
+                  <Pressable onPress={() => void loadTimeline()}>
+                    <ThemedText style={{ color: theme.primary, fontWeight: '700' }}>Retry</ThemedText>
+                  </Pressable>
+                </View>
+              ) : historyTimeline.length === 0 ? (
                 <ThemedText style={{ color: theme.textSecondary, textAlign: 'center' }}>No recent history found.</ThemedText>
               ) : (
                 
@@ -602,7 +694,7 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
                   let icon: any = "minus";
                   let title = "Absent / No Data";
                   if (item.effective_status === 'CHECKED_IN' || item.effective_status === 'CHECKED_OUT') {
-                    if (item.latest_tracking_status === 'FIELD_VISIT' || item.active_site_name) {
+                    if (item.active_site_name) {
                       color = Colors.light.primary;
                       icon = "map-pin";
                       title = "Field Visit: " + (item.active_site_name || item.active_name || "Unknown Site");
@@ -615,10 +707,13 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
                     color = Colors.light.warning;
                     icon = "sun";
                     title = "On Leave";
-                  } else if (item.effective_status === 'WEEK_OFF' || item.effective_status === 'HOLIDAY') {
+                  } else if (item.effective_status === 'WEEKLY_OFF' || item.effective_status === 'WEEK_OFF' || item.effective_status === 'HOLIDAY') {
                     color = theme.textSecondary;
                     icon = "coffee";
-                    title = item.effective_status === 'WEEK_OFF' ? "Weekly Off" : "Holiday";
+                    title = item.effective_status === 'HOLIDAY' ? "Holiday" : "Weekly Off";
+                  } else if (item.effective_status === 'ABSENT' && !item.effective_checkin && item.work_date === getBusinessDateIST()) {
+                    icon = "clock";
+                    title = "Not checked in yet";
                   }
 
                   return (
@@ -638,7 +733,7 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
               )}
               <Pressable 
                 style={{ marginTop: 16, paddingTop: 16, borderTopWidth: 1, borderTopColor: theme.border, alignItems: 'center' }}
-                onPress={() => navigation.navigate("HomeTab" as any, { screen: "AttendanceDetails" } as any)}
+                onPress={() => navigation.navigate("HomeTab" as any, { screen: "AttendanceDetails", initial: false } as any)}
               >
                 <ThemedText style={{ color: theme.primary, fontWeight: '600' }}>View Full Calendar</ThemedText>
               </Pressable>
@@ -651,92 +746,6 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
         visible={showDeviceSessions}
         onClose={() => setShowDeviceSessions(false)}
       />
-
-      {/* Office Picker Modal */}
-      <Modal
-        visible={showOfficePicker}
-        animationType="slide"
-        transparent
-        onRequestClose={() => setShowOfficePicker(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <ThemedView
-            style={[
-              styles.modalContainer,
-              { paddingBottom: insets.bottom + Spacing.lg },
-            ]}
-          >
-            <View style={styles.modalHeader}>
-              <ThemedText type="h3">Select Your Office</ThemedText>
-              <Pressable onPress={() => setShowOfficePicker(false)}>
-                <Feather name="x" size={24} color={theme.text} />
-              </Pressable>
-            </View>
-            <ScrollView style={styles.modalContent}>
-              {!currentOfficeId && (
-                <View style={[s.warningBanner]}>
-                  <Feather name="alert-circle" size={16} color="#92400E" />
-                  <ThemedText style={s.warningText}>
-                    No office assigned. Select your office to enable check-in.
-                  </ThemedText>
-                </View>
-              )}
-              <Spacer height={Spacing.md} />
-              {offices.map((office) => {
-                const selected = office.id === currentOfficeId;
-                return (
-                  <TouchableOpacity
-                    key={office.id}
-                    style={[
-                      s.officeRow,
-                      selected && {
-                        borderColor: theme.primary,
-                        backgroundColor: theme.primary + "10",
-                      },
-                    ]}
-                    onPress={() => handleSaveOffice(office.id)}
-                  >
-                    <View
-                      style={[
-                        s.officeIcon,
-                        {
-                          backgroundColor: selected
-                            ? theme.primary
-                            : theme.primary + "20",
-                        },
-                      ]}
-                    >
-                      <Feather
-                        name="map-pin"
-                        size={16}
-                        color={selected ? "#fff" : theme.primary}
-                      />
-                    </View>
-                    <ThemedText
-                      type="body"
-                      style={{
-                        flex: 1,
-                        color: selected ? theme.primary : theme.text,
-                        fontWeight: selected ? "700" : "400",
-                      }}
-                    >
-                      {office.name}
-                    </ThemedText>
-                    {selected && (
-                      <Feather
-                        name="check-circle"
-                        size={20}
-                        color={theme.primary}
-                      />
-                    )}
-                  </TouchableOpacity>
-                );
-              })}
-              <Spacer height={Spacing.lg} />
-            </ScrollView>
-          </ThemedView>
-        </View>
-      </Modal>
 
       {/* Edit Profile Modal */}
       <Modal
@@ -832,6 +841,30 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
                 onChangeText={setEditName}
                 placeholder="Your name"
                 placeholderTextColor={theme.textSecondary}
+              />
+              
+              <Spacer height={Spacing.md} />
+              
+              <ThemedText type="small" style={styles.inputLabel}>
+                Home Address *
+              </ThemedText>
+              <TextInput
+                style={[
+                  styles.modalInput,
+                  {
+                    backgroundColor: theme.backgroundSecondary,
+                    color: theme.text,
+                    height: 80,
+                    textAlignVertical: "top",
+                    paddingTop: Spacing.md
+                  },
+                ]}
+                value={editAddress}
+                onChangeText={setEditAddress}
+                placeholder="Full Home Address"
+                placeholderTextColor={theme.textSecondary}
+                multiline
+                maxLength={500}
               />
 
               <Spacer height={Spacing.xl} />

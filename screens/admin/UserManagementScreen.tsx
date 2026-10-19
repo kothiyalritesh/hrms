@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useMemo, useRef } from "react";
 import {
   StyleSheet,
   View,
@@ -11,6 +11,7 @@ import {
   Platform,
 } from "react-native";
 import { Picker } from "@react-native-picker/picker";
+import DateTimePicker from "@react-native-community/datetimepicker";
 import Feather from "@expo/vector-icons/Feather";
 import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -23,8 +24,16 @@ import { PageHeader } from "@/components/PageHeader";
 import { useTheme } from "@/hooks/useTheme";
 import { Spacing, BorderRadius, Colors } from "@/constants/theme";
 import Spacer from "@/components/Spacer";
+import { DateInput } from "@/components/DateInput";
+import {
+  SearchableSelect,
+  SelectOption,
+  cleanChoiceText,
+  sameChoiceText,
+} from "@/components/SearchableSelect";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/contexts/AuthContext";
+import { usePermissions } from "@/hooks/usePermissions";
 import { fetchAllPages } from "@/utils/supabasePagination";
 import { firstRpcRow } from "@/utils/supabaseRpc";
 import { normalizeUserRole } from "@/utils/userRole";
@@ -51,6 +60,8 @@ interface Employee {
   reporting_manager_name?: string;
   username?: string;
   otp_enabled?: boolean;
+  /** Server decision (rpc_admin_list_employees): may this user edit this row? */
+  can_edit?: boolean;
 }
 
 interface Role {
@@ -85,15 +96,85 @@ const EMPTY_FORM = {
   office_id: "",
   gender: "MALE",
   date_of_joining: "",
+  /** YYYY-MM-DD or "" (profiles.date_of_birth) */
+  date_of_birth: "",
   team: "",
   weekly_off_day: -1 as number | null,
 };
 
+const MIN_EMPLOYEE_AGE = 14;
+const MAX_EMPLOYEE_AGE = 100;
+
+function localIsoDate(date: Date): string {
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-");
+}
+
+function parseIsoDate(value: string): Date | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+  if (!match) return null;
+  const [y, m, d] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  const date = new Date(y, m - 1, d);
+  if (date.getFullYear() !== y || date.getMonth() !== m - 1 || date.getDate() !== d) return null;
+  return date;
+}
+
+/** null when the birthday is empty or acceptable, otherwise a readable problem. */
+function birthDateProblem(value: string): string | null {
+  const text = value.trim();
+  if (!text) return null;
+  const dob = parseIsoDate(text);
+  if (!dob) return "Enter the date of birth as a real date (YYYY-MM-DD).";
+  const today = new Date();
+  if (text > localIsoDate(today)) return "Date of birth cannot be in the future.";
+  let age = today.getFullYear() - dob.getFullYear();
+  if (today.getMonth() < dob.getMonth() || (today.getMonth() === dob.getMonth() && today.getDate() < dob.getDate())) {
+    age -= 1;
+  }
+  if (age < MIN_EMPLOYEE_AGE) return `Date of birth makes the employee younger than ${MIN_EMPLOYEE_AGE}. Please check the year.`;
+  if (age > MAX_EMPLOYEE_AGE) return `Date of birth makes the employee older than ${MAX_EMPLOYEE_AGE}. Please check the year.`;
+  return null;
+}
+
+function formatBirthDate(value: string): string {
+  const date = parseIsoDate(value);
+  return date
+    ? date.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })
+    : value;
+}
+
 const ADMIN_ROLES = ["SYSTEM_ADMIN", "ADMIN", "HR", "HRD"];
 const EMPLOYEE_PAGE_SIZE = 100;
 
+/** Turns server codes from rpc_admin_save_profile into a readable sentence. */
+function profileSaveMessage(error: any): string {
+  const text = `${error?.message ?? ""} ${error?.details ?? ""}`;
+  if (text.includes("PHONE_NUMBER_ALREADY_EXISTS") || (error?.code === "23505" && /phone/i.test(text))) {
+    const detail = String(error?.details || "").trim();
+    return `This phone number already belongs to another employee${detail ? ` (${detail})` : ""}. One phone number can only be used by one person. To give that person a different role, edit their existing profile instead of adding a new one.`;
+  }
+  if (error?.code === "23505" && /email/i.test(text)) return "This email address is already used by another employee.";
+  if (error?.code === "23505") return "An employee with this employee number already exists.";
+  if (text.includes("PROFILE_PHONE_REQUIRED")) return "Phone number is required.";
+  if (text.includes("INVALID_PHONE_NUMBER_FORMAT")) return "Enter a valid 10-digit mobile number.";
+  if (text.includes("PROFILE_NAME_REQUIRED")) return "Name is required.";
+  if (text.includes("INVALID_DATE_OF_BIRTH")) return "Date of birth must be a real date, not in the future.";
+  if (text.includes("UNAUTHORIZED_ROLE_ASSIGNMENT")) return "Only a System Administrator can assign that role.";
+  if (text.includes("TARGET_OUTSIDE_SCOPE")) {
+    return "This employee is outside the offices or teams you are allowed to manage. If they work in your office, ask HR to check that the employee's office and your permission point to the same office (there may be two offices with the same name).";
+  }
+  if (text.includes("NOT_ALLOWED_FOR_DELEGATED_USER")) {
+    return "You can't make this change with delegated access: moving someone to an office you don't manage, editing an Admin/HR account, or editing your own profile needs an administrator.";
+  }
+  if (text.includes("PERMISSION_REQUIRED")) return "You don't have permission to add or edit employees (or it has expired). Ask an administrator.";
+  return error?.message || "Please try again.";
+}
+
 export default function UserManagementScreen() {
-  const { theme } = useTheme();
+  const { theme, isDark } = useTheme();
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -126,6 +207,16 @@ export default function UserManagementScreen() {
   const [showAdminModal, setShowAdminModal] = useState(false);
   const [adminForm, setAdminForm] = useState({ name: "", phone: "", role: "ADMIN" as string });
   const [savingAdmin, setSavingAdmin] = useState(false);
+  // Names from public.teams (readable by every signed-in user); merged with
+  // the free-text profiles.team values of the loaded employees.
+  const [teamTableNames, setTeamTableNames] = useState<string[]>([]);
+  const [teamsLoading, setTeamsLoading] = useState(false);
+  // The scoped employee list RPC does not return date_of_birth, so the edit
+  // form reads it on open. Until it is "loaded", a blank field keeps the
+  // stored birthday instead of clearing it.
+  const [dobStatus, setDobStatus] = useState<"idle" | "loading" | "loaded" | "failed">("idle");
+  const dobRequestRef = useRef(0);
+  const [showDobPicker, setShowDobPicker] = useState(false);
 
   const copyToClipboard = async (text: string) => {
     Alert.alert("Copied", text);
@@ -389,11 +480,50 @@ export default function UserManagementScreen() {
     }
   };
 
+  const { hasPermission } = usePermissions();
   const isSystemAdmin = user?.role === "SYSTEM_ADMIN";
-  const isStrictAdmin = user?.role === "SYSTEM_ADMIN" || user?.role === "ADMIN" || user?.role === "HR" || user?.role === "HRD";
+  // Add / edit / deactivate: admins, or employees.manage for employees in scope
+  // (the server blocks admin accounts and anything outside the scope).
+  const isStrictAdmin = hasPermission("employees.manage");
 
   const loadEmployees = useCallback(async () => {
     try {
+      // Scoped list: only employees this user may see, decided by the server.
+      const scoped = await fetchAllPages<any>((from, to) =>
+        supabase.rpc("rpc_admin_list_employees", { p_office_id: null, p_search: null }).range(from, to),
+      );
+      const rpcMissing = scoped.error && (
+        scoped.error.code === "PGRST202" || scoped.error.code === "42883"
+        || /rpc_admin_list_employees/.test(String(scoped.error.message || "")) && /not find|does not exist/i.test(String(scoped.error.message || ""))
+      );
+      if (!rpcMissing) {
+        if (scoped.error) throw scoped.error;
+        setEmployees((scoped.data ?? []).map((emp: any) => ({
+          id: emp.id,
+          name: toTitleCase(emp.name),
+          email: emp.email,
+          phone: emp.phone,
+          employee_number: emp.employee_number,
+          role_id: emp.role_id,
+          office_id: emp.office_id,
+          team: emp.team ?? null,
+          role_name: emp.role_name || "No Role",
+          office_name: emp.office_name || "No Office",
+          is_active: emp.is_active,
+          reporting_manager_name: emp.reports_to
+            ? (emp.reporting_manager_name ? toTitleCase(emp.reporting_manager_name) : "Manager unavailable")
+            : undefined,
+          username: emp.username,
+          gender: emp.gender,
+          date_of_joining: emp.date_of_joining,
+          weekly_off_day: emp.weekly_off_day,
+          can_edit: emp.can_edit === true,
+        })));
+        setEmployeeLoadError(null);
+        return;
+      }
+
+      // Fallback until migration 20261009120000 is applied.
       const { data, error } = await fetchAllPages<any>((from, to) =>
         supabase.from("profiles").select(`
           id,
@@ -506,17 +636,96 @@ export default function UserManagementScreen() {
     }
   }, []);
 
+  const loadTeamNames = useCallback(async () => {
+    setTeamsLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from("teams")
+        .select("name")
+        .eq("is_active", true)
+        .order("name");
+      // Optional source: the employees' own team values still work without it.
+      if (error) console.warn("Teams could not be loaded:", error.message);
+      else setTeamTableNames((data ?? []).map((row: any) => String(row?.name ?? "")));
+    } finally {
+      setTeamsLoading(false);
+    }
+  }, []);
+
   useFocusEffect(
     useCallback(() => {
       loadEmployees();
       loadRolesAndOffices();
-    }, [loadEmployees, loadRolesAndOffices]),
+      loadTeamNames();
+    }, [loadEmployees, loadRolesAndOffices, loadTeamNames]),
   );
 
+  /** One option per team, ignoring case / extra spaces; sublabel = headcount. */
+  const teamOptions = useMemo<SelectOption[]>(() => {
+    const teams = new Map<string, { label: string; count: number }>();
+    for (const emp of employees) {
+      const name = cleanChoiceText(emp.team ?? "");
+      if (!name) continue;
+      const key = name.toLowerCase();
+      const entry = teams.get(key);
+      if (entry) entry.count += 1;
+      else teams.set(key, { label: name, count: 1 });
+    }
+    for (const raw of teamTableNames) {
+      const name = cleanChoiceText(raw);
+      if (name && !teams.has(name.toLowerCase())) teams.set(name.toLowerCase(), { label: name, count: 0 });
+    }
+    return Array.from(teams.values())
+      .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }))
+      .map((team) => ({
+        value: team.label,
+        label: team.label,
+        sublabel: team.count > 0 ? `${team.count} employee${team.count === 1 ? "" : "s"}` : "No employees yet",
+        icon: "users" as const,
+      }));
+  }, [employees, teamTableNames]);
+
+  /** Existing spelling when the typed team matches one ignoring case/spaces. */
+  const canonicalTeam = (raw: string): string | null => {
+    const name = cleanChoiceText(raw);
+    if (!name) return null;
+    const existing = teamOptions.find((option) => sameChoiceText(option.label, name));
+    return existing ? existing.label : name;
+  };
+
   const openAddModal = () => {
+    dobRequestRef.current += 1; // ignore a birthday read still running for a previous edit
     setEditingEmployee(null);
     setForm(EMPTY_FORM);
+    setDobStatus("loaded");
+    setShowDobPicker(false);
     setShowModal(true);
+  };
+
+  const loadEmployeeBirthDate = (employeeId: string) => {
+    const request = ++dobRequestRef.current;
+    setDobStatus("loading");
+    supabase
+      .from("profiles")
+      .select("date_of_birth")
+      .eq("id", employeeId)
+      .maybeSingle()
+      .then(({ data, error }: { data: any; error: any }) => {
+        if (request !== dobRequestRef.current) return;
+        if (error) {
+          console.warn("Date of birth could not be loaded:", error.message);
+          setDobStatus("failed");
+          return;
+        }
+        const stored = data?.date_of_birth ? String(data.date_of_birth).slice(0, 10) : "";
+        // Keep anything the user already typed while this was loading.
+        setForm((prev) => (prev.date_of_birth ? prev : { ...prev, date_of_birth: stored }));
+        setDobStatus("loaded");
+      }, (err: any) => {
+        if (request !== dobRequestRef.current) return;
+        console.warn("Date of birth could not be loaded:", err?.message);
+        setDobStatus("failed");
+      });
   };
 
   const openEditModal = (emp: Employee) => {
@@ -539,9 +748,12 @@ export default function UserManagementScreen() {
       office_id: matchedOffice?.id || "",
       gender: emp.gender || "MALE",
       date_of_joining: emp.date_of_joining || "",
+      date_of_birth: "",
       team: emp.team || "",
       weekly_off_day: emp.weekly_off_day ?? -1,
     });
+    setShowDobPicker(false);
+    loadEmployeeBirthDate(emp.id);
     setShowModal(true);
   };
 
@@ -556,6 +768,20 @@ export default function UserManagementScreen() {
       else Alert.alert("Error", "Employee number is required");
       return;
     }
+    const dobProblem = birthDateProblem(form.date_of_birth);
+    if (dobProblem) {
+      if (typeof window !== "undefined") window.alert(dobProblem);
+      else Alert.alert("Check date of birth", dobProblem);
+      return;
+    }
+    const teamValue = canonicalTeam(form.team);
+    // "" clears the stored birthday; null keeps it. Clearing is only possible
+    // once the stored value was actually read (otherwise blank = unknown).
+    const dobValue = form.date_of_birth.trim()
+      ? form.date_of_birth.trim()
+      : editingEmployee && dobStatus === "loaded"
+        ? ""
+        : null;
 
     setSaving(true);
     try {
@@ -571,9 +797,10 @@ export default function UserManagementScreen() {
             role: roleObj?.name || null,
             role_id: form.role_id || null,
             office_id: form.office_id || null,
-            team: form.team || null,
+            team: teamValue,
               gender: form.gender,
               date_of_joining: form.date_of_joining || null,
+            date_of_birth: dobValue,
             weekly_off_day: form.weekly_off_day !== -1 ? form.weekly_off_day : null,
           },
         });
@@ -584,7 +811,7 @@ export default function UserManagementScreen() {
           const message =
             error?.status === 401
               ? "Your session has expired. Nothing was saved. Please sign in again."
-              : "Failed to update employee: " + error.message;
+              : profileSaveMessage(error);
           if (typeof window !== "undefined") window.alert(message);
           else Alert.alert("Update not saved", message);
         } else if (response?.success === true && response?.profile_id === editingEmployee.id) {
@@ -618,9 +845,10 @@ export default function UserManagementScreen() {
             role: roleObj?.name || null,
             role_id: form.role_id || null,
             office_id: form.office_id || null,
-            team: form.team || null,
+            team: teamValue,
               gender: form.gender,
               date_of_joining: form.date_of_joining || null,
+            date_of_birth: dobValue,
             is_active: true,
             },
           },
@@ -634,13 +862,8 @@ export default function UserManagementScreen() {
               "Your session has expired. Nothing was saved; the form has been kept open.";
             if (typeof window !== "undefined") window.alert(message);
             else Alert.alert("Authentication required", message);
-          } else if (error?.code === "23505" || error?.status === 409) {
-            Alert.alert(
-              "Duplicate Entry",
-              `A user with this ${error.details?.includes("phone") ? "phone number" : error.details?.includes("email") ? "email" : "employee number"} already exists. Please use a different value.`,
-            );
           } else {
-            Alert.alert("Error", "Failed to add employee: " + error.message);
+            Alert.alert("Employee not added", profileSaveMessage(error));
           }
         } else if (response?.success === true && response?.profile_id) {
           setShowModal(false);
@@ -748,7 +971,7 @@ export default function UserManagementScreen() {
     const response = firstRpcRow<any>(data);
     setSavingAdmin(false);
     if (error) {
-      Alert.alert("Error", error.message);
+      Alert.alert("Admin user not created", profileSaveMessage(error));
     } else if (response?.success === true && response?.profile_id) {
       setShowAdminModal(false);
       setAdminForm({ name: "", phone: "", role: "ADMIN" });
@@ -837,7 +1060,7 @@ export default function UserManagementScreen() {
           </View>
 
           <View style={styles.actionRow}>
-            {isStrictAdmin && (
+            {isStrictAdmin && (item.can_edit ?? true) && (
               <Pressable
                 style={[styles.actionButton, { backgroundColor: theme.backgroundRoot }]}
                 onPress={() => openEditModal(item)}
@@ -845,7 +1068,7 @@ export default function UserManagementScreen() {
                 <Feather name="edit-2" size={16} color={Colors.light.info} />
               </Pressable>
             )}
-            {isStrictAdmin && (
+            {isStrictAdmin && (item.can_edit ?? true) && (
               <Pressable
                 style={[styles.actionButton, { backgroundColor: theme.backgroundRoot }]}
                 onPress={() => toggleEmployeeStatus(item.id, item.is_active)}
@@ -853,7 +1076,7 @@ export default function UserManagementScreen() {
                 <Feather name={item.is_active ? "user-x" : "user-check"} size={16} color={item.is_active ? Colors.light.error : Colors.light.success} />
               </Pressable>
             )}
-            {isStrictAdmin && (
+            {isStrictAdmin && (item.can_edit ?? true) && (
               <Pressable
                 style={[styles.actionButton, { backgroundColor: Colors.light.error + "15" }]}
                 onPress={() => deleteEmployee(item.id, item.name)}
@@ -1231,6 +1454,107 @@ export default function UserManagementScreen() {
               <Spacer height={Spacing.md} />
 
               <ThemedText type="small" style={styles.inputLabel}>
+                Date of Birth
+              </ThemedText>
+              {Platform.OS === "web" ? (
+                <DateInput
+                  value={form.date_of_birth}
+                  onChange={(value) => setForm((prev) => ({ ...prev, date_of_birth: value }))}
+                  min="1900-01-01"
+                  max={localIsoDate(new Date())}
+                  placeholderTextColor={theme.textSecondary}
+                  style={[
+                    styles.modalInput,
+                    {
+                      backgroundColor: theme.backgroundSecondary,
+                      color: theme.text,
+                      // plain CSS on web: RN shorthands are not applied to <input>
+                      borderWidth: 0,
+                      paddingLeft: Spacing.lg,
+                      paddingRight: Spacing.lg,
+                      colorScheme: isDark ? "dark" : "light",
+                    } as any,
+                  ]}
+                />
+              ) : (
+                <View style={styles.dobRow}>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`Date of birth: ${form.date_of_birth ? formatBirthDate(form.date_of_birth) : "not set"}`}
+                    onPress={() => setShowDobPicker(true)}
+                    style={[
+                      styles.modalInput,
+                      styles.dobButton,
+                      { backgroundColor: theme.backgroundSecondary },
+                    ]}
+                  >
+                    <Feather name="gift" size={16} color={theme.textSecondary} />
+                    <ThemedText
+                      type="body"
+                      numberOfLines={1}
+                      style={{ flex: 1, color: form.date_of_birth ? theme.text : theme.textSecondary }}
+                    >
+                      {form.date_of_birth ? formatBirthDate(form.date_of_birth) : "Select date of birth"}
+                    </ThemedText>
+                  </Pressable>
+                  {form.date_of_birth ? (
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Clear date of birth"
+                      hitSlop={8}
+                      onPress={() => {
+                        setShowDobPicker(false);
+                        setForm((prev) => ({ ...prev, date_of_birth: "" }));
+                      }}
+                      style={styles.dobClear}
+                    >
+                      <Feather name="x-circle" size={20} color={theme.textSecondary} />
+                    </Pressable>
+                  ) : null}
+                </View>
+              )}
+              {Platform.OS !== "web" && showDobPicker ? (
+                <View>
+                  <DateTimePicker
+                    value={parseIsoDate(form.date_of_birth) ?? new Date(new Date().getFullYear() - 25, 0, 1)}
+                    mode="date"
+                    display={Platform.OS === "ios" ? "spinner" : "default"}
+                    maximumDate={new Date()}
+                    minimumDate={new Date(1900, 0, 1)}
+                    onChange={(event: any, date?: Date) => {
+                      if (Platform.OS !== "ios") setShowDobPicker(false);
+                      if (event?.type === "dismissed" || !date) return;
+                      setForm((prev) => ({ ...prev, date_of_birth: localIsoDate(date) }));
+                    }}
+                  />
+                  {Platform.OS === "ios" ? (
+                    <Pressable onPress={() => setShowDobPicker(false)} style={{ alignSelf: "flex-end", padding: Spacing.sm }}>
+                      <ThemedText type="body" style={{ color: theme.primary, fontWeight: "700" }}>Done</ThemedText>
+                    </Pressable>
+                  ) : null}
+                </View>
+              ) : null}
+              {dobStatus === "loading" ? (
+                <ThemedText type="caption" style={{ color: theme.textSecondary, marginTop: 4 }}>
+                  Loading saved date of birth…
+                </ThemedText>
+              ) : dobStatus === "failed" && editingEmployee ? (
+                <ThemedText type="caption" style={{ color: theme.textSecondary, marginTop: 4 }}>
+                  The saved date of birth could not be loaded. Leave this blank to keep it unchanged.
+                </ThemedText>
+              ) : form.date_of_birth && birthDateProblem(form.date_of_birth) ? (
+                <ThemedText type="caption" style={{ color: theme.error, marginTop: 4 }}>
+                  {birthDateProblem(form.date_of_birth)}
+                </ThemedText>
+              ) : (
+                <ThemedText type="caption" style={{ color: theme.textSecondary, marginTop: 4 }}>
+                  Used for birthday wishes and reminders.
+                </ThemedText>
+              )}
+
+              <Spacer height={Spacing.md} />
+
+              <ThemedText type="small" style={styles.inputLabel}>
                 Role
               </ThemedText>
               {roles.length > 0 ? (
@@ -1314,12 +1638,18 @@ export default function UserManagementScreen() {
               )}
               <Spacer height={Spacing.md} />
               <ThemedText type="small" style={styles.inputLabel}>Team</ThemedText>
-              <TextInput
-                style={[styles.modalInput, { backgroundColor: theme.backgroundSecondary, color: theme.text }]}
+              <SearchableSelect
+                title="Assign team"
                 value={form.team}
-                onChangeText={(t) => setForm({ ...form, team: t })}
-                placeholder="e.g. Sector 63, Gurugram"
-                placeholderTextColor={theme.textSecondary}
+                options={teamOptions}
+                onChange={(team) => setForm((prev) => ({ ...prev, team }))}
+                placeholder="No team (tap to choose or type a new one)"
+                searchPlaceholder="Search teams or type a new team name"
+                allowCustom
+                customLabel={(text) => `Use new team “${text}”`}
+                clearable
+                clearLabel="No team"
+                loading={teamsLoading && teamOptions.length === 0}
               />
               <Spacer height={Spacing.xl} />
             </ScrollView>
@@ -1867,6 +2197,21 @@ const styles = StyleSheet.create({
     borderRadius: BorderRadius.sm,
     paddingHorizontal: Spacing.lg,
     fontSize: 16,
+  },
+  dobRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.sm,
+  },
+  dobButton: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.sm,
+  },
+  dobClear: {
+    padding: Spacing.xs,
   },
   pickerContainer: {
     borderRadius: BorderRadius.sm,

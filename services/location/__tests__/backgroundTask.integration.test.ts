@@ -110,9 +110,49 @@ describe("native task registration integration", () => {
       "hrms-attendance-location-v2",
       expect.objectContaining({
         timeInterval: 60_000,
-        distanceInterval: 50,
+        distanceInterval: 0,
+        deferredUpdatesDistance: 0,
         pausesUpdatesAutomatically: false,
       }),
+    );
+  });
+
+  test("a running service with older options is restarted with the current ones", async () => {
+    (Location.hasStartedLocationUpdatesAsync as jest.Mock).mockResolvedValue(true);
+    (TaskManager.isTaskRegisteredAsync as jest.Mock).mockResolvedValue(true);
+
+    await startNativeTracking({ ...config, appliedOptionsKey: "1:ATTENDANCE" });
+
+    expect(Location.startLocationUpdatesAsync).toHaveBeenCalledTimes(1);
+    expect(Location.startLocationUpdatesAsync).toHaveBeenCalledWith(
+      "hrms-attendance-location-v2",
+      expect.objectContaining({ distanceInterval: 0, timeInterval: 60_000 }),
+    );
+  });
+
+  test("a visit switches the running service to 15-second fixes", async () => {
+    (Location.hasStartedLocationUpdatesAsync as jest.Mock).mockResolvedValue(true);
+    (TaskManager.isTaskRegisteredAsync as jest.Mock).mockResolvedValue(true);
+    (Location.startGeofencingAsync as jest.Mock | undefined)?.mockResolvedValue?.(undefined);
+
+    await startNativeTracking({
+      ...config,
+      appliedOptionsKey: "2:ATTENDANCE",
+      trackingMode: "DISTANT",
+      destination: {
+        fieldVisitId: "visit-1",
+        journeyId: "visit-1",
+        visitDate: "2026-10-08",
+        name: "Site",
+        latitude: 28.61,
+        longitude: 77.21,
+        arrivalRadiusM: 100,
+      },
+    });
+
+    expect(Location.startLocationUpdatesAsync).toHaveBeenCalledWith(
+      "hrms-attendance-location-v2",
+      expect.objectContaining({ distanceInterval: 0, timeInterval: 15_000 }),
     );
   });
 

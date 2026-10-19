@@ -1,4 +1,4 @@
-param(
+﻿param(
   [string]$WebBasePath = $(if ($env:EXPO_PUBLIC_WEB_BASE_PATH) { $env:EXPO_PUBLIC_WEB_BASE_PATH.Trim('/') } else { "" })
 )
 
@@ -14,6 +14,26 @@ $distPath = Join-Path $workspaceRoot "dist"
 $stagingPath = Join-Path $workspaceRoot ".bop-hosting-package"
 $serverRootPath = Join-Path $stagingPath "server-root"
 $hrmsPath = if ($WebBasePath) { Join-Path $serverRootPath $WebBasePath } else { $serverRootPath }
+
+# Compress-Archive (Windows PowerShell 5.1) stores "HRMS\index.html" with
+# backslashes; Linux hosting extractors then create files literally named that
+# way instead of the HRMS folder. Write entries with forward slashes.
+function New-PortableZip([string]$SourceDir, [string]$ZipPath) {
+  Add-Type -AssemblyName System.IO.Compression
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  if (Test-Path -LiteralPath $ZipPath) { Remove-Item -LiteralPath $ZipPath -Force }
+  $root = (Resolve-Path -LiteralPath $SourceDir).Path.TrimEnd([char]92) + [char]92
+  $zip = [System.IO.Compression.ZipFile]::Open($ZipPath, [System.IO.Compression.ZipArchiveMode]::Create)
+  try {
+    Get-ChildItem -LiteralPath $SourceDir -Recurse -Force -File | ForEach-Object {
+      $entryName = $_.FullName.Substring($root.Length).Replace([char]92, [char]47)
+      [void][System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $_.FullName, $entryName, [System.IO.Compression.CompressionLevel]::Optimal)
+    }
+  } finally {
+    $zip.Dispose()
+  }
+}
+
 $archivePath = Join-Path $workspaceRoot "bop-hrms-deploy.zip"
 $backendStagingPath = Join-Path $workspaceRoot ".bop-backend-package"
 $backendArchivePath = Join-Path $workspaceRoot "bop-hrms-backend.zip"
@@ -60,10 +80,11 @@ Copy-Item -LiteralPath (Join-Path $distPath "favicon.ico") -Destination $hrmsPat
 Copy-Item -LiteralPath (Join-Path $distPath "metadata.json") -Destination $hrmsPath
 Copy-Item -LiteralPath (Join-Path $distPath "manifest.webmanifest") -Destination $hrmsPath
 Copy-Item -LiteralPath (Join-Path $distPath "sw.js") -Destination $hrmsPath
+Copy-Item -LiteralPath (Join-Path $distPath "version.json") -Destination $hrmsPath
 Copy-Item -LiteralPath (Join-Path $distPath "icon.png") -Destination $hrmsPath
 Copy-Item -LiteralPath (Join-Path $workspaceRoot "public\.htaccess") -Destination $hrmsPath
 
-Compress-Archive -Path (Join-Path $serverRootPath "*") -DestinationPath $archivePath -CompressionLevel Optimal
+New-PortableZip $serverRootPath $archivePath
 
 $backendSupabasePath = Join-Path $backendStagingPath "supabase"
 New-Item -ItemType Directory -Path $backendSupabasePath -Force | Out-Null
@@ -72,7 +93,7 @@ Copy-Item -LiteralPath (Join-Path $workspaceRoot "supabase\functions") -Destinat
 Copy-Item -LiteralPath (Join-Path $workspaceRoot "supabase\security_audit.sql") -Destination $backendSupabasePath
 Copy-Item -LiteralPath (Join-Path $workspaceRoot "PRODUCTION_RELEASE_CHECKLIST.md") -Destination $backendStagingPath
 Copy-Item -LiteralPath (Join-Path $workspaceRoot "BACKEND_PACKAGE_README.md") -Destination $backendStagingPath
-Compress-Archive -Path (Join-Path $backendStagingPath "*") -DestinationPath $backendArchivePath -CompressionLevel Optimal
+New-PortableZip $backendStagingPath $backendArchivePath
 
 Write-Host "Created $archivePath"
 $displayBase = if ($WebBasePath) { "/$WebBasePath" } else { "" }
@@ -81,6 +102,7 @@ Write-Host "  $displayBase/index.html"
 Write-Host "  $displayBase/favicon.ico"
 Write-Host "  $displayBase/manifest.webmanifest"
 Write-Host "  $displayBase/sw.js"
+Write-Host "  $displayBase/version.json (release ID read by the in-app update notice)"
 Write-Host "  $displayBase/icon.png"
 Write-Host "  $displayBase/_expo/..."
 Write-Host "  $displayBase/assets/..."

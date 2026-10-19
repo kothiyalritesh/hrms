@@ -3,8 +3,8 @@
  * Bottom drawer for selected employee and site visit details (v3):
  * - Employee profile, Department, Employee Number
  * - Orthogonal Badges:
- *   â€¢ Tracking Health: Live (<15s), Delayed (15-60s), Stale (>60s), Offline
- *   â€¢ GPS Quality: High (<=20m), Acceptable (20-50m), Weak (>50m), Invalid (>100m/mock)
+ *   • Tracking Health: Live (<15s), Delayed (15-60s), Stale (>60s), Offline
+ *   • GPS Quality: High (<=20m), Acceptable (20-50m), Weak (>50m), Invalid (>100m/mock)
  * - Telemetry Grid: Source, Last Fix vs Last Upload, Accuracy, Speed
  * - Visit Summary Scorecard: Duration, Travel vs On-Site distance, Uptime %, Quality %, GPS gaps
  * - Chronological today's visits list
@@ -24,14 +24,22 @@ import {
 } from "@/types/location-database";
 import { RouteQualitySummary, VisitSummaryMetrics } from "@/utils/gpsQuality";
 import { toTitleCase } from "@/utils/format";
+import { VisitReviewPanel } from "@/components/observer/VisitReviewPanel";
 
+import { describeAge, freshnessOf, minutesAgo } from "@/utils/locationFreshness";
 export interface ObserverDetailDrawerProps {
+  onReviewed?: () => void;
   employee: SiteVisitObserverEmployee | null;
   selectedVisit: SiteVisitObserverVisit | null;
   onSelectVisit: (visit: SiteVisitObserverVisit) => void;
   onClose: () => void;
   routeQuality: RouteQualitySummary | null;
   visitSummary?: VisitSummaryMetrics | null;
+  /**
+   * Rendered inside the phone layout's scrolling list: no inner ScrollView
+   * (nested vertical scrolling) and visits stack as full-width cards.
+   */
+  embedded?: boolean;
 }
 
 export function computeTrackingHealth(
@@ -41,11 +49,11 @@ export function computeTrackingHealth(
 ): TrackingHealthStatus {
   if (isTampered) return "TAMPERED";
   if (pendingCount && pendingCount > 0) return "OFFLINE";
-  if (!lastUploadedAt) return "STALE";
-  const ageSeconds = (Date.now() - new Date(lastUploadedAt).getTime()) / 1000;
-  if (ageSeconds > 60) return "STALE";
-  if (ageSeconds > 15) return "DELAYED";
-  return "ACTIVE";
+  // Shared rule (utils/locationFreshness): LIVE <= 5 min, RECENT <= 15 min.
+  const fresh = freshnessOf(minutesAgo(lastUploadedAt));
+  if (fresh === "LIVE") return "ACTIVE";
+  if (fresh === "RECENT") return "DELAYED";
+  return "STALE";
 }
 
 export function computeGpsQuality(accuracy?: number | null): GpsQualityStatus {
@@ -63,6 +71,8 @@ export default function ObserverDetailDrawer({
   onClose,
   routeQuality,
   visitSummary,
+  onReviewed,
+  embedded = false,
 }: ObserverDetailDrawerProps) {
   const { theme } = useTheme();
 
@@ -72,20 +82,15 @@ export default function ObserverDetailDrawer({
   const trackingStatus = tracking.status || "AT_SITE";
 
   const isTampered =
-    tracking.gps_quality === "MOCKED" ||
-    tracking.gps_quality === "IMPOSSIBLE_SPEED" ||
-    Boolean((tracking.source === 'MOCK')) ||
+    (selectedVisit?.risk_flags ?? []).some((flag) => flag === "MOCK_LOCATION_PINGS" || flag === "GPS_JUMPS") ||
     Boolean(routeQuality?.hasGpsJumps);
 
   // Orthogonal evaluation: Tracking Health vs GPS Quality
-  const healthStatus: TrackingHealthStatus =
-    tracking.tracking_health ||
-    computeTrackingHealth(tracking.last_uploaded_at || tracking.updated_at, tracking.pending_ping_count);
-    computeTrackingHealth(
-      tracking.last_uploaded_at || tracking.updated_at,
-      tracking.pending_ping_count,
-      isTampered,
-    );
+  const healthStatus: TrackingHealthStatus = isTampered
+    ? "TAMPERED"
+    : tracking.tracking_health ||
+      computeTrackingHealth(tracking.last_location_at || tracking.updated_at, tracking.pending_ping_count);
+  const lastFixAge = describeAge(minutesAgo(tracking.last_location_at || tracking.updated_at));
 
   const gpsQuality: GpsQualityStatus =
     tracking.gps_quality || computeGpsQuality(tracking.accuracy);
@@ -97,8 +102,8 @@ export default function ObserverDetailDrawer({
         return { label: "At Site", color: "#10B981", bg: "#ECFDF5", icon: "check-circle" };
       case "IN_TRANSIT":
         return { label: "In Transit", color: "#6366F1", bg: "#EEF2FF", icon: "navigation" };
-      case "SIGNAL_LOST":
-        return { label: "Signal Lost", color: "#EF4444", bg: "#FEF2F2", icon: "alert-triangle" };
+      case "MISSED":
+        return { label: "Missed", color: "#B45309", bg: "#FFFBEB", icon: "x-circle" };
       default:
         return { label: "Completed", color: "#4B5563", bg: "#F3F4F6", icon: "flag" };
     }
@@ -109,15 +114,15 @@ export default function ObserverDetailDrawer({
     switch (healthStatus) {
       case "TAMPERED":
         return {
-          label: "âš ï¸ Tampered / Mock GPS",
+          label: "⚠️ Tampered / Mock GPS",
           color: "#DC2626",
           bg: "#FEF2F2",
           dot: "#DC2626",
         };
       case "ACTIVE":
-        return { label: "Live", color: "#10B981", bg: "#ECFDF5", dot: "#10B981" };
+        return { label: `Live · ${lastFixAge}`, color: "#10B981", bg: "#ECFDF5", dot: "#10B981" };
       case "DELAYED":
-        return { label: "Delayed (15-60s)", color: "#F59E0B", bg: "#FFFBEB", dot: "#F59E0B" };
+        return { label: `Recent · last fix ${lastFixAge}`, color: "#0284C7", bg: "#F0F9FF", dot: "#0284C7" };
       case "OFFLINE":
         return {
           label: `Offline (${tracking.pending_ping_count || 1} queued)`,
@@ -127,13 +132,15 @@ export default function ObserverDetailDrawer({
         };
       case "STALE":
       default:
-        return { label: "Stale (>60s)", color: "#EF4444", bg: "#FEF2F2", dot: "#EF4444" };
+        return tracking.signal_status === "ENDED"
+          ? { label: "Tracking ended", color: "#6B7280", bg: "#F3F4F6", dot: "#9CA3AF" }
+          : { label: `No signal · last fix ${lastFixAge}`, color: "#EF4444", bg: "#FEF2F2", dot: "#EF4444" };
     }
   };
 
   // GPS Quality Badge (Hardware satellite accuracy)
   const getGpsBadge = () => {
-    const accStr = tracking.accuracy != null ? ` Â±${Math.round(tracking.accuracy)}m` : "";
+    const accStr = tracking.accuracy != null ? ` ±${Math.round(tracking.accuracy)}m` : "";
     switch (gpsQuality) {
       case "HIGH":
         return { label: `GPS High${accStr}`, color: "#10B981", bg: "#ECFDF5" };
@@ -159,9 +166,10 @@ export default function ObserverDetailDrawer({
   const gpsBadge = getGpsBadge();
 
   const formatTime = (ts?: string | null) => {
-    if (!ts) return "â€”";
+    if (!ts) return "—";
     try {
       return new Date(ts).toLocaleTimeString("en-IN", {
+        timeZone: "Asia/Kolkata",
         hour: "2-digit",
         minute: "2-digit",
         second: "2-digit",
@@ -172,11 +180,11 @@ export default function ObserverDetailDrawer({
     }
   };
 
-  return (
-    <View style={[s.container, { backgroundColor: theme.backgroundDefault, borderTopColor: theme.border }]}>
+  const content = (
+    <>
       {/* Top Header with Profile and Orthogonal Badges */}
       <View style={s.drawerHeader}>
-        <View style={{ flex: 1 }}>
+        <View style={{ flex: 1, minWidth: 0 }}>
           <View style={s.nameRow}>
             <ThemedText type="h4">{toTitleCase(employee.name)}</ThemedText>
             <View style={[s.statusPill, { backgroundColor: statusBadge.bg, borderColor: statusBadge.color }]}>
@@ -198,13 +206,20 @@ export default function ObserverDetailDrawer({
               </ThemedText>
             </View>
           </View>
-          <ThemedText type="caption" style={{ color: theme.textSecondary }}>
-            {employee.employee_no ?? ""} Â· {employee.department ?? "Field Operations"} Â· {employee.office_name ?? ""}
+          <ThemedText type="caption" style={{ color: theme.textSecondary, marginTop: 4 }} numberOfLines={2}>
+            {[employee.employee_no, employee.department ?? "Field Operations", employee.office_name]
+              .filter(Boolean)
+              .join(" · ")}
           </ThemedText>
         </View>
 
-        <TouchableOpacity style={s.closeBtn} onPress={onClose}>
-          <Feather name="x" size={18} color={theme.textSecondary} />
+        <TouchableOpacity
+          style={s.closeBtn}
+          onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel="Close details"
+        >
+          <Feather name="x" size={20} color={theme.textSecondary} />
         </TouchableOpacity>
       </View>
 
@@ -224,7 +239,7 @@ export default function ObserverDetailDrawer({
             GPS Accuracy
           </ThemedText>
           <ThemedText style={s.telemetryValue}>
-            {tracking.accuracy != null ? `Â±${Math.round(tracking.accuracy)}m` : "â€”"}
+            {tracking.accuracy != null ? `±${Math.round(tracking.accuracy)}m` : "—"}
           </ThemedText>
         </View>
 
@@ -308,7 +323,13 @@ export default function ObserverDetailDrawer({
           TODAY&apos;S FIELD VISITS ({employee.visits.length})
         </ThemedText>
 
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.visitsList}>
+        <ScrollView
+          horizontal={!embedded}
+          scrollEnabled={!embedded}
+          showsHorizontalScrollIndicator={false}
+          style={s.visitsList}
+          contentContainerStyle={embedded ? { gap: 8 } : undefined}
+        >
           {employee.visits.map((v) => {
             const isVisitSelected = selectedVisit?.visit_id === v.visit_id;
             return (
@@ -316,31 +337,37 @@ export default function ObserverDetailDrawer({
                 key={`drawer-v-${v.visit_id}`}
                 style={[
                   s.visitCard,
+                  embedded && s.visitCardFull,
                   { backgroundColor: theme.backgroundRoot, borderColor: theme.border },
-                  isVisitSelected && { borderColor: "#7C3AED", backgroundColor: "#F5F3FF", borderWidth: 2 },
+                  isVisitSelected && { borderColor: theme.primary, backgroundColor: theme.primary + "1A", borderWidth: 2 },
                 ]}
                 onPress={() => onSelectVisit(v)}
               >
-                <ThemedText style={s.visitProject}>
+                <ThemedText style={s.visitProject} numberOfLines={1}>
                   {v.project_name || v.location_name || "Site Visit"}
                 </ThemedText>
+                {v.verification_status && v.verification_status !== "PENDING" ? (
+                  <ThemedText type="caption" style={{ color: v.verification_status === "APPROVED" ? "#059669" : v.verification_status === "REJECTED" ? "#DC2626" : "#D97706", fontWeight: "700" }}>
+                    {v.verification_status === "NEEDS_INFORMATION" ? "Needs info" : v.verification_status.charAt(0) + v.verification_status.slice(1).toLowerCase()}
+                  </ThemedText>
+                ) : null}
                 {v.client_name && (
-                  <ThemedText type="caption" style={{ color: theme.textSecondary }}>
+                  <ThemedText type="caption" style={{ color: theme.textSecondary }} numberOfLines={1}>
                     Client: {v.client_name}
                   </ThemedText>
                 )}
                 <View style={s.visitMetaRow}>
-                  <ThemedText type="caption" style={s.visitStatusText}>
+                  <ThemedText type="caption" style={[s.visitStatusText, { color: theme.textSecondary }]}>
                     {v.status}
                   </ThemedText>
                   {v.checkin_time && (
                     <ThemedText type="caption" style={{ color: "#10B981" }}>
-                      In: {new Date(v.checkin_time).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
+                      In: {v.checkin_time}
                     </ThemedText>
                   )}
                   {v.checkout_time && (
                     <ThemedText type="caption" style={{ color: "#6B7280" }}>
-                      Out: {new Date(v.checkout_time).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
+                      Out: {v.checkout_time}
                     </ThemedText>
                   )}
                 </View>
@@ -349,7 +376,29 @@ export default function ObserverDetailDrawer({
           })}
         </ScrollView>
       </View>
-    </View>
+
+      {selectedVisit ? (
+        <VisitReviewPanel visit={selectedVisit} onReviewed={() => onReviewed?.()} />
+      ) : null}
+    </>
+  );
+
+  if (embedded) {
+    return (
+      <View style={[s.embeddedContainer, { backgroundColor: theme.backgroundDefault }]}>
+        {content}
+      </View>
+    );
+  }
+
+  return (
+    <ScrollView
+      style={[s.container, { backgroundColor: theme.backgroundDefault, borderTopColor: theme.border }]}
+      contentContainerStyle={{ gap: 10, paddingBottom: 16 }}
+      keyboardShouldPersistTaps="handled"
+    >
+      {content}
+    </ScrollView>
   );
 }
 
@@ -358,8 +407,7 @@ const s = StyleSheet.create({
     flex: 1,
     borderTopWidth: Platform.OS !== "web" ? 1 : 0,
     padding: Spacing.md,
-    gap: 10,
-    maxHeight: Platform.OS === "web" ? "100%" : 360,
+    maxHeight: Platform.OS === "web" ? "100%" : 420,
   },
   drawerHeader: {
     flexDirection: "row",
@@ -382,7 +430,7 @@ const s = StyleSheet.create({
     gap: 4,
   },
   statusPillText: {
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: "700",
   },
   healthPill: {
@@ -400,23 +448,36 @@ const s = StyleSheet.create({
     borderRadius: 3,
   },
   healthPillText: {
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: "700",
   },
+  embeddedContainer: {
+    padding: Spacing.md,
+    gap: 10,
+  },
   closeBtn: {
-    padding: 4,
+    width: 44,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: -10,
+    marginRight: -10,
   },
   telemetryRow: {
     flexDirection: "row",
+    flexWrap: "wrap",
     borderRadius: BorderRadius.md,
     padding: 8,
+    rowGap: 8,
     justifyContent: "space-around",
   },
   telemetryItem: {
     alignItems: "center",
+    minWidth: 90,
+    flexGrow: 1,
   },
   telemetryValue: {
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: "700",
     marginTop: 2,
   },
@@ -432,7 +493,7 @@ const s = StyleSheet.create({
     gap: 6,
   },
   routeQualityHeading: {
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: "700",
     color: "#7C3AED",
   },
@@ -443,7 +504,7 @@ const s = StyleSheet.create({
     gap: 6,
   },
   routeMetric: {
-    fontSize: 11,
+    fontSize: 13,
     color: "#6B7280",
   },
   routeMetricVal: {
@@ -454,7 +515,7 @@ const s = StyleSheet.create({
     gap: 6,
   },
   sectionTitle: {
-    fontSize: 10,
+    fontSize: 12,
     fontWeight: "700",
     letterSpacing: 0.5,
   },
@@ -462,24 +523,33 @@ const s = StyleSheet.create({
     flexGrow: 0,
   },
   visitCard: {
-    padding: 8,
+    padding: 10,
     borderRadius: BorderRadius.md,
     borderWidth: 1,
     marginRight: 8,
     minWidth: 140,
+    maxWidth: 260,
+    minHeight: 44,
+  },
+  visitCardFull: {
+    marginRight: 0,
+    minWidth: 0,
+    maxWidth: "100%",
+    width: "100%",
   },
   visitProject: {
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: "700",
   },
   visitMetaRow: {
     flexDirection: "row",
-    gap: 8,
+    flexWrap: "wrap",
+    columnGap: 8,
+    rowGap: 2,
     marginTop: 4,
   },
   visitStatusText: {
     fontWeight: "600",
-    color: "#4B5563",
   },
 });
 

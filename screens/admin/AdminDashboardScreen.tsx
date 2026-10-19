@@ -129,7 +129,7 @@ function ActionCard({ icon, label, desc, accent, onPress }: ActionCardProps) {
 export default function AdminDashboardScreen({ navigation }: Props) {
   const { theme } = useTheme();
   const { user, isHR, isHRD } = useAuth();
-  const { hasPermission } = usePermissions();
+  const { canOpenScreen, isDataAdmin } = usePermissions();
   
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -137,14 +137,15 @@ export default function AdminDashboardScreen({ navigation }: Props) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [serverDate, setServerDate] = useState("");
   const [serverHour, setServerHour] = useState(12);
-  const [stats, setStats] = useState({
-    totalEmployees: 0,
-    activeEmployees: 0,
-    todayAttendance: 0,
-    pendingLeaves: 0,
-    overdueTasks: 0,
-    openTickets: 0,
-    liveTracking: 0,
+  // null = the viewer has no permission for that area (card hidden)
+  const [stats, setStats] = useState<Record<string, number | null>>({
+    totalEmployees: null,
+    activeEmployees: null,
+    todayAttendance: null,
+    pendingLeaves: null,
+    overdueTasks: null,
+    openTickets: null,
+    liveTracking: null,
   });
 
   const loadAdminData = useCallback(async (force = false) => {
@@ -164,10 +165,13 @@ export default function AdminDashboardScreen({ navigation }: Props) {
         summary?.success !== true ||
         !summary?.business_date ||
         !summary?.server_now ||
-        countFields.some((field) => !Number.isFinite(Number(summary[field])))
+        countFields.some(
+          (field) => summary[field] != null && !Number.isFinite(Number(summary[field])),
+        )
       ) {
         throw new Error("The server returned an incomplete dashboard summary.");
       }
+      const count = (field: string) => (summary[field] == null ? null : Number(summary[field]));
 
       setServerDate(String(summary.business_date));
       setServerHour(
@@ -180,13 +184,13 @@ export default function AdminDashboardScreen({ navigation }: Props) {
         ),
       );
       setStats({
-        totalEmployees: Number(summary.total_employees),
-        activeEmployees: Number(summary.active_employees),
-        todayAttendance: Number(summary.today_attendance),
-        pendingLeaves: Number(summary.pending_leaves),
-        overdueTasks: Number(summary.overdue_tasks),
-        openTickets: Number(summary.open_tickets),
-        liveTracking: Number(summary.live_tracking),
+        totalEmployees: count("total_employees"),
+        activeEmployees: count("active_employees"),
+        todayAttendance: count("today_attendance"),
+        pendingLeaves: count("pending_leaves"),
+        overdueTasks: count("overdue_tasks"),
+        openTickets: count("open_tickets"),
+        liveTracking: count("live_tracking"),
       });
       setHasLoaded(true);
       setLoadError(null);
@@ -216,6 +220,9 @@ export default function AdminDashboardScreen({ navigation }: Props) {
   };
 
   const panelTitle = user?.role === "HRD" ? "HRD Panel" : "HR Panel";
+  // A card is shown when its screen can be opened; while loading it shows "—".
+  const showMetric = (route: string, value: number | null) =>
+    canOpenScreen(route) && (!hasLoaded || value != null);
 
   return (
     <ScreenScrollView
@@ -270,6 +277,7 @@ export default function AdminDashboardScreen({ navigation }: Props) {
               <ThemedText style={{ color: "#FFFFFF", fontSize: 12, fontWeight: "600" }}>Refresh</ThemedText>
             </Pressable>
             
+            {isDataAdmin ? (
             <Pressable
               style={({ pressed }) => [s.tvBtn, { opacity: pressed ? 0.85 : 1 }]}
               onPress={() => navigation.navigate("TVDisplay")}
@@ -287,6 +295,7 @@ export default function AdminDashboardScreen({ navigation }: Props) {
                 TV Board
               </ThemedText>
             </Pressable>
+            ) : null}
           </View>
       </View>
 
@@ -308,59 +317,66 @@ export default function AdminDashboardScreen({ navigation }: Props) {
         ) : null}
         {/* ── Metrics Grid ── */}
         <View style={s.metricsGrid}>
+          {showMetric("UserManagement", stats.totalEmployees) && (
           <MetricCard
             icon="users"
             label="Employees"
-            value={hasLoaded ? stats.totalEmployees : "—"}
-            sub={hasLoaded ? `${stats.activeEmployees} active` : "Loading"}
+            value={hasLoaded && stats.totalEmployees != null ? stats.totalEmployees : "—"}
+            sub={hasLoaded && stats.activeEmployees != null ? `${stats.activeEmployees} active` : "Loading"}
             accent={theme.primary}
             onPress={() => navigation.navigate("UserManagement")}
-          />
+          />)}
+          {showMetric("AttendanceControl", stats.todayAttendance) && (
           <MetricCard
             icon="clock"
             label="Today Present"
-            value={hasLoaded ? stats.todayAttendance : "—"}
+            value={hasLoaded && stats.todayAttendance != null ? stats.todayAttendance : "—"}
             sub="Checked in"
             accent={Colors.light.success}
             onPress={() => navigation.navigate("AttendanceControl")}
-          />
+          />)}
+          {showMetric("LeaveManagement", stats.pendingLeaves) && (
           <MetricCard
             icon="calendar"
             label="Leave Requests"
-            value={hasLoaded ? stats.pendingLeaves : "—"}
+            value={hasLoaded && stats.pendingLeaves != null ? stats.pendingLeaves : "—"}
             sub="Need approval"
             accent={Colors.light.warning}
             onPress={() => navigation.navigate("LeaveManagement")}
-          />
+          />)}
+          {showMetric("TaskProjectControl", stats.overdueTasks) && (
           <MetricCard
             icon="alert-triangle"
             label="Overdue Tasks"
-            value={hasLoaded ? stats.overdueTasks : "—"}
+            value={hasLoaded && stats.overdueTasks != null ? stats.overdueTasks : "—"}
             sub="Past deadline"
             accent={Colors.light.error}
             onPress={() => navigation.navigate("TaskProjectControl")}
-          />
+          />)}
+          {showMetric("TicketManagement", stats.openTickets) && (
           <MetricCard
             icon="life-buoy"
             label="Open Tickets"
-            value={hasLoaded ? stats.openTickets : "—"}
+            value={hasLoaded && stats.openTickets != null ? stats.openTickets : "—"}
             sub="Support queue"
             accent="#7C3AED"
             onPress={() => navigation.navigate("TicketManagement")}
-          />
+          />)}
+          {showMetric("LiveTracking", stats.liveTracking) && (
           <MetricCard
             icon="radio"
             label="Live Tracking"
-            value={hasLoaded ? stats.liveTracking : "—"}
+            value={hasLoaded && stats.liveTracking != null ? stats.liveTracking : "—"}
             sub="Pinging now"
             accent="#DC2626"
             onPress={() => navigation.navigate("LiveTracking")}
-          />
+          />)}
         </View>
 
         <Spacer height={Spacing.xl} />
 
-        {/* ── TV Display Featured Card ── */}
+        {/* ── TV Display Featured Card (company-wide board: admins) ── */}
+        {isDataAdmin ? (
         <Pressable
           style={({ pressed }) => [
             s.tvCard,
@@ -408,6 +424,7 @@ export default function AdminDashboardScreen({ navigation }: Props) {
           </View>
           <Feather name="chevron-right" size={22} color={theme.primary} />
         </Pressable>
+        ) : null}
 
         <Spacer height={Spacing.xl} />
 
@@ -416,113 +433,133 @@ export default function AdminDashboardScreen({ navigation }: Props) {
           Quick Actions
         </ThemedText>
         <View style={s.actionsGrid}>
-          {(hasPermission("screen.user_management") || hasPermission("employee.view") || hasPermission("employee.edit")) && (<ActionCard
+          {canOpenScreen("UserManagement") && (<ActionCard
             icon="user-plus"
             label={isHR ? "View / Edit Employees" : "Add Employee"}
             desc="Manage employee profiles"
             accent={theme.primary}
             onPress={() => navigation.navigate("UserManagement")}
           />)}
-          {(hasPermission("screen.attendance_control") || hasPermission("attendance.view") || hasPermission("attendance.edit")) && (<ActionCard
+          {canOpenScreen("AttendanceControl") && (<ActionCard
             icon="clock"
             label="Attendance Logs"
             desc="Today's check-ins & history"
             accent="#10B981"
             onPress={() => navigation.navigate("AttendanceControl")}
           />)}
-          {(hasPermission("screen.field_visit_admin") || hasPermission("field_visit.view")) && (<ActionCard
+          {canOpenScreen("FieldVisitAdmin") && (<ActionCard
             icon="map-pin"
             label="Field / Site Visits"
             desc="Team location log"
             accent="#3B82F6"
             onPress={() => navigation.navigate("FieldVisitAdmin")}
           />)}
-          {hasPermission("screen.team_hierarchy") && (<ActionCard
+          {canOpenScreen("TaskProjectControl") && (<ActionCard
+            icon="check-square"
+            label="Tasks & Projects"
+            desc="View and assign team tasks"
+            accent="#8B5CF6"
+            onPress={() => navigation.navigate("TaskProjectControl")}
+          />)}
+          {canOpenScreen("TeamHierarchy") && (<ActionCard
             icon="git-branch"
             label="Team Hierarchy"
             desc="Teams & reporting structure"
             accent={theme.primary}
             onPress={() => navigation.navigate("TeamHierarchy")}
           />)}
-          {hasPermission("screen.check_in_logs") && (<ActionCard
+          {canOpenScreen("CheckInLogs") && (<ActionCard
             icon="map"
             label="Check-In Logs"
             desc="GPS locations & blocked attempts"
             accent="#3B82F6"
             onPress={() => navigation.navigate("CheckInLogs")}
           />)}
-          {hasPermission("screen.suspicious_attendance") && (<ActionCard
+          {canOpenScreen("SuspiciousAttendance") && (<ActionCard
             icon="alert-triangle"
             label="Suspicious Attendance"
             desc="Fraud scores and GPS evidence"
             accent="#EF4444"
             onPress={() => navigation.navigate("SuspiciousAttendance")}
           />)}
-          {(hasPermission("screen.attendance_control") || hasPermission("attendance.view") || hasPermission("attendance.edit")) && (<ActionCard
+          {canOpenScreen("ComplianceScores") && (<ActionCard
+            icon="award"
+            label="Compliance Scores"
+            desc="Monthly score and deductions per employee"
+            accent="#7C3AED"
+            onPress={() => navigation.navigate("ComplianceScores")}
+          />)}
+          {canOpenScreen("AttendanceCalendar") && (<ActionCard
             icon="calendar"
             label="Weekly Offs & Holidays"
             desc="Attendance calendar rules"
             accent="#8B5CF6"
             onPress={() => navigation.navigate("AttendanceCalendar")}
           />)}
-          {hasPermission("screen.attendance_regularization") && (<ActionCard
+          {canOpenScreen("AttendanceRegularization") && (<ActionCard
             icon="check-square"
-            label="Regularization"
+            label="Check-out Regularization"
             desc="Early and missed checkout approvals"
             accent="#F59E0B"
             onPress={() => navigation.navigate("AttendanceRegularization")}
           />)}
-          {(hasPermission("screen.attendance_control") || hasPermission("attendance.view") || hasPermission("attendance.edit")) && (<ActionCard
+          {canOpenScreen("BackdatedAttendance") && (<ActionCard
+            icon="edit-3"
+            label="Regularization Requests"
+            desc="Employee missed-day requests and HR corrections"
+            accent="#0EA5E9"
+            onPress={() => navigation.navigate("BackdatedAttendance")}
+          />)}
+          {canOpenScreen("AdvancedAttendanceReport") && (<ActionCard
             icon="bar-chart-2"
             label="Advanced Attendance"
             desc="Reconciliation, filters and 7-sheet export"
             accent="#059669"
             onPress={() => navigation.navigate("AdvancedAttendanceReport")}
           />)}
-          {hasPermission("screen.event_management") && (<ActionCard
+          {canOpenScreen("EventManagement") && (<ActionCard
             icon="calendar"
             label="Event Management"
             desc="Create & track events"
             accent="#F97316"
             onPress={() => navigation.navigate("EventManagement")}
           />)}
-          {(hasPermission("screen.leave_balance") || hasPermission("leave.view") || hasPermission("leave.approve")) && (<ActionCard
+          {canOpenScreen("LeaveBalance") && (<ActionCard
             icon="credit-card"
             label="Leave Balance"
             desc="Add or remove employee balance"
             accent="#10B981"
             onPress={() => navigation.navigate("LeaveBalance")}
           />)}
-          {hasPermission("screen.smartoffice_integration") && (<ActionCard
+          {canOpenScreen("SmartOfficeIntegration") && (<ActionCard
             icon="refresh-cw"
             label="Biometric Sync"
             desc="Fetch logs & update attendance"
             accent="#F97316"
             onPress={() => navigation.navigate("SmartOfficeIntegration")}
           />)}
-          {hasPermission("screen.smartoffice_integration") && (<ActionCard
+          {canOpenScreen("BiometricUserMatch") && (<ActionCard
             icon="users"
             label="Employee Match"
             desc="Link HRMS profiles to biometric identities"
             accent="#6B7280"
             onPress={() => navigation.navigate("BiometricUserMatch")}
           />)}
-          {(hasPermission("screen.user_management") || hasPermission("employee.view") || hasPermission("employee.edit")) && (<ActionCard
+          {canOpenScreen("SmartOfficeEmployeeImport") && (<ActionCard
             icon="upload-cloud"
             label="Bulk Employee Import"
             desc="Import employee profiles from a spreadsheet"
             accent="#475569"
             onPress={() => navigation.navigate("SmartOfficeEmployeeImport")}
           />)}
-          {hasPermission("screen.smartoffice_integration") && (<ActionCard
+          {canOpenScreen("SmartOfficeImportedData") && (<ActionCard
             icon="database"
             label="Imported Data"
             desc="Review SmartOffice users and punch logs"
             accent="#0F766E"
             onPress={() => navigation.navigate("SmartOfficeImportedData")}
           />)}
-                    {hasPermission("screen.permissions_manager") && (
-            <ActionCard
+                    {canOpenScreen("PermissionsManager") && (<ActionCard
               icon="shield"
               label="Permissions Manager"
               desc="Role-based access control"
@@ -530,8 +567,7 @@ export default function AdminDashboardScreen({ navigation }: Props) {
               onPress={() => navigation.navigate("PermissionsManager")}
             />
           )}
-          {hasPermission("screen.site_visit_observer") && (
-            <ActionCard
+          {canOpenScreen("SiteVisitObserver") && (<ActionCard
               icon="eye"
               label="Site Visit Observer"
               desc="Monitor field visits"
@@ -539,8 +575,7 @@ export default function AdminDashboardScreen({ navigation }: Props) {
               onPress={() => navigation.navigate("SiteVisitObserver")}
             />
           )}
-          {(hasPermission("screen.in_transit") || hasPermission("location.view_live")) && (
-            <ActionCard
+          {canOpenScreen("InTransit") && (<ActionCard
               icon="map"
               label="In Transit Monitor"
               desc="Track employee commutes"
@@ -548,8 +583,7 @@ export default function AdminDashboardScreen({ navigation }: Props) {
               onPress={() => navigation.navigate("InTransit")}
             />
           )}
-          {hasPermission("screen.duplicate_devices") && (
-            <ActionCard
+          {canOpenScreen("AdminDeviceSessions") && (<ActionCard
               icon="smartphone"
               label="Duplicate Devices"
               desc="Detect buddy punching"
@@ -557,8 +591,7 @@ export default function AdminDashboardScreen({ navigation }: Props) {
               onPress={() => navigation.navigate("AdminDeviceSessions")}
             />
           )}
-          {hasPermission("screen.office_settings") && (
-            <ActionCard
+          {canOpenScreen("OfficeSettings") && (<ActionCard
               icon="settings"
               label="Office Settings"
               desc="Offices, geofences and attendance rules"
@@ -566,29 +599,28 @@ export default function AdminDashboardScreen({ navigation }: Props) {
               onPress={() => navigation.navigate("OfficeSettings")}
             />
           )}
-          {hasPermission("screen.site_settings") && (<ActionCard
+          {canOpenScreen("SiteSettings") && (<ActionCard
               icon="map-pin"
               label="Site Settings"
               desc="Projects, saved sites and geofences"
               accent="#059669"
               onPress={() => navigation.navigate("SiteSettings")}
             />)}
-          {(hasPermission("screen.live_tracking") || hasPermission("location.view_live")) && (<ActionCard
+          {canOpenScreen("ActivityAnalysis") && (<ActionCard
               icon="activity"
               label="Activity Analysis"
               desc="Employee activity deep dive"
               accent={theme.primary}
               onPress={() => navigation.navigate("ActivityAnalysis")}
             />)}
-          {hasPermission("screen.notification_management") && (<ActionCard
+          {canOpenScreen("NotificationManagement") && (<ActionCard
               icon="bell"
               label="Send Notification"
               desc="Push to all or specific users"
               accent="#3B82F6"
               onPress={() => navigation.navigate("NotificationManagement")}
             />)}
-          {hasPermission("screen.audit_logs") && (
-            <ActionCard
+          {canOpenScreen("AuditLogs") && (<ActionCard
               icon="file-text"
               accent="#9CA3AF"
               label="Audit Logs"
@@ -596,8 +628,7 @@ export default function AdminDashboardScreen({ navigation }: Props) {
               onPress={() => navigation.navigate("AuditLogs")}
             />
           )}
-          {hasPermission("screen.anonymous_feedback") && (
-            <ActionCard
+          {canOpenScreen("AnonymousFeedback") && (<ActionCard
               icon="message-square"
               label="Anonymous Feedback"
               desc="View employee suggestions"

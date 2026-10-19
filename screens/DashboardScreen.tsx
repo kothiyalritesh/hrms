@@ -16,6 +16,7 @@ import Feather from "@expo/vector-icons/Feather";
 import { useFocusEffect, useIsFocused } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { ScreenScrollView } from "@/components/ScreenScrollView";
+import { NotificationHealthBanner } from "@/components/NotificationAlerts";
 import { ThemedText } from "@/components/ThemedText";
 import { useTheme } from "@/hooks/useTheme";
 import { useScreenRefresh } from "@/hooks/useScreenRefresh";
@@ -28,11 +29,14 @@ import GeofenceReasonModal from "@/components/modals/GeofenceReasonModal";
 import { OfficeService } from "@/services/office.service";
 import * as Location from "expo-location";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { getCurrentGPS } from "@/utils/gps";
+import { getCurrentGPS, gpsFailureMessage } from "@/utils/gps";
 import { secureStorage } from "@/utils/secureStorage";
 import { AttendanceFraudService } from "@/services/attendance-fraud.service";
 import { isDeveloperModeEnabled } from "expo-developer-mode";
 import { attendanceInternetAvailable } from "@/utils/attendanceConnectivity";
+import { OfflineAttendanceService } from "@/services/offline-attendance.service";
+import { istClock, runOfflineAttendanceAction } from "@/utils/offlineAttendanceFlow";
+import { DurableWriteOutbox } from "@/services/outbox/DurableWriteOutbox";
 import AttendanceCheckoutFlow, {
   type AttendanceNextAction,
 } from "@/components/AttendanceCheckoutFlow";
@@ -45,6 +49,7 @@ function showAlert(title: string, message?: string) {
     Alert.alert(title, message);
   }
 }
+
 import { useLocationTracking } from "@/contexts/LocationTrackingContext";
 import {
   EventAnnouncement,
@@ -60,6 +65,19 @@ import {
 } from "@/utils/format";
 import { DashboardSummaryService } from "@/services/dashboard-summary.service";
 
+import { describeAge, minutesAgo } from "@/utils/locationFreshness";
+
+function formatUpdatedAge(loadedAt: number | null): string {
+  if (loadedAt == null) return "Updating…";
+  const minutes = Math.floor(Math.max(0, Date.now() - loadedAt) / 60_000);
+  if (minutes < 1) return "Updated just now";
+  if (minutes <= 60) return `Updated ${minutes} min ago`;
+  return `Updated at ${new Date(loadedAt).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "Asia/Kolkata",
+  })}`;
+}
 type DashboardScreenProps = { navigation: NativeStackNavigationProp<any> };
 
 interface Task {
@@ -204,7 +222,8 @@ export default function DashboardScreen({ navigation }: DashboardScreenProps) {
   const { user } = useAuth();
   const isFocused = useIsFocused();
   const insets = useSafeAreaInsets();
-  const { health: trackingHealth } = useLocationTracking();
+  const { health: trackingHealth, recheck: recheckTracking } =
+    useLocationTracking();
 
   
   const [todayAttendance, setTodayAttendance] = useState<any>(null);
@@ -230,8 +249,6 @@ export default function DashboardScreen({ navigation }: DashboardScreenProps) {
     type: "success" | "error";
     text: string;
   } | null>(null);
-  const [offices, setOffices] = useState<any[]>([]);
-  const [showOfficePicker, setShowOfficePicker] = useState(false);
   const [userBaseLat, setUserBaseLat] = useState<number | null>(null);
   const [userBaseLng, setUserBaseLng] = useState<number | null>(null);
   const [isEscalationMember, setIsEscalationMember] = useState(false);
@@ -259,6 +276,19 @@ export default function DashboardScreen({ navigation }: DashboardScreenProps) {
   const [undoSeconds, setUndoSeconds] = useState(0);
   const dashboardRequestRef = useRef<Promise<void> | null>(null);
   const eventRequestRef = useRef<Promise<void> | null>(null);
+  const eventsGenerationRef = useRef(0);
+  const [eventsLoadError, setEventsLoadError] = useState<string | null>(null);
+  const [lastLoadedAt, setLastLoadedAt] = useState<number | null>(null);
+  const [, setUpdatedTick] = useState(0);
+  const [staleSession, setStaleSession] = useState<{
+    id: string;
+    date: string;
+  } | null>(null);
+  const attendanceToggleInFlightRef = useRef(false);
+  // Attendance saved on this phone while offline, not yet confirmed by the server.
+  const [offlineCheckInAt, setOfflineCheckInAt] = useState<string | null>(null);
+  const [offlineCheckOutPending, setOfflineCheckOutPending] = useState(false);
+  const offlinePendingCountRef = useRef(0);
 
   const isCheckedIn = !!(
     todayAttendance?.checkin_time ||
@@ -317,7 +347,17 @@ export default function DashboardScreen({ navigation }: DashboardScreenProps) {
   const loadData = useCallback(
     (force = false): Promise<void> => {
       if (!user?.id) return Promise.resolve();
-      if (dashboardRequestRef.current) return dashboardRequestRef.current;
+      if (dashboardRequestRef.current) {
+        // A manual refresh must not be satisfied by a load that started
+        // before it (possibly from cache): wait for it, then load fresh.
+        if (!force) return dashboardRequestRef.current;
+        const pending = dashboardRequestRef.current;
+        return pending.then(() => {
+          if (dashboardRequestRef.current) return dashboardRequestRef.current;
+          DashboardSummaryService.invalidateEmployee(user.id);
+          return loadDataRef.current(true);
+        });
+      }
 
       const request = (async () => {
         try {
@@ -358,18 +398,39 @@ export default function DashboardScreen({ navigation }: DashboardScreenProps) {
             !privilegedRole && Number(summary.direct_reports || 0) > 0,
           );
           setDashboardLoadError(null);
+          const serverNow = summary.server_now
+            ? Date.parse(summary.server_now)
+            : NaN;
+          setLastLoadedAt(Number.isFinite(serverNow) ? serverNow : Date.now());
 
-          if (!eventRequestRef.current) {
+          if (!summary.attendance) {
+            AttendanceService.getStalePreviousDaySession(user.id)
+              .then((stale) =>
+                setStaleSession(
+                  stale ? { id: stale.id, date: stale.date } : null,
+                ),
+              )
+              .catch(() => undefined);
+          } else {
+            setStaleSession(null);
+          }
+
+          if (!eventRequestRef.current || force) {
+            // Only the latest events request may set state.
+            const generation = ++eventsGenerationRef.current;
             const eventRequest = Promise.all([
               EventService.getEventsAvailableForAttendance(user.id),
               EventService.getAnnouncements(user.id),
             ])
               .then(([events, announcements]) => {
+                if (generation !== eventsGenerationRef.current) return;
                 setUpcomingEvents(events);
                 setEventAnnouncements(announcements);
+                setEventsLoadError(null);
               })
               .catch((eventError: any) => {
-                setDashboardLoadError(
+                if (generation !== eventsGenerationRef.current) return;
+                setEventsLoadError(
                   `Events could not be loaded: ${eventError?.message || "query failed"}`,
                 );
               })
@@ -397,11 +458,62 @@ export default function DashboardScreen({ navigation }: DashboardScreenProps) {
     },
     [user?.id, user?.role],
   );
+  const loadDataRef = useRef(loadData);
+  loadDataRef.current = loadData;
+
+  // The 15 s summary cache must not hide an attendance change just made.
+  const reloadAfterAttendanceChange = useCallback(() => {
+    if (user?.id) DashboardSummaryService.invalidateEmployee(user.id);
+    return loadData(true);
+  }, [user?.id, loadData]);
+
+  // Offline-saved attendance: show it, and reload from the server once it syncs.
+  useEffect(() => {
+    if (!user?.id) return;
+    const refreshOffline = async () => {
+      const pending = await OfflineAttendanceService.pending(user.id);
+      const checkIn = await OfflineAttendanceService.pendingCheckInToday(user.id);
+      setOfflineCheckInAt(checkIn?.payload.location.capturedAt ?? null);
+      setOfflineCheckOutPending(pending.some((item) => item.operationType === "ATTENDANCE_CHECKOUT"));
+      if (pending.length < offlinePendingCountRef.current) void reloadAfterAttendanceChange();
+      offlinePendingCountRef.current = pending.length;
+    };
+    void refreshOffline();
+    return DurableWriteOutbox.subscribe(() => void refreshOffline());
+  }, [user?.id, reloadAfterAttendanceChange]);
 
   useFocusEffect(
     useCallback(() => {
       void loadData();
-    }, [loadData]),
+      // Returning from Settings / the setup screen re-checks tracking too.
+      void recheckTracking();
+    }, [loadData, recheckTracking]),
+  );
+
+  // Re-render the "Updated …" age every 30 s while focused.
+  useEffect(() => {
+    if (!isFocused) return;
+    const interval = setInterval(() => setUpdatedTick((tick) => tick + 1), 30_000);
+    return () => clearInterval(interval);
+  }, [isFocused]);
+
+  // Confirmed office exit waiting for this employee's reason (server-detected).
+  const checkPendingGeofenceReason = useCallback(async () => {
+    if (!user?.id) return;
+    const { data, error } = await supabase.rpc("rpc_my_pending_geofence_reason");
+    if (error || !data || typeof data !== "object" || !(data as any).id) {
+      setGeofenceEvent(null);
+      return;
+    }
+    setGeofenceEvent({ id: String((data as any).id), distance: Number((data as any).distance) || 0 });
+  }, [user?.id]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void checkPendingGeofenceReason();
+      const timer = setInterval(() => void checkPendingGeofenceReason(), 5 * 60_000);
+      return () => clearInterval(timer);
+    }, [checkPendingGeofenceReason]),
   );
 
   // A biometric punch is imported by the server even when this app is already
@@ -434,7 +546,7 @@ export default function DashboardScreen({ navigation }: DashboardScreenProps) {
 
   const { refreshing, onRefresh } = useScreenRefresh(async () => {
     if (user?.id) DashboardSummaryService.invalidateEmployee(user.id);
-    await loadData(true);
+    await Promise.all([loadData(true), recheckTracking()]);
   });
 
   const acknowledgeEvent = async (announcement: EventAnnouncement) => {
@@ -490,7 +602,7 @@ export default function DashboardScreen({ navigation }: DashboardScreenProps) {
 
     const gps = await getCurrentGPS();
     if (!gps) {
-      showAlert("Unable to detect your current location. Please try again.");
+      showAlert("Location not available", gpsFailureMessage());
       return null;
     }
     if (gps.mocked) {
@@ -551,7 +663,7 @@ export default function DashboardScreen({ navigation }: DashboardScreenProps) {
         return showAlert("Unable to undo checkout", result.message);
       setUndoCheckout(null);
       await secureStorage.removeItem(`undo_checkout_${user.id}`);
-      await loadData();
+      await reloadAfterAttendanceChange();
       showAlert("Checkout undone", "Your attendance session is active again.");
     } finally {
       setAttendanceLoading(false);
@@ -591,16 +703,41 @@ export default function DashboardScreen({ navigation }: DashboardScreenProps) {
     }
   };
 
+  const runOfflineAttendance = async () => {
+    if (!user?.id) return;
+    setAttendanceLoading(true);
+    try {
+      const done = await runOfflineAttendanceAction({
+        userId: user.id,
+        serverCheckedIn: isCheckedIn,
+        serverCheckedOut: isCheckedIn && isCheckedOut,
+        getLocation: getCurrentLocation,
+        alert: showAlert,
+      });
+      if (done === "CHECKOUT") setOfflineCheckOutPending(true);
+    } finally {
+      setAttendanceLoading(false);
+    }
+  };
+
   const handleAttendanceToggle = async () => {
+    // Set before any await so a double tap cannot start two check-ins.
+    if (attendanceToggleInFlightRef.current) return;
+    attendanceToggleInFlightRef.current = true;
+    try {
+      await runAttendanceToggle();
+    } finally {
+      attendanceToggleInFlightRef.current = false;
+    }
+  };
+
+  const runAttendanceToggle = async () => {
     if (!user?.id) {
       showAlert("Error", "You must be logged in.");
       return;
     }
     if (!(await attendanceInternetAvailable())) {
-      showAlert(
-        "Internet Required",
-        "A verified internet connection is required to mark attendance. No offline attendance record was created.",
-      );
+      await runOfflineAttendance();
       return;
     }
 
@@ -684,14 +821,20 @@ export default function DashboardScreen({ navigation }: DashboardScreenProps) {
         : null;
 
       try {
-        await loadData();
+        await reloadAfterAttendanceChange();
       } catch {
         console.warn(
           "Check-in succeeded but the dashboard refresh was deferred",
         );
       }
       if (Platform.OS !== "web") {
-        navigation.navigate("LocationTrackingSetup");
+        // Start tracking for the new attendance; open the setup screen only
+        // when something actually needs the employee's attention.
+        void recheckTracking().then((checked) => {
+          if (checked.platformSupported && checked.warning) {
+            navigation.navigate("LocationTrackingSetup");
+          }
+        });
       }
       showAlert(
         "Checked In ✅",
@@ -746,7 +889,7 @@ export default function DashboardScreen({ navigation }: DashboardScreenProps) {
     try {
       const gps = await getCurrentGPS();
       if (!gps) {
-        showAlert("Location Required", "Could not get your location.");
+        showAlert("Location Required", gpsFailureMessage());
         return;
       }
       if (isCheckingOut) {
@@ -760,7 +903,7 @@ export default function DashboardScreen({ navigation }: DashboardScreenProps) {
             ? `You are already checked out from "${event.title}".`
             : `You have checked out from "${event.title}".`,
         );
-        await loadData();
+        await reloadAfterAttendanceChange();
         return;
       }
       const result = await EventService.checkInToEvent({
@@ -775,7 +918,7 @@ export default function DashboardScreen({ navigation }: DashboardScreenProps) {
             ? `You are already checked in to "${event.title}".`
             : `You have checked in to "${event.title}" — ${result.arrivalStatus === "LATE" ? `Late by ${result.lateMinutes} min` : "On Time"}.${result.compOffEligibleDays > 0 ? ` ${result.compOffEligibleDays} comp-off day(s) are pending HR approval.` : ""}`,
       );
-      await loadData();
+      await reloadAfterAttendanceChange();
     } catch (e: any) {
       showAlert(
         isCheckingOut ? "Event Check-Out Failed" : "Event Check-In Failed",
@@ -788,19 +931,21 @@ export default function DashboardScreen({ navigation }: DashboardScreenProps) {
   };
 
   // ── derived values ──────────────────────────────────────────────────────────
+  const offlineCheckedIn = !isCheckedIn && !!offlineCheckInAt;
   const attendanceLabel =
-    isCheckedIn && isCheckedOut
-      ? "Completed"
-      : isCheckedIn
+    (isCheckedIn && isCheckedOut) || offlineCheckOutPending
+      ? offlineCheckOutPending && !isCheckedOut
+        ? "Check-out saved offline"
+        : "Completed"
+      : isCheckedIn || offlineCheckedIn
         ? "Check Out"
         : "Check In";
-  const isOpenEventAttendance =
-    todayAttendance?.attendance_type === "EVENT" &&
-    isCheckedIn &&
-    !isCheckedOut;
   const openEvent = upcomingEvents.find(
     (event) => event.userCheckInTime && !event.userCheckOutTime,
   );
+  // The employee's own open event check-in (not a guessed attendance field)
+  // decides whether the main button checks out of the event.
+  const isOpenEventAttendance = !!openEvent && isCheckedIn && !isCheckedOut;
   const eventAttendanceLabel = openEvent
     ? "Event Check-Out"
     : upcomingEvents.length > 0 &&
@@ -814,7 +959,7 @@ export default function DashboardScreen({ navigation }: DashboardScreenProps) {
   const attendanceBtnIcon: keyof typeof Feather.glyphMap =
     isCheckedIn && isCheckedOut
       ? "check-circle"
-      : isCheckedIn
+      : isCheckedIn || offlineCheckedIn
         ? "log-out"
         : "log-in";
 
@@ -865,6 +1010,9 @@ export default function DashboardScreen({ navigation }: DashboardScreenProps) {
         />
       }
     >
+      <View style={{ marginHorizontal: Spacing.md, marginTop: Spacing.sm }}>
+        <NotificationHealthBanner />
+      </View>
       {dashboardLoadError ? (
         <View
           style={{
@@ -912,7 +1060,7 @@ export default function DashboardScreen({ navigation }: DashboardScreenProps) {
                 {toTitleCase(user?.role?.replace(/_/g, " "))}
               </ThemedText>
               <ThemedText type="caption" style={{ color: "rgba(255,255,255,0.8)", fontSize: 11, marginTop: 4 }}>
-                Updated just now
+                {formatUpdatedAge(lastLoadedAt)}
               </ThemedText>
           </View>
           <Pressable
@@ -962,7 +1110,7 @@ export default function DashboardScreen({ navigation }: DashboardScreenProps) {
             if (isOpenEventAttendance) setShowEventPicker(true);
             else handleAttendanceToggle();
           }}
-          disabled={attendanceLoading || (isCheckedIn && isCheckedOut)}
+          disabled={attendanceLoading || (isCheckedIn && isCheckedOut) || offlineCheckOutPending}
           style={({ pressed }) => [
             styles.checkInBtn,
             {
@@ -1012,6 +1160,37 @@ export default function DashboardScreen({ navigation }: DashboardScreenProps) {
           )}
         </Pressable>
 
+        {staleSession && !isCheckedIn ? (
+          <View style={styles.staleSessionCard}>
+            <Feather name="alert-triangle" size={15} color="#92400E" />
+            <ThemedText type="caption" style={styles.staleSessionText}>
+              Previous session on{" "}
+              {new Date(staleSession.date).toLocaleDateString("en-IN", {
+                weekday: "short",
+                day: "numeric",
+                month: "short",
+              })}{" "}
+              was not closed.
+            </ThemedText>
+            <Pressable
+              onPress={() => navigation.navigate("AttendanceDetails")}
+              style={({ pressed }) => [
+                styles.staleSessionAction,
+                { opacity: pressed ? 0.7 : 1 },
+              ]}
+            >
+              <ThemedText style={styles.staleSessionActionText}>
+                Regularize
+              </ThemedText>
+            </Pressable>
+          </View>
+        ) : null}
+
+        {offlineCheckedIn ? (
+          <ThemedText type="caption" style={styles.checkinTime}>
+            {`Checked in offline at ${istClock(offlineCheckInAt)} · waiting to sync (not confirmed yet)`}
+          </ThemedText>
+        ) : null}
         {isCheckedIn ? (
           <ThemedText type="caption" style={styles.checkinTime}>
             {isCheckedOut
@@ -1055,7 +1234,21 @@ export default function DashboardScreen({ navigation }: DashboardScreenProps) {
       <View style={[styles.body, isWeb && styles.bodyWeb]}>
         <Spacer height={Spacing.lg} />
 
-        {isCheckedIn && !isCheckedOut && trackingHealth.warning && Platform.OS !== "web" ? (
+        {/* Android app (also inside the HRMS app's web view): tracking status. */}
+        {trackingHealth.platformSupported && !trackingHealth.warning && trackingHealth.trackingActive ? (
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, borderRadius: 12, paddingVertical: 9, paddingHorizontal: 12, marginBottom: 12, backgroundColor: theme.successBg, borderWidth: 1, borderColor: theme.success }}>
+            <Feather name="map-pin" size={15} color={theme.successText} />
+            <ThemedText style={{ color: theme.successText, fontSize: 13, fontWeight: "700", flex: 1 }}>
+              Location sharing on
+              {trackingHealth.lastLocationAt ? ` · last update ${describeAge(minutesAgo(trackingHealth.lastLocationAt))}` : ""}
+            </ThemedText>
+          </View>
+        ) : null}
+        {/* Tracking problems only (never notification permission), and only
+            while tracking is expected: checked in or travelling to a visit. */}
+        {trackingHealth.platformSupported &&
+        trackingHealth.warning &&
+        (trackingHealth.trackingExpected || (isCheckedIn && !isCheckedOut)) ? (
           <TouchableOpacity
             style={{
               flexDirection: "row",
@@ -1064,27 +1257,34 @@ export default function DashboardScreen({ navigation }: DashboardScreenProps) {
               borderRadius: 12,
               padding: 13,
               marginBottom: 12,
-              backgroundColor: "#FEF3C7",
+              backgroundColor: theme.warningBg,
               borderWidth: 1,
-              borderColor: "#F59E0B",
+              borderColor: theme.warning,
             }}
             onPress={() => navigation.navigate("LocationTrackingSetup")}
             activeOpacity={0.82}
           >
-            <Feather name="alert-triangle" size={18} color="#92400E" />
+            <Feather name="alert-triangle" size={18} color={theme.warningText} />
             <View style={{ flex: 1 }}>
-              <ThemedText style={{ color: "#92400E", fontWeight: "800" }}>
+              <ThemedText style={{ color: theme.warningText, fontWeight: "800" }}>
                 Location tracking needs attention
               </ThemedText>
               <ThemedText
-                style={{ color: "#92400E", fontSize: 12, marginTop: 2 }}
+                style={{ color: theme.warningText, fontSize: 12, marginTop: 2 }}
                 numberOfLines={2}
               >
                 {trackingHealth.warning}
               </ThemedText>
             </View>
-            <Feather name="chevron-right" size={18} color="#92400E" />
+            <Feather name="chevron-right" size={18} color={theme.warningText} />
           </TouchableOpacity>
+        ) : null}
+        {/* Notification permission is covered by NotificationHealthBanner above. */}
+
+        {eventsLoadError ? (
+          <ThemedText type="caption" style={styles.eventsLoadErrorText}>
+            {eventsLoadError}
+          </ThemedText>
         ) : null}
 
         {eventAnnouncements.length > 0 ? (
@@ -1264,10 +1464,12 @@ export default function DashboardScreen({ navigation }: DashboardScreenProps) {
           <StatCard
             icon="map-pin"
             title="Site Visits"
-            value={pendingTasks.filter((t) => t.type === "site_visit").length}
-            subtitle="Scheduled"
+            value={pendingVisits}
+            subtitle="Tap to add a visit"
             color={C.info}
-            onPress={() => navigation.navigate("TasksTab")}
+            onPress={() =>
+              navigation.navigate("FieldVisits", { startVisitIntent: "site" })
+            }
           />
           <StatCard
             icon="sun"
@@ -1296,7 +1498,7 @@ export default function DashboardScreen({ navigation }: DashboardScreenProps) {
             icon="file-plus"
             label="Apply Leave"
             color={C.primary}
-            onPress={() => navigation.navigate("LeaveScreen")}
+            onPress={() => navigation.navigate("LeaveScreen", { openApply: true })}
           />
           <QuickAction
             icon="map-pin"
@@ -1342,7 +1544,8 @@ export default function DashboardScreen({ navigation }: DashboardScreenProps) {
               label="Live Track"
               color={C.primary}
               onPress={() =>
-                navigation.navigate("AdminTab", { screen: "LiveTracking" })
+                // initial: false keeps the HR Panel home under Live Tracking.
+                navigation.navigate("AdminTab", { screen: "LiveTracking", initial: false })
               }
             />
           ) : null}
@@ -1574,6 +1777,16 @@ export default function DashboardScreen({ navigation }: DashboardScreenProps) {
         </View>
       </Modal>
 
+      {geofenceEvent ? (
+        <GeofenceReasonModal
+          visible
+          eventId={geofenceEvent.id}
+          distance={geofenceEvent.distance}
+          onClose={() => setGeofenceEvent(null)}
+          onSubmitSuccess={() => setGeofenceEvent(null)}
+        />
+      ) : null}
+
       {/* ── Event Picker Modal ── */}
       <Modal
         visible={showEventPicker}
@@ -1705,7 +1918,7 @@ export default function DashboardScreen({ navigation }: DashboardScreenProps) {
         visible={showAttendanceCheckout}
         userId={user.id}
         onCancel={() => setShowAttendanceCheckout(false)}
-        onCheckedOut={loadData}
+        onCheckedOut={() => reloadAfterAttendanceChange()}
         onStartVisit={(type: AttendanceNextAction) =>
           navigation.navigate("FieldVisits", { startVisitIntent: type })
         }
@@ -1838,6 +2051,38 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginTop: 7,
     fontSize: 11,
+  },
+  staleSessionCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: Spacing.sm,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: "#FEF3C7",
+    borderWidth: 1,
+    borderColor: "#FDE68A",
+  },
+  staleSessionText: {
+    flex: 1,
+    color: "#92400E",
+    fontSize: 12,
+  },
+  staleSessionAction: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: "#92400E",
+  },
+  staleSessionActionText: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  eventsLoadErrorText: {
+    color: "#991B1B",
+    marginBottom: 12,
   },
 
   // ── event / apk ──────────────────────────────────────────────────────────────

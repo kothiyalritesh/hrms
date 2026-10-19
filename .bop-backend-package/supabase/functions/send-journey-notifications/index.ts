@@ -145,6 +145,7 @@ Deno.serve(async (request) => {
         title,
         body: message,
         sound: "default",
+        priority: "high",
         channelId: "hrms_manager_updates",
         data: {
           type: "manager_journey_update",

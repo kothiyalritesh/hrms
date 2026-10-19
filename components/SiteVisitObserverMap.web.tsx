@@ -7,7 +7,7 @@
  * with timeline scrubbing.
  */
 
-import React, { useRef, useEffect } from "react";
+import React, { useRef, useEffect, useState } from "react";
 import { View, StyleSheet, TouchableOpacity } from "react-native";
 import Feather from "@expo/vector-icons/Feather";
 import { ThemedText } from "@/components/ThemedText";
@@ -21,6 +21,7 @@ import { CleanedRoutePoint } from "@/utils/routeCleanup";
 import { loadGoogleMaps } from "@/utils/googleMapsLoader";
 import { advancedMapOptions } from "@/utils/googleAdvancedMarkers";
 
+import { freshnessOf, minutesAgo } from "@/utils/locationFreshness";
 export interface SiteVisitObserverMapProps {
   employees: SiteVisitObserverEmployee[];
   selectedEmployee: SiteVisitObserverEmployee | null;
@@ -82,9 +83,17 @@ export default function SiteVisitObserverMap({
   const mapInstanceRef = useRef<any>(null);
   const markersRef = useRef<any[]>([]);
   const markersMapRef = useRef<Map<string, any>>(new Map());
+  // Marker click handlers read the newest employee object, not the one from
+  // when the marker was created.
+  const latestEmployeeRef = useRef<Map<string, any>>(new Map());
   const destMarkerRef = useRef<any>(null);
   const polylineRef = useRef<any>(null);
   const playbackMarkerRef = useRef<any>(null);
+  const geofenceCircleRef = useRef<any>(null);
+  // Effects that draw on the map must re-run once the map exists; data often
+  // arrives before the Google Maps script has loaded.
+  const [mapReady, setMapReady] = useState(false);
+  const [mapError, setMapError] = useState<string | null>(null);
 
   // Initialize web map
   useEffect(() => {
@@ -110,9 +119,11 @@ export default function SiteVisitObserverMap({
           );
           mapInstanceRef.current = map;
         }
+        setMapReady(true);
       })
       .catch((err) => {
         console.warn("[SiteVisitObserverMap.web] Google Maps load failed:", err);
+        if (!isCancelled) setMapError("The map could not be loaded. Check the internet connection and refresh.");
       });
 
     return () => {
@@ -146,20 +157,37 @@ export default function SiteVisitObserverMap({
       const status = emp.tracking?.status ?? emp.tracking_status ?? "DEFAULT";
       const markerCfg = getMarkerConfig(status);
       const firstName = emp.name.split(" ")[0];
+      latestEmployeeRef.current.set(emp.employee_id, emp);
+      // Never draw an old position as if it were current.
+      const ageMins = minutesAgo(emp.tracking?.last_location_at || emp.tracking?.updated_at || emp.updated_at);
+      const fresh = freshnessOf(ageMins);
+      const ended = emp.tracking?.signal_status === "ENDED";
+      const ageTag = ended || fresh === "LIVE" || ageMins == null ? "" : ` · ${Math.round(ageMins)}m`;
+      const opacity = ended || fresh === "LIVE" || fresh === "RECENT" ? 1 : 0.45;
+      const title = `${emp.name} • ${markerCfg.labelText}${fresh === "STALE" && !ended ? " • last known" : ""}`;
 
       if (currentMap.has(emp.employee_id)) {
         // Selective in-place update
         const existingMarker = currentMap.get(emp.employee_id);
         existingMarker.setPosition(pos);
-        existingMarker.setTitle(`${emp.name} • ${markerCfg.labelText}`);
+        existingMarker.setTitle(title);
+        existingMarker.setOpacity(opacity);
+        existingMarker.setLabel({
+          text: `${markerCfg.symbol} ${firstName}${ageTag}`,
+          color: "#111827",
+          fontSize: "12px",
+          fontWeight: "700",
+          className: "snapchat-observer-marker",
+        });
       } else {
         // Create new Snapchat-style labeled marker
         const marker = new google.maps.Marker({
           position: pos,
           map,
-          title: `${emp.name} • ${markerCfg.labelText}`,
+          title,
+          opacity,
           label: {
-            text: `${markerCfg.symbol} ${firstName}`,
+            text: `${markerCfg.symbol} ${firstName}${ageTag}`,
             color: "#111827",
             fontSize: "12px",
             fontWeight: "700",
@@ -168,7 +196,7 @@ export default function SiteVisitObserverMap({
         });
 
         marker.addListener("click", () => {
-          onSelectEmployee(emp);
+          onSelectEmployee(latestEmployeeRef.current.get(emp.employee_id) ?? emp);
         });
 
         currentMap.set(emp.employee_id, marker);
@@ -211,6 +239,35 @@ export default function SiteVisitObserverMap({
       destMarkerRef.current.setMap(null);
     }
 
+    // Allowed check-in radius around the selected visit's site
+    if (
+      selectedVisit &&
+      selectedVisit.destination_lat != null &&
+      selectedVisit.destination_lon != null
+    ) {
+      const center = { lat: selectedVisit.destination_lat, lng: selectedVisit.destination_lon };
+      const radius = Math.max(25, Number(selectedVisit.radius_m) || 100);
+      if (!geofenceCircleRef.current) {
+        geofenceCircleRef.current = new google.maps.Circle({
+          map,
+          center,
+          radius,
+          strokeColor: "#7C3AED",
+          strokeOpacity: 0.8,
+          strokeWeight: 2,
+          fillColor: "#7C3AED",
+          fillOpacity: 0.08,
+          clickable: false,
+        });
+      } else {
+        geofenceCircleRef.current.setCenter(center);
+        geofenceCircleRef.current.setRadius(radius);
+        geofenceCircleRef.current.setMap(map);
+      }
+    } else if (geofenceCircleRef.current) {
+      geofenceCircleRef.current.setMap(null);
+    }
+
     if (hasPoints && !polylineCoords.length) {
       if (selectedEmployee) {
         const selLat = selectedEmployee.tracking?.latitude ?? selectedEmployee.latest_lat;
@@ -222,7 +279,7 @@ export default function SiteVisitObserverMap({
         map.fitBounds(bounds);
       }
     }
-  }, [employees, selectedEmployee, selectedVisit, onSelectEmployee, polylineCoords.length]);
+  }, [mapReady, employees, selectedEmployee, selectedVisit, onSelectEmployee, polylineCoords.length]);
 
   // Route Polyline
   useEffect(() => {
@@ -250,7 +307,7 @@ export default function SiteVisitObserverMap({
       for (const p of path) bounds.extend(p);
       map.fitBounds(bounds);
     }
-  }, [polylineCoords]);
+  }, [mapReady, polylineCoords]);
 
   // Animated Playback Marker
   useEffect(() => {
@@ -281,10 +338,18 @@ export default function SiteVisitObserverMap({
     } else {
       playbackMarkerRef.current.setPosition(pos);
     }
-  }, [isPlaying, activePlaybackPoint]);
+  }, [mapReady, isPlaying, activePlaybackPoint]);
 
   return (
     <View style={s.container}>
+      {mapError ? (
+        <View style={{ position: "absolute", zIndex: 5, top: 12, left: 12, right: 12, padding: 12, borderRadius: 10, backgroundColor: theme.backgroundDefault, borderWidth: 1, borderColor: theme.border }}>
+          <ThemedText style={{ fontWeight: "700" }}>{mapError}</ThemedText>
+          <ThemedText type="caption" style={{ color: theme.textSecondary }}>
+            The employee list and reviews still work.
+          </ThemedText>
+        </View>
+      ) : null}
       {/* HTML container for Google Maps on Web */}
       <div
         ref={containerRef}
@@ -378,12 +443,14 @@ const s = StyleSheet.create({
   },
   playbackBar: {
     position: "absolute",
-    top: 12,
-    left: 12,
-    right: 12,
+    top: 8,
+    left: 8,
+    right: 8,
     flexDirection: "row",
+    flexWrap: "wrap",
     alignItems: "center",
-    padding: 10,
+    rowGap: 6,
+    padding: 8,
     borderRadius: BorderRadius.lg,
     elevation: 4,
     shadowColor: "#000",
@@ -394,23 +461,24 @@ const s = StyleSheet.create({
     zIndex: 10,
   },
   playBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: "#7C3AED",
     alignItems: "center",
     justifyContent: "center",
   },
   restartBtn: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: "#F3E8FF",
     alignItems: "center",
     justifyContent: "center",
   },
   scrubContainer: {
     flex: 1,
+    minWidth: 140,
     gap: 4,
   },
   scrubTimeRow: {
@@ -419,7 +487,7 @@ const s = StyleSheet.create({
     alignItems: "center",
   },
   playbackText: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: "700",
   },
   speedSelector: {
@@ -427,8 +495,11 @@ const s = StyleSheet.create({
     gap: 4,
   },
   speedBtn: {
+    minWidth: 36,
+    minHeight: 32,
     paddingHorizontal: 6,
-    paddingVertical: 4,
+    alignItems: "center",
+    justifyContent: "center",
     borderRadius: 6,
     backgroundColor: "#F3F4F6",
   },
@@ -436,7 +507,7 @@ const s = StyleSheet.create({
     backgroundColor: "#7C3AED",
   },
   speedText: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: "600",
     color: "#4B5563",
   },

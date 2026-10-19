@@ -8,11 +8,13 @@ import {
   StyleSheet,
 } from "react-native";
 import MapView, { Marker, Polyline } from "react-native-maps";
+import SafeMapView from "@/components/SafeMapView";
 import Feather from "@expo/vector-icons/Feather";
 import { ThemedText } from "@/components/ThemedText";
 import Spacer from "@/components/Spacer";
 import { useTheme } from "@/hooks/useTheme";
 import { parseDatabaseTimestamp } from "@/utils/businessDate";
+import LocationDayStory, { LocationStory } from "@/components/LocationDayStory";
 
 export interface PingPoint {
   latitude: number | null;
@@ -21,6 +23,9 @@ export interface PingPoint {
   gps_available: boolean;
   status: string;
   source?: string;
+  /** Server quality of the point (RELIABLE, STALE, LOW_ACCURACY, IMPOSSIBLE_SPEED, MOCKED). */
+  quality?: string;
+  accuracy?: number | null;
 }
 
 type ValidPingPoint = PingPoint & { latitude: number; longitude: number };
@@ -32,6 +37,8 @@ interface Props {
   pings: PingPoint[];
   loading: boolean;
   onClose: () => void;
+  /** The day as stays / trips / gaps (rpc_location_timeline). */
+  story?: LocationStory | null;
 }
 
 function toIST(recorded_at: string) {
@@ -50,6 +57,7 @@ export default function LocationTimelineModal({
   pings,
   loading,
   onClose,
+  story,
 }: Props) {
   const { theme } = useTheme();
   const validPings = pings.filter(
@@ -72,7 +80,7 @@ export default function LocationTimelineModal({
                 📍 {employeeName}
               </ThemedText>
               <ThemedText style={{ color: theme.textSecondary, fontSize: 12 }}>
-                Hourly location timeline — {date}
+                Location timeline — {date}
               </ThemedText>
             </View>
             <TouchableOpacity onPress={onClose}>
@@ -90,7 +98,7 @@ export default function LocationTimelineModal({
             >
               Loading...
             </ThemedText>
-          ) : validPings.length === 0 ? (
+          ) : validPings.length === 0 && !story?.events?.length ? (
             <View style={{ alignItems: "center", paddingTop: 40 }}>
               <Feather name="map-pin" size={32} color={theme.textSecondary} />
               <Spacer height={12} />
@@ -100,7 +108,13 @@ export default function LocationTimelineModal({
             </View>
           ) : (
             <>
-              <MapView
+              {story ? (
+                <ScrollView style={{ maxHeight: 240 }}>
+                  <LocationDayStory story={story} />
+                </ScrollView>
+              ) : null}
+              {validPings.length > 0 ? (
+              <SafeMapView
                 style={s.map}
                 initialRegion={{
                   latitude: validPings[0].latitude,
@@ -137,7 +151,8 @@ export default function LocationTimelineModal({
                     }
                   />
                 ))}
-              </MapView>
+              </SafeMapView>
+              ) : null}
               <PingList pings={validPings} theme={theme} />
             </>
           )}

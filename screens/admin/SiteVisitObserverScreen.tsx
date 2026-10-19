@@ -12,14 +12,16 @@
  * - Route breadcrumb cleanup (filters mocked & invalid coords) and timestamp-driven playback
  */
 
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   View,
   StyleSheet,
   TouchableOpacity,
-  ScrollView,
   ActivityIndicator,
-  Alert, useWindowDimensions, FlatList } from "react-native";
+  Alert,
+  useWindowDimensions,
+  FlatList,
+} from "react-native";
 import Feather from "@expo/vector-icons/Feather";
 import SiteVisitObserverMap from "@/components/SiteVisitObserverMap";
 import ObserverSummaryCards from "@/components/observer/ObserverSummaryCards";
@@ -32,7 +34,7 @@ import { useTheme } from "@/hooks/useTheme";
 import { Spacing, BorderRadius } from "@/constants/theme";
 import { supabase } from "@/lib/supabase";
 import { BusinessClockService } from "@/services/business-clock.service";
-import { getBusinessDateIST } from "@/utils/businessDate";
+import { addBusinessDays, getBusinessDateIST } from "@/utils/businessDate";
 import { toTitleCase } from "@/utils/format";
 import {
   SiteVisitObserverData,
@@ -44,6 +46,7 @@ import { cleanRouteBreadcrumbs } from "@/utils/routeCleanup";
 import { computeRouteQuality } from "@/utils/gpsQuality";
 import { useRoutePlayback } from "@/hooks/useRoutePlayback";
 
+import { freshnessOf, minutesAgo } from "@/utils/locationFreshness";
 function getTodayISTString(): string {
   return getBusinessDateIST();
 }
@@ -112,19 +115,19 @@ function SiteVisitObserverScreenContent() {
   }, []);
 
   // Fetch observer data
-  const loadObserverData = useCallback(async (date: string) => {
-    setLoading(true);
+  const loadObserverData = useCallback(async (date: string, silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const { data, error } = await supabase.rpc("get_site_visit_observer_data", { p_date: date, p_employee_id: null, p_visit_id: null });
       if (error) throw error;
       if (data?.error === "PERMISSION_DENIED") {
-        Alert.alert("Access Denied", "You do not have permission to view Site Visit Observer.");
+        if (!silent) Alert.alert("Access Denied", "You do not have permission to view Site Visit Observer.");
         return;
       }
       setObserverData(data as SiteVisitObserverData);
     } catch (err: any) {
       console.error("[SiteVisitObserver] load error:", err);
-      Alert.alert("Error", err?.message || "Failed to load observer data.");
+      if (!silent) Alert.alert("Error", err?.message || "Failed to load observer data.");
     } finally {
       setLoading(false);
     }
@@ -134,7 +137,68 @@ function SiteVisitObserverScreenContent() {
     void loadObserverData(selectedDate);
   }, [selectedDate, loadObserverData]);
 
+  // Realtime can be suspended on mobile networks: refresh live data every minute.
+  useEffect(() => {
+    if (selectedDate !== todayStr) return;
+    const timer = setInterval(() => void loadObserverData(selectedDate, true), 60_000);
+    return () => clearInterval(timer);
+  }, [selectedDate, todayStr, loadObserverData]);
+
+  // Keep the open employee / visit in step with refreshed data (e.g. after a review).
+  useEffect(() => {
+    if (!observerData || !selectedEmployee) return;
+    const fresh = (observerData.employees as any[]).find(
+      (e) => e.employee_id === (selectedEmployee as any).employee_id,
+    );
+    if (!fresh) return;
+    setSelectedEmployee(fresh);
+    if (selectedVisit) {
+      const freshVisit = (fresh.visits || []).find((v: any) => v.visit_id === selectedVisit.visit_id);
+      if (freshVisit) setSelectedVisit(freshVisit);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [observerData]);
+
   // Realtime subscription in live mode (selective updates without full-page re-fetch)
+  // Ages keep moving between updates: live -> recent -> no signal without a reload.
+  useEffect(() => {
+    if (!isLiveMode) return;
+    const timer = setInterval(() => {
+      setObserverData((prev: any) => {
+        if (!prev?.employees) return prev;
+        let changed = false;
+        const employees = prev.employees.map((emp: any) => {
+          const t = emp.tracking;
+          if (!t || t.signal_status === "ENDED") return emp;
+          const fresh = freshnessOf(minutesAgo(t.last_location_at || t.updated_at));
+          const signal = fresh === "LIVE" ? "LIVE" : fresh === "RECENT" ? "DELAYED" : "SIGNAL_LOST";
+          if (signal === t.signal_status) return emp;
+          changed = true;
+          return {
+            ...emp,
+            tracking: {
+              ...t,
+              signal_status: signal,
+              tracking_health: signal === "LIVE" ? "ACTIVE" : signal === "DELAYED" ? "DELAYED" : "STALE",
+            },
+          };
+        });
+        if (!changed) return prev;
+        return {
+          ...prev,
+          employees,
+          summary: prev.summary
+            ? {
+                ...prev.summary,
+                signal_lost: employees.filter((e: any) => e.tracking?.signal_status === "SIGNAL_LOST").length,
+              }
+            : prev.summary,
+        };
+      });
+    }, 60_000);
+    return () => clearInterval(timer);
+  }, [isLiveMode]);
+
   useEffect(() => {
     if (!isLiveMode) return;
 
@@ -156,24 +220,24 @@ function SiteVisitObserverScreenContent() {
 
             const nextEmployees = prev.employees.map((emp: any) => {
               if (emp.employee_id === updated.user_id) {
-                const recordedTime = new Date(updated.recorded_at || updated.updated_at).getTime();
-                const nowTime = Date.now();
-                const ageMinutes = (nowTime - recordedTime) / 60000;
-
-                let signalStatus: "LIVE" | "DELAYED" | "SIGNAL_LOST" = "LIVE";
-                if (ageMinutes > 5) signalStatus = "SIGNAL_LOST";
-                else if (ageMinutes > 2) signalStatus = "DELAYED";
+                // Same rule as every location screen: LIVE <= 5, RECENT <= 15 min.
+                const fresh = freshnessOf(
+                  minutesAgo(updated.last_location_at || updated.recorded_at || updated.updated_at),
+                );
+                const signalStatus: "LIVE" | "DELAYED" | "SIGNAL_LOST" =
+                  fresh === "LIVE" ? "LIVE" : fresh === "RECENT" ? "DELAYED" : "SIGNAL_LOST";
 
                 const newTracking = {
                   ...emp.tracking,
-                  status: updated.tracking_status || emp.tracking?.status || "AT_SITE",
                   signal_status: signalStatus,
+                  tracking_health: signalStatus === "LIVE" ? "ACTIVE" : signalStatus === "DELAYED" ? "DELAYED" : "STALE",
                   latitude: updated.latitude,
                   longitude: updated.longitude,
                   accuracy: updated.accuracy_m,
                   battery_level: updated.battery_level,
                   speed_mps: updated.speed_mps,
                   updated_at: updated.recorded_at || updated.updated_at,
+                  last_location_at: updated.last_location_at || updated.recorded_at,
                 };
 
                 return {
@@ -181,7 +245,6 @@ function SiteVisitObserverScreenContent() {
                   tracking: newTracking,
                   latest_lat: updated.latitude,
                   latest_lon: updated.longitude,
-                  tracking_status: updated.tracking_status,
                   updated_at: updated.recorded_at || updated.updated_at,
                 };
               }
@@ -199,8 +262,12 @@ function SiteVisitObserverScreenContent() {
     };
   }, [isLiveMode]);
 
-  const { width } = useWindowDimensions();
+
+  const { width, height: windowHeight } = useWindowDimensions();
   const isDesktop = width >= 768;
+  // Phones / small tablets: one vertical column with a fixed-height map.
+  const mobileMapHeight = Math.round(Math.min(320, Math.max(260, Math.min(width * 0.8, windowHeight * 0.4))));
+  const mobileListRef = useRef<FlatList<any>>(null);
 
   const allEmployees = (observerData?.employees ?? []) as any[];
 
@@ -233,7 +300,11 @@ function SiteVisitObserverScreenContent() {
       }
 
       // 3. Status Filter
-      if (statusFilter !== "ALL") {
+      if (statusFilter === "SIGNAL_LOST") {
+        if (emp.tracking?.signal_status !== "SIGNAL_LOST") return false;
+      } else if (statusFilter === "FLAGGED") {
+        if (!(Number(emp.flagged_count) > 0)) return false;
+      } else if (statusFilter !== "ALL") {
         const trackingStatus = emp.tracking?.status ?? emp.tracking_status;
         if (trackingStatus !== statusFilter) return false;
       }
@@ -248,70 +319,152 @@ function SiteVisitObserverScreenContent() {
     at_site: 0,
     completed: 0,
     signal_lost: 0,
+    flagged: 0,
   };
 
-  return (
-    <ThemedView style={s.container}>
-      {/* Top Header Bar */}
-      <View style={[s.headerBar, { backgroundColor: theme.backgroundDefault, borderBottomColor: theme.border }]}>
-        <View style={s.headerTitleRow}>
-          <View>
-            <ThemedText type="h3">Site Visit Observer</ThemedText>
-            <ThemedText type="caption" style={{ color: theme.textSecondary }}>
-              Date: {selectedDate}
+  const selectEmployee = (emp: any) => {
+    setSelectedEmployee(emp);
+    if (emp.visits && emp.visits.length > 0) {
+      setSelectedVisit(emp.visits[0]);
+    } else {
+      setSelectedVisit(null);
+    }
+  };
+  const clearSelection = () => {
+    setSelectedEmployee(null);
+    setSelectedVisit(null);
+  };
+
+  const selectedBg = theme.primary + "1A";
+
+  const renderEmployeeCard = (emp: any) => {
+    const isSelected = (selectedEmployee as any)?.employee_id === emp.employee_id;
+    const trackingStatus = emp.tracking?.status ?? emp.tracking_status;
+    const statusColor =
+      trackingStatus === "IN_TRANSIT" ? "#6366F1" : trackingStatus === "AT_SITE" ? "#10B981" : "#6B7280";
+    const visitCount = emp.visits?.length ?? 0;
+    const currentVisit = emp.visits?.[0];
+    const place = currentVisit ? currentVisit.project_name || currentVisit.location_name : null;
+    return (
+      <TouchableOpacity
+        key={`emp-${emp.employee_id}`}
+        style={[
+          s.empCard,
+          { backgroundColor: theme.backgroundDefault, borderColor: theme.border },
+          isSelected && { borderColor: theme.primary, backgroundColor: selectedBg },
+        ]}
+        onPress={() => {
+          selectEmployee(emp);
+          // On phones the map sits above the list: bring it into view.
+          if (!isDesktop) mobileListRef.current?.scrollToOffset({ offset: 0, animated: true });
+        }}
+        accessibilityRole="button"
+        accessibilityLabel={`Show ${toTitleCase(emp.name)} on the map`}
+      >
+        <View style={s.empCardRow}>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <ThemedText style={[s.empCardName, isSelected && { color: theme.primary }]} numberOfLines={1}>
+              {toTitleCase(emp.name)}
+            </ThemedText>
+            <ThemedText style={[s.empCardMeta, { color: theme.textSecondary }]} numberOfLines={1}>
+              {[emp.employee_no, emp.department || "No Dept"].filter(Boolean).join(" · ")} · {visitCount} visit
+              {visitCount !== 1 ? "s" : ""}
+            </ThemedText>
+            {place ? (
+              <ThemedText style={[s.empCardMeta, { color: theme.textSecondary }]} numberOfLines={1}>
+                📍 {place}
+              </ThemedText>
+            ) : null}
+          </View>
+          {trackingStatus ? (
+            <View style={[s.statusBadge, { backgroundColor: statusColor + "20" }]}>
+              <ThemedText style={[s.statusBadgeText, { color: statusColor }]} numberOfLines={1}>
+                {String(trackingStatus).replace("_", " ")}
+              </ThemedText>
+            </View>
+          ) : null}
+        </View>
+      </TouchableOpacity>
+    );
+  };
+
+  const header = (
+    <View style={[s.headerBar, { backgroundColor: theme.backgroundDefault, borderBottomColor: theme.border }]}>
+      <View style={s.headerTitleRow}>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <ThemedText type={isDesktop ? "h3" : "h4"} numberOfLines={1}>Site Visit Observer</ThemedText>
+          <ThemedText type="caption" style={{ color: theme.textSecondary }} numberOfLines={1}>
+            Date: {selectedDate}
+          </ThemedText>
+        </View>
+        <View style={s.headerBadges}>
+          <View
+            style={[
+              s.modeBadge,
+              { backgroundColor: isLiveMode ? theme.successBg : theme.backgroundSecondary },
+            ]}
+          >
+            <View style={[s.dot, { backgroundColor: isLiveMode ? "#10B981" : "#6B7280" }]} />
+            <ThemedText
+              style={[s.modeText, { color: isLiveMode ? theme.successText : theme.textSecondary }]}
+              numberOfLines={1}
+            >
+              {isLiveMode ? (isDesktop ? "LIVE REALTIME" : "LIVE") : "HISTORICAL"}
             </ThemedText>
           </View>
-          <View style={s.headerBadges}>
-            <View style={[s.modeBadge, isLiveMode ? s.liveBadge : s.historicalBadge]}>
-              <View style={[s.dot, { backgroundColor: isLiveMode ? "#10B981" : "#6B7280" }]} />
-              <ThemedText style={s.modeText}>{isLiveMode ? "LIVE REALTIME" : "HISTORICAL"}</ThemedText>
-            </View>
-            <TouchableOpacity
-              style={[s.refreshBtn, { backgroundColor: theme.primary || "#7C3AED" }]}
-              onPress={() => void loadObserverData(selectedDate)}
-              disabled={loading}
-            >
+          <TouchableOpacity
+            style={s.refreshHit}
+            onPress={() => void loadObserverData(selectedDate)}
+            disabled={loading}
+            accessibilityRole="button"
+            accessibilityLabel="Refresh"
+          >
+            <View style={[s.refreshBtn, { backgroundColor: theme.primary || "#7C3AED" }]}>
               {loading ? (
                 <ActivityIndicator size="small" color="#fff" />
               ) : (
-                <Feather name="refresh-cw" size={14} color="#fff" />
+                <Feather name="refresh-cw" size={15} color="#fff" />
               )}
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* Date Quick Switcher */}
-        <View style={s.dateSwitcherRow}>
-          <TouchableOpacity
-            style={[s.dateBtn, selectedDate === todayStr && s.activeDateBtn]}
-            onPress={() => {
-              setSelectedDate(todayStr);
-              setSelectedEmployee(null);
-              setSelectedVisit(null);
-            }}
-          >
-            <ThemedText style={[s.dateBtnText, selectedDate === todayStr && s.activeDateBtnText]}>
-              Today
-            </ThemedText>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[s.dateBtn, selectedDate !== todayStr && s.activeDateBtn]}
-            onPress={() => {
-              const y = new Date();
-              y.setDate(y.getDate() - 1);
-              const yStr = getBusinessDateIST(y);
-              setSelectedDate(yStr);
-              setSelectedEmployee(null);
-              setSelectedVisit(null);
-            }}
-          >
-            <ThemedText style={[s.dateBtnText, selectedDate !== todayStr && s.activeDateBtnText]}>
-              Yesterday
-            </ThemedText>
+            </View>
           </TouchableOpacity>
         </View>
       </View>
 
+      {/* Date Quick Switcher */}
+      <View style={s.dateSwitcherRow}>
+        {[
+          { key: "today", label: "Today", active: selectedDate === todayStr, date: () => todayStr },
+          {
+            key: "yesterday",
+            label: "Yesterday",
+            active: selectedDate !== todayStr,
+            date: () => addBusinessDays(getBusinessDateIST(), -1),
+          },
+        ].map((d) => (
+          <TouchableOpacity
+            key={d.key}
+            style={[
+              s.dateBtn,
+              { backgroundColor: d.active ? theme.primary : theme.backgroundSecondary },
+            ]}
+            onPress={() => {
+              setSelectedDate(d.date());
+              clearSelection();
+            }}
+            accessibilityRole="button"
+            accessibilityState={{ selected: d.active }}
+          >
+            <ThemedText style={[s.dateBtnText, { color: d.active ? "#fff" : theme.textSecondary }]}>
+              {d.label}
+            </ThemedText>
+          </TouchableOpacity>
+        ))}
+      </View>
+    </View>
+  );
+
+  const filters = (
+    <>
       {/* Summary KPI Cards */}
       <ObserverSummaryCards
         summary={summary}
@@ -329,160 +482,145 @@ function SiteVisitObserverScreenContent() {
         selectedDepartment={selectedDepartment}
         onDepartmentChange={setSelectedDepartment}
       />
+    </>
+  );
 
-      {/* Map View & Layout Split */}
-      <View style={{ flex: 1, flexDirection: isDesktop ? 'row' : 'column' }}>
-        {/* Left/Top: Map */}
-        <View style={{ flex: isDesktop ? 0.6 : 1, position: 'relative' }}>
-          <SiteVisitObserverMap
-            employees={filteredEmployees}
-            selectedEmployee={selectedEmployee}
-            selectedVisit={selectedVisit}
-            onSelectEmployee={(emp: any) => {
-              setSelectedEmployee(emp);
-              if (emp.visits && emp.visits.length > 0) {
-                setSelectedVisit(emp.visits[0]);
-              } else {
-                setSelectedVisit(null);
-              }
-            }}
-            polylineCoords={polylineCoords}
-            breadcrumbs={cleanedBreadcrumbs}
-            isPlaying={isPlaying}
-            activePlaybackPoint={activePlaybackPoint}
-            playbackIndex={playbackIndex}
-            playbackSpeed={playbackSpeed}
-            playbackProgress={playbackProgress}
-            elapsedTimeStr={elapsedTimeStr}
-            totalTimeStr={totalTimeStr}
-            onTogglePlay={togglePlay}
-            onRestart={restart}
-            onSetSpeed={setPlaybackSpeed}
-            onScrub={scrubToProgress}
-          />
-          
-          {/* Mobile Bottom Panel overlay */}
-          {!isDesktop && (
-            selectedEmployee ? (
-              <ObserverDetailDrawer
-                employee={selectedEmployee}
-                selectedVisit={selectedVisit}
-                onSelectVisit={setSelectedVisit}
-                onClose={() => {
-                  setSelectedEmployee(null);
-                  setSelectedVisit(null);
-                }}
-                routeQuality={routeQuality}
-              />
-            ) : (
-              <View style={[s.bottomPanel, { backgroundColor: theme.backgroundDefault, borderTopColor: theme.border }]}>
-                <ThemedText type="caption" style={[s.panelTitle, { color: theme.textSecondary }]}>
-                  ACTIVE FIELD EMPLOYEES ({filteredEmployees.length})
-                </ThemedText>
+  const map = (
+    <SiteVisitObserverMap
+      employees={filteredEmployees}
+      selectedEmployee={selectedEmployee}
+      selectedVisit={selectedVisit}
+      onSelectEmployee={(emp: any) => selectEmployee(emp)}
+      polylineCoords={polylineCoords}
+      breadcrumbs={cleanedBreadcrumbs}
+      isPlaying={isPlaying}
+      activePlaybackPoint={activePlaybackPoint}
+      playbackIndex={playbackIndex}
+      playbackSpeed={playbackSpeed}
+      playbackProgress={playbackProgress}
+      elapsedTimeStr={elapsedTimeStr}
+      totalTimeStr={totalTimeStr}
+      onTogglePlay={togglePlay}
+      onRestart={restart}
+      onSetSpeed={setPlaybackSpeed}
+      onScrub={scrubToProgress}
+    />
+  );
 
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.employeeScroll}>
-                  {filteredEmployees.map((emp: any) => {
-                    const isSelected = (selectedEmployee as any)?.employee_id === emp.employee_id;
-                    return (
-                      <TouchableOpacity
-                        key={`tab-${emp.employee_id}`}
-                        style={[
-                          s.employeeChip,
-                          { backgroundColor: theme.backgroundRoot, borderColor: theme.border },
-                          isSelected && { borderColor: theme.primary, backgroundColor: "#F3E8FF" },
-                        ]}
-                        onPress={() => {
-                          setSelectedEmployee(emp);
-                          if (emp.visits && emp.visits.length > 0) {
-                            setSelectedVisit(emp.visits[0]);
-                          } else {
-                            setSelectedVisit(null);
-                          }
-                        }}
-                      >
-                        <ThemedText style={[s.empChipName, isSelected && { color: theme.primary }]}>
-                          {toTitleCase(emp.name)}
-                        </ThemedText>
-                        <ThemedText type="caption" style={{ color: theme.textSecondary }}>
-                          {emp.visits?.length ?? 0} visit{emp.visits?.length !== 1 ? "s" : ""}
-                        </ThemedText>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </ScrollView>
+  const emptyList = (
+    <View style={s.emptyState}>
+      <Feather name="users" size={26} color={theme.textTertiary} />
+      <ThemedText style={{ color: theme.textSecondary, textAlign: "center", marginTop: 8 }}>
+        {loading
+          ? "Loading field employees…"
+          : allEmployees.length
+            ? "No employee matches the current search / filters."
+            : "No field employees for this date."}
+      </ThemedText>
+    </View>
+  );
+
+  // ── Phones / small screens: vertical stack ─────────────────────────────────
+  if (!isDesktop) {
+    return (
+      <ThemedView style={s.container}>
+        <FlatList
+          ref={mobileListRef}
+          data={selectedEmployee ? [] : filteredEmployees}
+          keyExtractor={(e: any) => e.employee_id}
+          keyboardShouldPersistTaps="handled"
+          style={{ flex: 1 }}
+          contentContainerStyle={{ paddingBottom: Spacing.xl }}
+          ListHeaderComponent={
+            <View>
+              {header}
+              {filters}
+              <View style={[s.mobileMap, { height: mobileMapHeight, borderColor: theme.border }]}>
+                {map}
               </View>
-            )
-          )}
-        </View>
-
-        {/* Desktop Right Side: Employee List or Details */}
-        {isDesktop && (
-          <View style={{ flex: 0.4, borderLeftWidth: 1, borderColor: theme.border, backgroundColor: theme.backgroundDefault }}>
-            {selectedEmployee ? (
-              <ObserverDetailDrawer
-                employee={selectedEmployee}
-                selectedVisit={selectedVisit}
-                onSelectVisit={setSelectedVisit}
-                onClose={() => {
-                  setSelectedEmployee(null);
-                  setSelectedVisit(null);
-                }}
-                routeQuality={routeQuality}
-              />
-            ) : (
-              <View style={{ flex: 1 }}>
-                <View style={{ padding: 16, borderBottomWidth: 1, borderBottomColor: theme.border }}>
-                  <ThemedText type="h3">Active Field Employees</ThemedText>
-                  <ThemedText type="caption" style={{ color: theme.textSecondary }}>
-                    {filteredEmployees.length} matching result{filteredEmployees.length !== 1 ? 's' : ''}
+              {selectedEmployee ? (
+                <View style={s.mobileSectionHead}>
+                  <TouchableOpacity
+                    style={[s.backBtn, { borderColor: theme.border, backgroundColor: theme.backgroundDefault }]}
+                    onPress={clearSelection}
+                    accessibilityRole="button"
+                  >
+                    <Feather name="arrow-left" size={16} color={theme.primary} />
+                    <ThemedText style={[s.backBtnText, { color: theme.primary }]}>
+                      All employees ({filteredEmployees.length})
+                    </ThemedText>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <View style={s.mobileSectionHead}>
+                  <ThemedText style={[s.panelTitle, { color: theme.textSecondary }]}>
+                    ACTIVE FIELD EMPLOYEES ({filteredEmployees.length})
                   </ThemedText>
                 </View>
-                <FlatList
-                  data={filteredEmployees}
-                  keyExtractor={(e: any) => e.employee_id}
-                  contentContainerStyle={{ padding: 16, gap: 12 }}
-                  renderItem={({ item: emp }: any) => {
-                    const isSelected = (selectedEmployee as any)?.employee_id === emp.employee_id;
-                    const trackingStatus = emp.tracking?.status ?? emp.tracking_status;
-                    return (
-                      <TouchableOpacity
-                        style={[
-                          s.desktopEmpCard,
-                          { backgroundColor: theme.backgroundRoot, borderColor: theme.border },
-                          isSelected && { borderColor: theme.primary, backgroundColor: "#F3E8FF" }
-                        ]}
-                        onPress={() => {
-                          setSelectedEmployee(emp);
-                          if (emp.visits && emp.visits.length > 0) {
-                            setSelectedVisit(emp.visits[0]);
-                          } else {
-                            setSelectedVisit(null);
-                          }
-                        }}
-                      >
-                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                          <View style={{ flex: 1 }}>
-                            <ThemedText style={{ fontWeight: "600", fontSize: 16 }}>{toTitleCase(emp.name)}</ThemedText>
-                            <ThemedText type="caption" style={{ color: theme.textSecondary }}>
-                              {emp.department || "No Dept"} • {emp.visits?.length ?? 0} visit{emp.visits?.length !== 1 ? 's' : ''}
-                            </ThemedText>
-                          </View>
-                          <View style={[s.statusBadgeDesktop, { backgroundColor: trackingStatus === 'IN_TRANSIT' ? '#3B82F620' : trackingStatus === 'AT_SITE' ? '#10B98120' : '#6B728020' }]}>
-                            <ThemedText type="caption" style={{ color: trackingStatus === 'IN_TRANSIT' ? '#3B82F6' : trackingStatus === 'AT_SITE' ? '#10B981' : '#6B7280', fontSize: 10, fontWeight: 'bold' }}>
-                              {trackingStatus?.replace('_', ' ')}
-                            </ThemedText>
-                          </View>
-                        </View>
-                      </TouchableOpacity>
-                    );
-                  }}
+              )}
+            </View>
+          }
+          renderItem={({ item }: any) => <View style={s.mobileCardWrap}>{renderEmployeeCard(item)}</View>}
+          ListEmptyComponent={selectedEmployee ? null : emptyList}
+          ListFooterComponent={
+            selectedEmployee ? (
+              <View style={[s.mobileDrawer, { borderColor: theme.border, backgroundColor: theme.backgroundDefault }]}>
+                <ObserverDetailDrawer
+                  embedded
+                  employee={selectedEmployee}
+                  selectedVisit={selectedVisit}
+                  onSelectVisit={setSelectedVisit}
+                  onClose={clearSelection}
+                  routeQuality={routeQuality}
+                  onReviewed={() => void loadObserverData(selectedDate, true)}
                 />
               </View>
-            )}
-          </View>
-        )}
+            ) : null
+          }
+        />
+      </ThemedView>
+    );
+  }
+
+  // ── Desktop / tablets: map left, list or details right ─────────────────────
+  return (
+    <ThemedView style={s.container}>
+      {header}
+      {filters}
+
+      <View style={{ flex: 1, flexDirection: "row" }}>
+        <View style={{ flex: 0.6, position: "relative" }}>{map}</View>
+
+        <View style={{ flex: 0.4, minWidth: 320, borderLeftWidth: 1, borderColor: theme.border, backgroundColor: theme.backgroundDefault }}>
+          {selectedEmployee ? (
+            <ObserverDetailDrawer
+              employee={selectedEmployee}
+              selectedVisit={selectedVisit}
+              onSelectVisit={setSelectedVisit}
+              onClose={clearSelection}
+              routeQuality={routeQuality}
+              onReviewed={() => void loadObserverData(selectedDate, true)}
+            />
+          ) : (
+            <View style={{ flex: 1 }}>
+              <View style={{ padding: 16, borderBottomWidth: 1, borderBottomColor: theme.border }}>
+                <ThemedText type="h3">Active Field Employees</ThemedText>
+                <ThemedText type="caption" style={{ color: theme.textSecondary }}>
+                  {filteredEmployees.length} matching result{filteredEmployees.length !== 1 ? "s" : ""}
+                </ThemedText>
+              </View>
+              <FlatList
+                data={filteredEmployees}
+                keyExtractor={(e: any) => e.employee_id}
+                contentContainerStyle={{ padding: 16, gap: 12 }}
+                ListEmptyComponent={emptyList}
+                renderItem={({ item }: any) => renderEmployeeCard(item)}
+              />
+            </View>
+          )}
+        </View>
       </View>
-</ThemedView>
+    </ThemedView>
   );
 }
 
@@ -490,7 +628,7 @@ const s = StyleSheet.create({
   container: { flex: 1 },
   headerBar: {
     paddingHorizontal: Spacing.md,
-    paddingTop: Spacing.md,
+    paddingTop: Spacing.sm,
     paddingBottom: Spacing.sm,
     borderBottomWidth: 1,
     gap: 8,
@@ -499,11 +637,13 @@ const s = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
+    gap: 8,
   },
   headerBadges: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    gap: 4,
+    flexShrink: 0,
   },
   modeBadge: {
     flexDirection: "row",
@@ -513,14 +653,13 @@ const s = StyleSheet.create({
     borderRadius: BorderRadius.full,
     gap: 6,
   },
-  liveBadge: { backgroundColor: "#DCFCE7" },
-  historicalBadge: { backgroundColor: "#F3F4F6" },
   dot: { width: 6, height: 6, borderRadius: 3 },
-  modeText: { fontSize: 10, fontWeight: "800", letterSpacing: 0.5 },
+  modeText: { fontSize: 11, fontWeight: "800", letterSpacing: 0.5 },
+  refreshHit: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
   refreshBtn: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -529,54 +668,59 @@ const s = StyleSheet.create({
     gap: 8,
   },
   dateBtn: {
-    paddingHorizontal: 12,
-    paddingVertical: 4,
+    paddingHorizontal: 16,
+    minHeight: 40,
+    justifyContent: "center",
     borderRadius: BorderRadius.md,
-    backgroundColor: "#F3F4F6",
-  },
-  activeDateBtn: {
-    backgroundColor: "#7C3AED",
   },
   dateBtnText: {
-    fontSize: 12,
-    color: "#4B5563",
+    fontSize: 14,
     fontWeight: "600",
   },
-  activeDateBtnText: {
-    color: "#fff",
-  },
-  bottomPanel: {
-    maxHeight: 120,
-    padding: Spacing.md,
-    borderTopWidth: 1,
-  },
   panelTitle: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: "700",
     letterSpacing: 0.5,
-    marginBottom: 8,
   },
-  desktopEmpCard: { padding: 12, borderRadius: 8, borderWidth: 1 },
-  statusBadgeDesktop: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
-  employeeScroll: {
-    flexGrow: 0,
-    marginBottom: 8,
-  },
-  employeeChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+  mobileMap: {
+    marginHorizontal: Spacing.md,
+    marginTop: Spacing.sm,
     borderRadius: BorderRadius.md,
     borderWidth: 1,
-    marginRight: 8,
+    overflow: "hidden",
+    position: "relative",
   },
-  empChipName: {
-    fontSize: 13,
-    fontWeight: "700",
+  mobileSectionHead: {
+    paddingHorizontal: Spacing.md,
+    paddingTop: Spacing.md,
+    paddingBottom: Spacing.sm,
   },
+  mobileCardWrap: { paddingHorizontal: Spacing.md, paddingBottom: Spacing.sm },
+  mobileDrawer: {
+    marginHorizontal: Spacing.md,
+    borderWidth: 1,
+    borderRadius: BorderRadius.md,
+    overflow: "hidden",
+  },
+  backBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    gap: 6,
+    minHeight: 44,
+    paddingHorizontal: 14,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+  },
+  backBtnText: { fontSize: 14, fontWeight: "700" },
+  empCard: { paddingHorizontal: 14, paddingVertical: 12, borderRadius: BorderRadius.md, borderWidth: 1, minHeight: 56 },
+  empCardRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+  empCardName: { fontWeight: "700", fontSize: 15 },
+  empCardMeta: { fontSize: 13, marginTop: 2 },
+  statusBadge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, maxWidth: 110, flexShrink: 0 },
+  statusBadgeText: { fontSize: 11, fontWeight: "800" },
+  emptyState: { alignItems: "center", justifyContent: "center", padding: Spacing.xl },
 });
-
-
-
 
 export default function SiteVisitObserverScreen() {
   return (

@@ -1,10 +1,12 @@
 ﻿import React, { useState, useCallback } from "react";
-import { StyleSheet, View, FlatList, Pressable, Platform, ScrollView } from "react-native";
+import { StyleSheet, View, FlatList, Pressable } from "react-native";
 import Feather from "@expo/vector-icons/Feather";
 import { useFocusEffect } from "@react-navigation/native";
 import { ThemedText } from "@/components/ThemedText";
 import { useTheme } from "@/hooks/useTheme";
-import { Spacing, BorderRadius, Colors } from "@/constants/theme";
+import { Spacing, BorderRadius } from "@/constants/theme";
+import { ReportState, reportErrorMessage } from "@/components/reports/ReportUI";
+import { formatIstDateTime } from "@/utils/exportWorkbook";
 import Spacer from "@/components/Spacer";
 import { supabase } from "@/lib/supabase";
 import { PaginationControls } from "@/components/PaginationControls";
@@ -30,15 +32,11 @@ export default function AuditLogsScreen() {
   const [filter, setFilter] = useState<string>("all");
   const [page, setPage] = useState(0);
   const [total, setTotal] = useState(0);
-
-    const [summary, setSummary] = useState<any>(null);
-  const loadSummary = useCallback(async () => {
-    const { data } = await supabase.rpc("rpc_admin_audit_logs_summary");
-    if (data) setSummary(data);
-  }, []);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const loadAuditLogs = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     let query = supabase
         .from("audit_logs")
         .select(
@@ -62,6 +60,9 @@ export default function AuditLogsScreen() {
 
     if (error) {
       console.error("Error loading audit logs:", error);
+      setLogs([]);
+      setTotal(0);
+      setLoadError(reportErrorMessage(error));
     } else {
       const formattedData =
         data?.map((log: any) => ({
@@ -91,15 +92,15 @@ export default function AuditLogsScreen() {
     switch (action.toLowerCase()) {
       case "insert":
       case "create":
-        return Colors.light.success;
+        return theme.success;
       case "update":
       case "modify":
-        return Colors.light.warning;
+        return theme.warning;
       case "delete":
       case "remove":
-        return Colors.light.error;
+        return theme.error;
       default:
-        return Colors.light.info;
+        return theme.info;
     }
   };
 
@@ -150,20 +151,21 @@ export default function AuditLogsScreen() {
           </ThemedText>
 
           <ThemedText type="caption" style={{ color: theme.textSecondary }}>
-            By: {item.user_name || "System"} â€¢{" "}
-            {new Date(item.performed_at).toLocaleString()}
+            By: {item.user_name || "System"} ·{" "}
+            {formatIstDateTime(item.performed_at)} IST
           </ThemedText>
 
           {item.old_values && (
             <View style={styles.valuesSection}>
               <ThemedText
                 type="caption"
-                style={[styles.valuesLabel, { color: Colors.light.error }]}
+                style={[styles.valuesLabel, { color: theme.error }]}
               >
                 Old Values:
               </ThemedText>
               <ThemedText
                 type="caption"
+                numberOfLines={10}
                 style={[styles.valuesText, { color: theme.textSecondary }]}
               >
                 {JSON.stringify(item.old_values, null, 2)}
@@ -175,12 +177,13 @@ export default function AuditLogsScreen() {
             <View style={styles.valuesSection}>
               <ThemedText
                 type="caption"
-                style={[styles.valuesLabel, { color: Colors.light.success }]}
+                style={[styles.valuesLabel, { color: theme.success }]}
               >
                 New Values:
               </ThemedText>
               <ThemedText
                 type="caption"
+                numberOfLines={10}
                 style={[styles.valuesText, { color: theme.textSecondary }]}
               >
                 {JSON.stringify(item.new_values, null, 2)}
@@ -200,28 +203,11 @@ export default function AuditLogsScreen() {
     { label: "Tasks", value: "tasks" },
   ];
 
-  
-  const downloadCSV = () => {
-    if (Platform.OS !== "web") {
-      alert("Export is only supported on Web.");
-      return;
-    }
-    const header = "Action,Table,Record ID,Performed By,Date\n";
-    const rows = logs.map(l => `"${l.action}","${l.table_name}","${l.record_id}","${l.user_name || l.performed_by}","${new Date(l.performed_at).toLocaleString()}"`).join("\n");
-    const blob = new Blob([header + rows], { type: "text/csv" });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "Audit_Logs.csv";
-    a.click();
-  };
-
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: theme.backgroundRoot }]}>
       <View style={styles.header}>
-        <ThemedText type="h3">Audit & Logs</ThemedText>
         <ThemedText type="caption" style={{ color: theme.textSecondary }}>
-          Read-only system activity log
+          Read-only system activity log. Times are in IST.
         </ThemedText>
       </View>
 
@@ -240,7 +226,7 @@ export default function AuditLogsScreen() {
                 {
                   backgroundColor:
                     filter === option.value
-                      ? Colors.light.primary
+                      ? theme.primary
                       : theme.backgroundDefault,
                 },
               ]}
@@ -264,9 +250,9 @@ export default function AuditLogsScreen() {
       <PaginationControls page={page} pageSize={PAGE_SIZE} total={total} onPageChange={setPage} />
 
       {loading ? (
-        <View style={styles.centered}>
-          <ThemedText>Loading audit logs...</ThemedText>
-        </View>
+        <ReportState kind="loading" title="Loading audit logs…" />
+      ) : loadError ? (
+        <ReportState kind="error" title="Could not load audit logs" message={loadError} onRetry={() => void loadAuditLogs()} />
       ) : logs.length === 0 ? (
         <View style={styles.centered}>
           <Feather name="file-text" size={48} color={theme.textSecondary} />

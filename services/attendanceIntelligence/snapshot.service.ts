@@ -28,8 +28,9 @@ export class AttendanceSnapshotService {
     const recStatus = hasFail ? "FAILED" : hasWarn ? "PASSED_WITH_WARNINGS" : "VERIFIED_PASS";
 
     const dateKey = getBusinessDateIST();
-    const countToday = this.snapshotStore.filter((s) => s.generated_at.startsWith(dateKey)).length + 1;
-    const snapshotId = `ATT-${dateKey.replace(/-/g, "")}-${String(countToday).padStart(3, "0")}`;
+    const idPrefix = `ATT-${dateKey.replace(/-/g, "")}-`;
+    const countToday = this.snapshotStore.filter((s) => s.snapshot_id.startsWith(idPrefix)).length + 1;
+    const snapshotId = `${idPrefix}${String(countToday).padStart(3, "0")}`;
 
     const snapshot: OfficialReportSnapshot = {
       snapshot_id: snapshotId,

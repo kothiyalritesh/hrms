@@ -1,8 +1,10 @@
 import {
   addBusinessDays,
   businessDateUtcRange,
+  businessMonthStart,
   businessTimestampParts,
   formatBusinessDate,
+  getBusinessDateIST,
   isBusinessDate,
   isDueDateOverdue,
   isTimestampAtOrAfterBusinessCutoff,
@@ -19,6 +21,17 @@ describe("businessDate", () => {
   it("moves across month and year boundaries as date-only values", () => {
     expect(addBusinessDays("2026-12-31", 1)).toBe("2027-01-01");
     expect(addBusinessDays("2026-03-01", -1)).toBe("2026-02-28");
+  });
+
+  it("derives the IST business date of an instant, not the UTC date", () => {
+    expect(getBusinessDateIST(new Date("2026-08-05T20:00:00Z"))).toBe("2026-08-06");
+    expect(getBusinessDateIST(new Date("2026-08-05T18:29:59Z"))).toBe("2026-08-05");
+  });
+
+  it("finds business month starts across year boundaries", () => {
+    expect(businessMonthStart("2026-10-06")).toBe("2026-10-01");
+    expect(businessMonthStart("2026-01-31", -2)).toBe("2025-11-01");
+    expect(businessMonthStart("2026-12-15", 1)).toBe("2027-01-01");
   });
 
   it("keeps tasks current through their full due date", () => {
@@ -80,5 +93,26 @@ describe("businessDate", () => {
         32,
       ),
     ).toBe(true);
+  });
+});
+
+describe("IST correction inputs", () => {
+  const { formatIstDateTimeInput, parseIstDateTimeInput } = require("../businessDate");
+
+  it("shows UTC database timestamps as IST", () => {
+    expect(formatIstDateTimeInput("2026-10-06T04:52:21.76359+00:00")).toBe("2026-10-06 10:22");
+    expect(formatIstDateTimeInput(null)).toBe("");
+  });
+
+  it("parses HH:MM on the record's business date as IST", () => {
+    expect(parseIstDateTimeInput("10:16", "2026-10-06")?.toISOString()).toBe("2026-10-06T04:46:00.000Z");
+    expect(parseIstDateTimeInput("2026-10-06 18:30", "2026-10-01")?.toISOString()).toBe("2026-10-06T13:00:00.000Z");
+    expect(parseIstDateTimeInput("2026-10-06T10:00:00+05:30", "2026-10-06")?.toISOString()).toBe("2026-10-06T04:30:00.000Z");
+    expect(parseIstDateTimeInput("  ", "2026-10-06")).toBeNull();
+  });
+
+  it("rejects invalid times", () => {
+    expect(() => parseIstDateTimeInput("25:00", "2026-10-06")).toThrow();
+    expect(() => parseIstDateTimeInput("ten", "2026-10-06")).toThrow();
   });
 });

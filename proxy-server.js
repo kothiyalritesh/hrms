@@ -14,7 +14,11 @@ const url = require("url");
 
 const PORT = process.env.PORT || 3001;
 const SMARTOFFICE_API_URL = process.env.SMARTOFFICE_API_URL || "http://122.176.140.154:81";
-const API_KEY = process.env.SMARTOFFICE_API_KEY || "240916062617";
+const API_KEY = process.env.SMARTOFFICE_API_KEY;
+if (!API_KEY) {
+  console.error("Missing SMARTOFFICE_API_KEY environment variable.");
+  process.exit(1);
+}
 const API_ACCOUNT_NAME = process.env.SMARTOFFICE_API_ACCOUNT_NAME || "smart";
 
 const server = http.createServer((req, res) => {

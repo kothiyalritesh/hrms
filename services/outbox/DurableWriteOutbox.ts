@@ -28,6 +28,12 @@ export interface OutboxItem<T = any> {
   nextRetryAt?: number;
   lastError?: string;
   syncedAt?: number;
+  /** Employee who created it; only that employee's session may send it. */
+  userId?: string;
+  /** Idempotency key of an item that must be SYNCED first (checkout after its check-in). */
+  dependsOnKey?: string;
+  /** Server response of the successful attempt (shown to the user). */
+  result?: any;
 }
 
 export type OutboxHandler<T = any> = (item: OutboxItem<T>) => Promise<any>;
@@ -57,6 +63,15 @@ class DurableWriteOutboxClass {
   private handlers = new Map<OutboxOperationType, OutboxHandler>();
   private isDraining = false;
   private memoryQueue: OutboxItem[] | null = null;
+  private listeners = new Set<() => void>();
+
+  /** Called after every queue change (UI badges). Returns an unsubscribe function. */
+  public subscribe(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
 
   /**
    * Register a processor for a specific operation type.
@@ -97,6 +112,13 @@ class DurableWriteOutboxClass {
       }
       const parsed = JSON.parse(raw);
       this.memoryQueue = Array.isArray(parsed) ? parsed : [];
+      // The app was closed mid-request: the server is idempotent, send again.
+      for (const item of this.memoryQueue) {
+        if (item.status === "PROCESSING") {
+          item.status = "FAILED";
+          item.nextRetryAt = 0;
+        }
+      }
       return this.memoryQueue;
     } catch (e) {
       console.warn("[DurableWriteOutbox] Error loading outbox from storage, resetting", e);
@@ -115,6 +137,13 @@ class DurableWriteOutboxClass {
     } catch (e) {
       console.error("[DurableWriteOutbox] Failed to persist queue to disk", e);
     }
+    for (const listener of this.listeners) {
+      try {
+        listener();
+      } catch {
+        // a UI listener must never break the queue
+      }
+    }
   }
 
   /**
@@ -127,6 +156,8 @@ class DurableWriteOutboxClass {
       idempotencyKey?: string;
       priority?: OutboxPriority;
       maxRetries?: number;
+      userId?: string;
+      dependsOnKey?: string;
     }
   ): Promise<OutboxItem<T>> {
     const queue = await this.loadQueue();
@@ -143,7 +174,9 @@ class DurableWriteOutboxClass {
 
     // Deduplication check: if an item with this idempotency key already exists and is pending/processing, return it
     const existing = queue.find(
-      (item) => item.idempotencyKey === idempotencyKey && (item.status === "PENDING" || item.status === "PROCESSING")
+      (item) =>
+        item.idempotencyKey === idempotencyKey &&
+        (item.status === "PENDING" || item.status === "PROCESSING" || item.status === "FAILED")
     );
     if (existing) {
       return existing as OutboxItem<T>;
@@ -162,6 +195,8 @@ class DurableWriteOutboxClass {
       attempts: 0,
       maxRetries,
       createdAt: Date.now(),
+      userId: options?.userId,
+      dependsOnKey: options?.dependsOnKey,
     };
 
     queue.push(newItem);
@@ -218,6 +253,7 @@ class DurableWriteOutboxClass {
       let hasMore = true;
 
       while (hasMore) {
+        let progressed = false;
         const queue = await this.loadQueue();
         const now = Date.now();
 
@@ -257,13 +293,25 @@ class DurableWriteOutboxClass {
             continue;
           }
 
+          if (item.dependsOnKey) {
+            const dependency = queue.find((it) => it.idempotencyKey === item.dependsOnKey);
+            if (dependency?.status === "DEAD_LETTER") {
+              await this.moveToDeadLetter(item, "The earlier action it depends on was not applied.");
+              progressed = true;
+              continue;
+            }
+            if (dependency && dependency.status !== "SYNCED") continue;
+          }
+
+          progressed = true;
+
           item.status = "PROCESSING";
           item.attempts += 1;
           item.lastAttemptAt = Date.now();
           await this.persistQueue();
 
           try {
-            await handler(item);
+            item.result = await handler(item);
 
             item.status = "SYNCED";
             item.syncedAt = Date.now();
@@ -278,8 +326,14 @@ class DurableWriteOutboxClass {
           } catch (err: any) {
             const classification = NetworkManager.classifyError(err);
             item.lastError = err?.message || String(err);
+            // An expired / missing session after a long offline spell is fixed
+            // by the next sign-in or token refresh: keep the action.
+            const retryable =
+              err?.terminal === true
+                ? false
+                : err?.retryable === true || classification.isRetryable || classification.isAuthError;
 
-            if (!classification.isRetryable || item.attempts >= item.maxRetries) {
+            if (!retryable || item.attempts >= item.maxRetries) {
               // Non-retryable validation error or max attempts reached -> Dead Letter
               await this.moveToDeadLetter(
                 item,
@@ -302,12 +356,14 @@ class DurableWriteOutboxClass {
           }
         }
 
-        // Check if new items arrived while processing before releasing lock
+        // Check if new items arrived while processing before releasing lock.
+        // Without progress in this pass (no handler / waiting on a dependency)
+        // stop instead of spinning; the next drain() trigger retries.
         const freshQueue = await this.loadQueue();
         const remainingPending = freshQueue.some(
           (it) => it.status === "PENDING" || (it.status === "FAILED" && (it.nextRetryAt ?? 0) <= Date.now())
         );
-        hasMore = remainingPending;
+        hasMore = remainingPending && progressed;
       }
     } finally {
       this.isDraining = false;
@@ -340,6 +396,13 @@ class DurableWriteOutboxClass {
         `[DurableWriteOutbox] Item moved to DEAD_LETTER: ${item.operationType} (${item.idempotencyKey}) - ${reason}`
       );
     }
+  }
+
+  /** Remove an item the user has acknowledged (dead-letter copy is kept for diagnostics). */
+  public async dismiss(id: string): Promise<void> {
+    const queue = await this.loadQueue();
+    this.memoryQueue = queue.filter((item) => item.id !== id);
+    await this.persistQueue();
   }
 
   /**

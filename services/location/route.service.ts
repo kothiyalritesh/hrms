@@ -1,3 +1,4 @@
+import { Platform } from "react-native";
 import {
   Destination,
   DrivingRoute,
@@ -8,7 +9,12 @@ import { haversineDistanceM } from "@/services/location/geo";
 
 const ROUTES_ENDPOINT =
   "https://routes.googleapis.com/directions/v2:computeRoutes";
+const DIRECTIONS_ENDPOINT =
+  "https://maps.googleapis.com/maps/api/directions/json";
 const REQUEST_TIMEOUT_MS = 12_000;
+// Set when Google refuses the Routes API for this key (it is not in the key's
+// allowed APIs); later requests go straight to the Directions API.
+let routesApiBlocked = false;
 
 type Coordinate = { latitude: number; longitude: number };
 
@@ -25,6 +31,21 @@ export async function computeDrivingRoute(
 ): Promise<DrivingRoute | null> {
   const apiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
   if (!apiKey) return null;
+  const route = routesApiBlocked
+    ? null
+    : await computeWithRoutesApi(apiKey, origin, destination, includePolyline);
+  if (route || Platform.OS === "web") return route;
+  // The Directions web service has no browser (CORS) support, so the phone
+  // app only.
+  return computeWithDirectionsApi(apiKey, origin, destination);
+}
+
+async function computeWithRoutesApi(
+  apiKey: string,
+  origin: Coordinate,
+  destination: Destination,
+  includePolyline: boolean,
+): Promise<DrivingRoute | null> {
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -64,6 +85,7 @@ export async function computeDrivingRoute(
       }),
       signal: controller.signal,
     });
+    if (response.status === 403) routesApiBlocked = true;
     if (!response.ok) return null;
 
     const payload = (await response.json()) as {
@@ -91,6 +113,65 @@ export async function computeDrivingRoute(
       originLatitude: origin.latitude,
       originLongitude: origin.longitude,
       encodedPolyline: route?.polyline?.encodedPolyline ?? null,
+    };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function computeWithDirectionsApi(
+  apiKey: string,
+  origin: Coordinate,
+  destination: Destination,
+): Promise<DrivingRoute | null> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const query = [
+    `origin=${origin.latitude},${origin.longitude}`,
+    `destination=${destination.latitude},${destination.longitude}`,
+    "mode=driving",
+    "departure_time=now",
+    "units=metric",
+    "language=en-IN",
+    `key=${encodeURIComponent(apiKey)}`,
+  ].join("&");
+  try {
+    const response = await fetch(`${DIRECTIONS_ENDPOINT}?${query}`, {
+      signal: controller.signal,
+    });
+    if (!response.ok) return null;
+    const payload = (await response.json()) as {
+      status?: string;
+      routes?: {
+        overview_polyline?: { points?: string };
+        legs?: {
+          distance?: { value?: number };
+          duration?: { value?: number };
+          duration_in_traffic?: { value?: number };
+        }[];
+      }[];
+    };
+    if (payload.status !== "OK") return null;
+    const route = payload.routes?.[0];
+    const legs = route?.legs ?? [];
+    if (!legs.length) return null;
+    let distanceM = 0;
+    let durationSeconds = 0;
+    for (const leg of legs) {
+      distanceM += Number(leg.distance?.value);
+      durationSeconds += Number(leg.duration_in_traffic?.value ?? leg.duration?.value);
+    }
+    if (!Number.isFinite(distanceM) || !Number.isFinite(durationSeconds)) return null;
+    return {
+      destinationJourneyId: destination.journeyId,
+      distanceM: Math.round(distanceM),
+      durationSeconds: Math.ceil(durationSeconds),
+      calculatedAt: new Date().toISOString(),
+      originLatitude: origin.latitude,
+      originLongitude: origin.longitude,
+      encodedPolyline: route?.overview_polyline?.points ?? null,
     };
   } catch {
     return null;

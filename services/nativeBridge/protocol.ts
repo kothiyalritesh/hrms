@@ -6,8 +6,11 @@ export type NativeBridgeCommand =
   | "device.getCapabilities"
   | "auth.syncSession"
   | "auth.clearSession"
+  | "auth.getSession"
   | "notifications.getPermission"
+  | "notifications.getStatus"
   | "notifications.register"
+  | "notifications.unregister"
   | "tracking.getStatus"
   | "tracking.requestPermissions"
   | "tracking.restore"
@@ -38,7 +41,11 @@ export interface NativeBridgeResponse<T = unknown> {
 export interface NativeBridgeEvent<T = unknown> {
   bridge: typeof NATIVE_BRIDGE_NAME;
   version: typeof NATIVE_BRIDGE_VERSION;
-  type: "bridge.ready" | "notification.received" | "notification.opened";
+  type:
+    | "bridge.ready"
+    | "notification.received"
+    | "notification.opened"
+    | "auth.sessionChanged";
   payload?: T;
 }
 
@@ -51,8 +58,11 @@ const COMMANDS = new Set<NativeBridgeCommand>([
   "device.getCapabilities",
   "auth.syncSession",
   "auth.clearSession",
+  "auth.getSession",
   "notifications.getPermission",
+  "notifications.getStatus",
   "notifications.register",
+  "notifications.unregister",
   "tracking.getStatus",
   "tracking.requestPermissions",
   "tracking.restore",

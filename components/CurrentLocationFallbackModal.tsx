@@ -18,6 +18,8 @@ import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 import NetInfo from "@react-native-community/netinfo";
 import { Picker } from "@react-native-picker/picker";
 import { ThemedText } from "@/components/ThemedText";
+import { useTheme } from "@/hooks/useTheme";
+import { Colors } from "@/constants/theme";
 import { FieldVisit } from "@/services/field-visit.service";
 import {
   createUuid,
@@ -27,7 +29,7 @@ import {
   SubmissionResult,
   validateFreshLocation,
 } from "@/services/current-location-visit.service";
-import { getCurrentGPS, GPSCoords } from "@/utils/gps";
+import { getCurrentGPS, GPSCoords, gpsFailureMessage } from "@/utils/gps";
 import { reverseGeocode } from "@/utils/reverseGeocode";
 import { formatTime } from "@/utils/format";
 
@@ -104,6 +106,9 @@ export default function CurrentLocationFallbackModal({
   onMatched,
   onSubmitted,
 }: Props) {
+  const st = useFallbackStyles();
+  const { theme, isDark } = useTheme();
+  const accent = isDark ? "#E2A6E2" : "#60045d";
   const [phase, setPhase] = useState<
     "VERIFY" | "MISMATCH" | "FORM" | "SUCCESS"
   >("VERIFY");
@@ -175,7 +180,7 @@ export default function CurrentLocationFallbackModal({
       if (!fresh) {
         setLocation(null);
         setLocationError(
-          "Unable to verify your location. Make sure GPS is enabled and move to an open area before trying again.",
+          gpsFailureMessage(),
         );
         return;
       }
@@ -276,7 +281,7 @@ export default function CurrentLocationFallbackModal({
       const freshLocation = await getCurrentGPS();
       if (!freshLocation) {
         throw new Error(
-          "Could not refresh your GPS location. Enable precise location and try again.",
+          gpsFailureMessage(),
         );
       }
       const freshQuality = validateFreshLocation(freshLocation);
@@ -399,7 +404,7 @@ export default function CurrentLocationFallbackModal({
       >
         <View style={st.header}>
           <TouchableOpacity onPress={onClose} accessibilityLabel="Close">
-            <Feather name="x" size={22} color="#374151" />
+            <Feather name="x" size={22} color={isDark ? theme.text : "#374151"} />
           </TouchableOpacity>
           <ThemedText style={st.title}>
             {phase === "FORM"
@@ -416,7 +421,7 @@ export default function CurrentLocationFallbackModal({
         >
           {detecting && (
             <View style={st.center}>
-              <ActivityIndicator color="#60045d" />
+              <ActivityIndicator color={accent} />
               <ThemedText style={st.heading}>
                 Verifying your location…
               </ThemedText>
@@ -525,6 +530,7 @@ export default function CurrentLocationFallbackModal({
                   selectedValue={reason}
                   onValueChange={setReason}
                   style={st.picker}
+                  dropdownIconColor={isDark ? theme.text : undefined}
                 >
                   <Picker.Item label="Select a reason" value="" />
                   {REASONS.map((item) => (
@@ -544,7 +550,7 @@ export default function CurrentLocationFallbackModal({
                       gap: 8,
                     }}
                   >
-                    <ActivityIndicator color="#60045d" />
+                    <ActivityIndicator color={accent} />
                     <ThemedText style={st.muted}>Compressing photo…</ThemedText>
                   </View>
                 ) : photo ? (
@@ -637,6 +643,7 @@ export default function CurrentLocationFallbackModal({
 }
 
 function Card({ title, children }: React.PropsWithChildren<{ title: string }>) {
+  const st = useFallbackStyles();
   return (
     <View style={st.card}>
       <ThemedText style={st.sectionTitle}>{title}</ThemedText>
@@ -650,9 +657,12 @@ function MessageCard({
   text,
   children,
 }: React.PropsWithChildren<{ color: string; title: string; text: string }>) {
+  const st = useFallbackStyles();
+  const { isDark } = useTheme();
+  const tone = isDark ? DARK_MESSAGE_TONE[color] ?? color : color;
   return (
-    <View style={[st.message, { borderLeftColor: color }]}>
-      <ThemedText style={[st.heading, { color }]}>{title}</ThemedText>
+    <View style={[st.message, { borderLeftColor: tone }]}>
+      <ThemedText style={[st.heading, { color: tone }]}>{title}</ThemedText>
       <ThemedText style={st.messageText}>{text}</ThemedText>
       {children}
     </View>
@@ -669,6 +679,7 @@ function Action({
   secondary?: boolean;
   loading?: boolean;
 }) {
+  const st = useFallbackStyles();
   return (
     <TouchableOpacity
       style={[st.action, secondary && st.actionSecondary]}
@@ -688,8 +699,23 @@ function Action({
   );
 }
 
-const st = StyleSheet.create({
-  root: { flex: 1, backgroundColor: "#F7F7FA" },
+// Message accent colours re-toned for dark surfaces.
+const DARK_MESSAGE_TONE: Record<string, string> = {
+  "#DC2626": "#F87171",
+  "#059669": "#34D399",
+};
+
+type ThemeColors = typeof Colors.light;
+
+function useFallbackStyles() {
+  const { theme, isDark } = useTheme();
+  return useMemo(() => createStyles(theme, isDark), [theme, isDark]);
+}
+
+/** Light values are the original design; dark values come from the theme. */
+function createStyles(t: ThemeColors, dark: boolean) {
+  return StyleSheet.create({
+  root: { flex: 1, backgroundColor: dark ? t.backgroundRoot : "#F7F7FA" },
   header: {
     paddingTop: Platform.OS === "ios" ? 58 : 20,
     paddingHorizontal: 18,
@@ -697,36 +723,36 @@ const st = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    backgroundColor: "#fff",
+    backgroundColor: dark ? t.backgroundDefault : "#fff",
     borderBottomWidth: 1,
-    borderBottomColor: "#E5E7EB",
+    borderBottomColor: dark ? t.border : "#E5E7EB",
   },
-  title: { fontSize: 18, fontWeight: "800", color: "#111827" },
+  title: { fontSize: 18, fontWeight: "800", color: dark ? t.text : "#111827" },
   content: { padding: 16, gap: 14, paddingBottom: 50 },
   center: { alignItems: "center", padding: 40, gap: 12 },
-  intro: { color: "#4B5563", lineHeight: 21 },
+  intro: { color: dark ? t.textSecondary : "#4B5563", lineHeight: 21 },
   message: {
-    backgroundColor: "#fff",
+    backgroundColor: dark ? t.backgroundDefault : "#fff",
     borderRadius: 14,
     padding: 18,
     borderLeftWidth: 4,
     gap: 12,
   },
   heading: { fontSize: 18, fontWeight: "800", textAlign: "center" },
-  messageText: { color: "#374151", lineHeight: 21 },
-  muted: { color: "#6B7280", lineHeight: 19 },
-  card: { backgroundColor: "#fff", borderRadius: 14, padding: 16 },
+  messageText: { color: dark ? t.text : "#374151", lineHeight: 21 },
+  muted: { color: dark ? t.textSecondary : "#6B7280", lineHeight: 19 },
+  card: { backgroundColor: dark ? t.backgroundDefault : "#fff", borderRadius: 14, padding: 16 },
   sectionTitle: {
     fontSize: 12,
     fontWeight: "800",
-    color: "#6D1B6D",
+    color: dark ? "#E2A6E2" : "#6D1B6D",
     letterSpacing: 0.5,
     marginBottom: 10,
   },
   cardTitle: {
     fontSize: 16,
     fontWeight: "800",
-    color: "#111827",
+    color: dark ? t.text : "#111827",
     marginBottom: 4,
   },
   info: {
@@ -735,9 +761,9 @@ const st = StyleSheet.create({
     gap: 12,
     marginTop: 8,
   },
-  infoLabel: { color: "#6B7280", fontSize: 13 },
+  infoLabel: { color: dark ? t.textSecondary : "#6B7280", fontSize: 13 },
   infoValue: {
-    color: "#111827",
+    color: dark ? t.text : "#111827",
     fontSize: 13,
     fontWeight: "700",
     flexShrink: 1,
@@ -754,9 +780,9 @@ const st = StyleSheet.create({
     justifyContent: "center",
   },
   actionSecondary: {
-    backgroundColor: "#fff",
+    backgroundColor: dark ? t.backgroundSecondary : "#fff",
     borderWidth: 1.5,
-    borderColor: "#60045d",
+    borderColor: dark ? "#A838A8" : "#60045d",
   },
   actionText: {
     color: "#fff",
@@ -764,29 +790,29 @@ const st = StyleSheet.create({
     fontSize: 13,
     textAlign: "center",
   },
-  actionTextSecondary: { color: "#60045d" },
-  label: { fontSize: 13, color: "#374151", fontWeight: "700", marginBottom: 6 },
+  actionTextSecondary: { color: dark ? "#E2A6E2" : "#60045d" },
+  label: { fontSize: 13, color: dark ? t.text : "#374151", fontWeight: "700", marginBottom: 6 },
   input: {
     borderWidth: 1.5,
-    borderColor: "#E5E7EB",
+    borderColor: dark ? t.border : "#E5E7EB",
     borderRadius: 10,
-    backgroundColor: "#F9FAFB",
+    backgroundColor: dark ? t.backgroundSecondary : "#F9FAFB",
     padding: 12,
     fontSize: 14,
-    color: "#111827",
+    color: dark ? t.text : "#111827",
   },
-  picker: { backgroundColor: "#F9FAFB", color: "#111827" },
+  picker: { backgroundColor: dark ? t.backgroundSecondary : "#F9FAFB", color: dark ? t.text : "#111827" },
   photo: { width: "100%", height: 190, borderRadius: 10, marginVertical: 10 },
-  good: { color: "#059669", fontWeight: "700" },
+  good: { color: dark ? "#34D399" : "#059669", fontWeight: "700" },
   declaration: {
     flexDirection: "row",
     gap: 12,
-    backgroundColor: "#fff",
+    backgroundColor: dark ? t.backgroundDefault : "#fff",
     borderRadius: 14,
     padding: 16,
     alignItems: "flex-start",
   },
-  declarationText: { flex: 1, color: "#374151", lineHeight: 20 },
+  declarationText: { flex: 1, color: dark ? t.text : "#374151", lineHeight: 20 },
   submit: {
     minHeight: 52,
     borderRadius: 12,
@@ -798,4 +824,5 @@ const st = StyleSheet.create({
   },
   disabled: { opacity: 0.42 },
   submitText: { color: "#fff", fontSize: 15, fontWeight: "800" },
-});
+  });
+}

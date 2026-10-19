@@ -292,8 +292,11 @@ export default function OfficeSettingsScreen() {
     </View>
   );
 
-  return (
-    <View style={styles.container}>
+  // Everything above the office list scrolls with it (the add form and the
+  // validation card can be taller than the screen). Kept as an element, not a
+  // component, so the form inputs keep focus while typing.
+  const listHeader = (
+    <View>
       <View style={styles.header}>
         <ThemedText type="h3">Office Management</ThemedText>
         <Pressable
@@ -442,20 +445,26 @@ export default function OfficeSettingsScreen() {
       )}
 
       <Spacer height={Spacing.md} />
+    </View>
+  );
 
-      {loading ? (
-        <View style={styles.centered}>
-          <ThemedText>Loading offices...</ThemedText>
-        </View>
-      ) : (
-        <FlatList
-          data={offices}
+  return (
+    <View style={styles.container}>
+      <FlatList
+          style={{ flex: 1 }}
+          data={loading ? [] : offices}
           keyExtractor={(item) => item.id}
           renderItem={renderOffice}
-          contentContainerStyle={styles.list}
-          showsVerticalScrollIndicator={false}
-
-          ListFooterComponent={() => (
+          contentContainerStyle={[styles.list, { paddingBottom: Spacing["2xl"] }]}
+          showsVerticalScrollIndicator
+          keyboardShouldPersistTaps="handled"
+          ListHeaderComponent={listHeader}
+          ListEmptyComponent={loading ? (
+            <View style={styles.centered}>
+              <ThemedText>Loading offices...</ThemedText>
+            </View>
+          ) : null}
+          ListFooterComponent={loading ? null : (
             <View style={{ marginTop: Spacing.xl, marginBottom: Spacing['2xl'] }}>
               <ThemedText type="h3">Team Schedules & Policies</ThemedText>
               <Spacer height={Spacing.md} />
@@ -465,14 +474,12 @@ export default function OfficeSettingsScreen() {
                   <ThemedText type="body" style={{ fontWeight: '700', color: theme.text, marginBottom: 4 }}>{t.team} Team</ThemedText>
                   <ThemedText type="caption" style={{ color: theme.textSecondary }}>Saturday: {t.saturday_policy}</ThemedText>
                   <ThemedText type="caption" style={{ color: theme.textSecondary }}>Sunday: {t.sunday_policy}</ThemedText>
-                  {t.monday_credit_bonus && <ThemedText type="caption" style={{ color: Colors.light.success, marginTop: 4 }}>ś +1 Monday Biometric Compliance Credit</ThemedText>}
+                  {t.monday_credit_bonus && <ThemedText type="caption" style={{ color: Colors.light.success, marginTop: 4 }}>+1 Monday Biometric Compliance Credit</ThemedText>}
                 </View>
               ))}
             </View>
           )}
-
         />
-      )}
     </View>
   );
 }

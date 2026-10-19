@@ -9,6 +9,7 @@ import {
   RefreshControl,
   Platform,
   ScrollView,
+  Switch,
 } from "react-native";
 import Feather from "@expo/vector-icons/Feather";
 import { useFocusEffect, useRoute } from "@react-navigation/native";
@@ -27,11 +28,19 @@ import { supabase } from "@/lib/supabase";
 import { BusinessClockService } from "@/services/business-clock.service";
 import { addBusinessDays, isDueDateOverdue } from "@/utils/businessDate";
 import { EventAnnouncement, EventService } from "@/services/event.service";
+import {
+  TaskSharingService,
+  TaskVisibilityFields,
+} from "@/services/task-sharing.service";
+import { ForwardTaskModal } from "@/components/ForwardTaskModal";
 
 const PRIMARY = "#6D1B6D";
 const isWeb = Platform.OS === "web";
+const ACTIVE_PAGE_SIZE = 100;
+const DONE_PAGE_SIZE = 200;
 
 type FilterType = "all" | "pending" | "in_progress" | "completed";
+type ScopeFilter = "all" | "mine" | "shared";
 
 const PRIORITY_COLORS = {
   high: Colors.light.error,
@@ -46,7 +55,7 @@ const STATUS_COLORS = {
   cancelled: "#9CA3AF",
 };
 
-interface Task {
+interface Task extends TaskVisibilityFields {
   id: string;
   title: string;
   description: string;
@@ -58,6 +67,26 @@ interface Task {
   created_at: string;
   location?: { address: string };
 }
+
+/** Where a task came from, e.g. "Shared by Asha" / "Forwarded by Ravi". */
+function taskOrigin(task: Task, userId?: string | null): string | null {
+  if (task.relation === "SHARED") {
+    const name = task.shared_by_name || task.created_by_name || "your manager";
+    return task.shared_via === "FORWARDED"
+      ? `Forwarded by ${name}`
+      : `Shared by ${name}`;
+  }
+  if (
+    task.relation === "ASSIGNED" &&
+    task.assigned_by &&
+    task.assigned_by !== userId
+  ) {
+    return `Assigned by ${task.assigned_by_name || "your manager"}`;
+  }
+  return null;
+}
+
+const canUpdateTask = (task: Task) => task.can_update !== false;
 
 const TASK_TYPE_ICONS: Record<string, keyof typeof Feather.glyphMap> = {
   follow_up: "phone",
@@ -73,10 +102,22 @@ interface TaskCardProps {
   businessDate: string | null;
   onPress: () => void;
   onStatusChange: (status: Task["status"]) => void;
+  currentUserId?: string | null;
+  onForward: () => void;
 }
 
-function TaskCard({ task, businessDate, onPress, onStatusChange }: TaskCardProps) {
+function TaskCard({
+  task,
+  businessDate,
+  onPress,
+  onStatusChange,
+  currentUserId,
+  onForward,
+}: TaskCardProps) {
   const { theme } = useTheme();
+  const origin = taskOrigin(task, currentUserId);
+  const editable = canUpdateTask(task);
+  const forwardedCount = Number(task.forwarded_count || 0);
   const priorityColor = PRIORITY_COLORS[task.priority];
   const statusColor = STATUS_COLORS[task.status];
   const deadline = new Date(task.due_date || task.created_at);
@@ -177,6 +218,22 @@ function TaskCard({ task, businessDate, onPress, onStatusChange }: TaskCardProps
           </ThemedText>
         ) : null}
 
+        {origin ? (
+          <View style={styles.originRow}>
+            <Feather
+              name={task.shared_via === "FORWARDED" ? "corner-up-right" : "user"}
+              size={12}
+              color={theme.primary}
+            />
+            <ThemedText
+              style={{ fontSize: 12, color: theme.primary, fontWeight: "600", flexShrink: 1 }}
+              numberOfLines={1}
+            >
+              {origin}
+            </ThemedText>
+          </View>
+        ) : null}
+
         <View style={styles.taskFooter}>
           <View style={styles.deadlineContainer}>
             <Feather
@@ -193,7 +250,19 @@ function TaskCard({ task, businessDate, onPress, onStatusChange }: TaskCardProps
               {formatDate(deadline)}
             </ThemedText>
           </View>
-          {task.status !== "completed" ? (
+          {!editable ? (
+            <View
+              style={[
+                styles.viewOnlyBadge,
+                { backgroundColor: theme.backgroundSecondary },
+              ]}
+            >
+              <Feather name="eye" size={11} color={theme.textSecondary} />
+              <ThemedText style={{ fontSize: 11, color: theme.textSecondary }}>
+                View only
+              </ThemedText>
+            </View>
+          ) : task.status !== "completed" ? (
             <View style={styles.actionButtons}>
               {task.status === "pending" ? (
                 <Pressable
@@ -224,6 +293,35 @@ function TaskCard({ task, businessDate, onPress, onStatusChange }: TaskCardProps
             </View>
           ) : null}
         </View>
+
+        {task.can_forward ? (
+          <View style={[styles.forwardRow, { borderTopColor: theme.borderLight }]}>
+            <Pressable
+              onPress={onForward}
+              accessibilityRole="button"
+              accessibilityLabel="Forward to my team"
+              style={({ pressed }) => [
+                styles.forwardBtn,
+                {
+                  borderColor: theme.primary,
+                  opacity: pressed ? 0.7 : 1,
+                },
+              ]}
+            >
+              <Feather name="corner-up-right" size={13} color={theme.primary} />
+              <ThemedText
+                style={{ fontSize: 12, fontWeight: "700", color: theme.primary }}
+              >
+                Forward to my team
+              </ThemedText>
+            </Pressable>
+            {forwardedCount > 0 ? (
+              <ThemedText style={{ fontSize: 11, color: theme.success, fontWeight: "600" }}>
+                Forwarded to {forwardedCount}
+              </ThemedText>
+            ) : null}
+          </View>
+        ) : null}
       </View>
     </Pressable>
   );
@@ -260,35 +358,71 @@ export default function TasksScreen() {
   const [newTask, setNewTask] = useState({
     title: "",
     description: "",
-    type: "follow_up" as Task["type"],
     priority: "medium" as Task["priority"],
-    deadline: new Date(Date.now() + 86400000).toISOString(),
   });
+  const [creatingTask, setCreatingTask] = useState(false);
+  const creatingTaskRef = useRef(false);
+  const [activeLimit, setActiveLimit] = useState(ACTIVE_PAGE_SIZE);
+  const [doneLimit, setDoneLimit] = useState(DONE_PAGE_SIZE);
+  const [hasMoreActive, setHasMoreActive] = useState(false);
+  const [hasMoreDone, setHasMoreDone] = useState(false);
+  const [scopeFilter, setScopeFilter] = useState<ScopeFilter>("all");
+  const [forwardTask, setForwardTask] = useState<Task | null>(null);
+  const [hasDirectReports, setHasDirectReports] = useState(false);
+  const [shareWithReports, setShareWithReports] = useState(true);
 
   const canCreateTasks = !!user?.id;
 
+  // Whether I lead a team decides if the "Visible to my direct reports"
+  // switch is shown on the create form. Checked once per user.
+  useEffect(() => {
+    if (!user?.id) return;
+    let cancelled = false;
+    TaskSharingService.getMyDirectReports()
+      .then((rows) => {
+        if (!cancelled) setHasDirectReports(rows.length > 0);
+      })
+      .catch(() => {
+        if (!cancelled) setHasDirectReports(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id]);
+
   const loadTasks = useCallback(async () => {
     if (!user?.id) return;
-    const [taskResult, announcements, currentBusinessDate] = await Promise.all([
-      supabase
-        .from("tasks")
-        .select("*")
-        .or(`assigned_to.eq.${user.id},assigned_by.eq.${user.id}`)
-        .in("status", ["pending", "in_progress"])
-        .order("created_at", { ascending: false }),
-      EventService.getAnnouncements(user.id).catch(() => []),
+    // rpc_my_tasks: tasks assigned to me, created/assigned by me, or
+    // shared/forwarded to me along the reporting hierarchy.
+    const [activeResult, doneResult, announcements, currentBusinessDate] = await Promise.all([
+      TaskSharingService.getMyTasks<Task>(["pending", "in_progress"], activeLimit)
+        .then((data) => ({ data, error: null as any }))
+        .catch((error) => ({ data: [] as Task[], error })),
+      // Completed/cancelled tasks are needed by the "Completed" tab; load them
+      // page by page so long-time users don't download their whole history.
+      TaskSharingService.getMyTasks<Task>(["completed", "cancelled"], doneLimit)
+        .then((data) => ({ data, error: null as any }))
+        .catch((error) => ({ data: [] as Task[], error })),
+      EventService.getAnnouncements(user.id).catch(() => null),
       BusinessClockService.getDate(true).catch(() => null),
     ]);
-    if (taskResult.error) {
-      console.error("Unable to load tasks:", taskResult.error);
-      setTaskLoadError(taskResult.error.message);
+    const taskError = activeResult.error || doneResult.error;
+    if (taskError) {
+      console.error("Unable to load tasks:", taskError);
+      setTaskLoadError(taskError?.message || "Could not load tasks.");
     } else {
-      setTasks(taskResult.data || []);
+      const seen = new Set<string>();
+      const merged = [...activeResult.data, ...doneResult.data].filter(
+        (task: Task) => (seen.has(task.id) ? false : (seen.add(task.id), true)),
+      );
+      setTasks(merged);
+      setHasMoreActive(activeResult.data.length >= activeLimit);
+      setHasMoreDone(doneResult.data.length >= doneLimit);
       setTaskLoadError(null);
     }
-    setEventAnnouncements(announcements);
-    setBusinessDate(currentBusinessDate);
-  }, [user?.id]);
+    if (announcements) setEventAnnouncements(announcements);
+    if (currentBusinessDate) setBusinessDate(currentBusinessDate);
+  }, [user?.id, activeLimit, doneLimit]);
 
   useFocusEffect(
     useCallback(() => {
@@ -315,7 +449,36 @@ export default function TasksScreen() {
   };
 
   const handleStatusChange = async (taskId: string, newStatus: string) => {
-    await supabase.from("tasks").update({ status: newStatus }).eq("id", taskId);
+    const target = tasks.find((task) => task.id === taskId);
+    if (target && !canUpdateTask(target)) {
+      Alert.alert("View only", "This task was shared with you, so only its owner can change its status.");
+      return;
+    }
+    const previous = tasks;
+    const previousSelected = selectedTask;
+    // Optimistic: the card moves to its new tab immediately.
+    setTasks((current) =>
+      current.map((task) =>
+        task.id === taskId ? { ...task, status: newStatus as Task["status"] } : task,
+      ),
+    );
+    setSelectedTask((current) =>
+      current?.id === taskId ? { ...current, status: newStatus as Task["status"] } : current,
+    );
+    const { data, error } = await supabase
+      .from("tasks")
+      .update({ status: newStatus })
+      .eq("id", taskId)
+      .select("id");
+    if (error || !data?.length) {
+      setTasks(previous);
+      setSelectedTask(previousSelected);
+      Alert.alert(
+        "Unable to update task",
+        error?.message || "You don't have permission to change this task.",
+      );
+      return;
+    }
     await loadTasks();
   };
 
@@ -350,37 +513,50 @@ export default function TasksScreen() {
   };
 
   const handleCreateTask = async () => {
+    if (creatingTaskRef.current) return;
     if (!newTask.title.trim()) {
       Alert.alert("Error", "Please enter a task title");
       return;
     }
-    const businessDate = await BusinessClockService.getDate(true);
-    const { error } = await supabase.from("tasks").insert({
-      title: newTask.title,
-      description: newTask.description,
-      priority: newTask.priority,
-      due_date: addBusinessDays(businessDate, 1),
-      status: "pending",
-      assigned_to: user?.id || null,
-      assigned_by: user?.id || null,
-    });
-    if (error) {
-      Alert.alert("Error", error.message);
-      return;
+    creatingTaskRef.current = true;
+    setCreatingTask(true);
+    try {
+      const businessDate = await BusinessClockService.getDate(true);
+      const { error } = await supabase.from("tasks").insert({
+        title: newTask.title,
+        description: newTask.description,
+        priority: newTask.priority,
+        due_date: addBusinessDays(businessDate, 1),
+        status: "pending",
+        assigned_to: user?.id || null,
+        assigned_by: user?.id || null,
+        share_scope:
+          hasDirectReports && !shareWithReports ? "PRIVATE" : "DIRECT_REPORTS",
+      });
+      if (error) {
+        Alert.alert("Error", error.message);
+        return;
+      }
+      await loadTasks();
+      setShowCreateModal(false);
+      setNewTask({
+        title: "",
+        description: "",
+        priority: "medium",
+      });
+      setShareWithReports(true);
+    } catch (error: any) {
+      Alert.alert("Error", error?.message || "Could not create the task. Please try again.");
+    } finally {
+      creatingTaskRef.current = false;
+      setCreatingTask(false);
     }
-    await loadTasks();
-    setShowCreateModal(false);
-    setNewTask({
-      title: "",
-      description: "",
-      type: "follow_up",
-      priority: "medium",
-      deadline: new Date(Date.now() + 86400000).toISOString(),
-    });
   };
 
   const filteredTasks = tasks.filter((task) => {
     if (filter !== "all" && task.status !== filter) return false;
+    if (scopeFilter === "shared" && task.relation !== "SHARED") return false;
+    if (scopeFilter === "mine" && task.relation === "SHARED") return false;
     if (
       searchQuery &&
       !task.title.toLowerCase().includes(searchQuery.toLowerCase())
@@ -410,6 +586,19 @@ export default function TasksScreen() {
     { key: "in_progress", label: "In Progress" },
     { key: "completed", label: "Completed" },
   ];
+  const sharedCount = tasks.filter((task) => task.relation === "SHARED").length;
+  const scopeFilters: { key: ScopeFilter; label: string }[] = [
+    { key: "all", label: "All" },
+    { key: "mine", label: "Mine" },
+    {
+      key: "shared",
+      label: sharedCount > 0 ? `From my manager (${sharedCount})` : "From my manager",
+    },
+  ];
+  // Event messages are not tasks from the hierarchy; hide them under the
+  // "From my manager" scope so the list matches the chip.
+  const visibleEventAnnouncements =
+    scopeFilter === "shared" ? [] : filteredEventAnnouncements;
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.backgroundRoot }}>
@@ -548,7 +737,38 @@ export default function TasksScreen() {
             </Pressable>
           </View>
         ) : null}
-        {filteredEventAnnouncements.length > 0 ? (
+        <View style={styles.scopeRow}>
+          {scopeFilters.map((s) => {
+            const active = scopeFilter === s.key;
+            return (
+              <Pressable
+                key={s.key}
+                onPress={() => setScopeFilter(s.key)}
+                accessibilityRole="button"
+                accessibilityState={{ selected: active }}
+                style={[
+                  styles.scopeChip,
+                  {
+                    backgroundColor: active ? theme.primary : theme.backgroundDefault,
+                    borderColor: active ? theme.primary : theme.border,
+                  },
+                ]}
+              >
+                <ThemedText
+                  style={{
+                    fontSize: 12,
+                    fontWeight: "600",
+                    color: active ? "#FFFFFF" : theme.textSecondary,
+                  }}
+                  numberOfLines={1}
+                >
+                  {s.label}
+                </ThemedText>
+              </Pressable>
+            );
+          })}
+        </View>
+        {visibleEventAnnouncements.length > 0 ? (
           <View style={styles.eventTaskSection}>
             <View style={styles.eventTaskHeading}>
               <Feather name="bell" size={16} color={PRIMARY} />
@@ -558,7 +778,7 @@ export default function TasksScreen() {
                 Event messages
               </ThemedText>
             </View>
-            {filteredEventAnnouncements.map((announcement) => (
+            {visibleEventAnnouncements.map((announcement) => (
               <Pressable
                 key={announcement.eventId}
                 onPress={() => {
@@ -643,10 +863,12 @@ export default function TasksScreen() {
                   setShowDetailModal(true);
                 }}
                 onStatusChange={(status) => handleStatusChange(task.id, status)}
+                currentUserId={user?.id}
+                onForward={() => setForwardTask(task)}
               />
             ))}
           </View>
-        ) : filteredEventAnnouncements.length === 0 ? (
+        ) : visibleEventAnnouncements.length === 0 ? (
           <View
             style={[
               styles.emptyState,
@@ -682,9 +904,31 @@ export default function TasksScreen() {
             >
               {searchQuery
                 ? "Try a different search term"
-                : "No tasks assigned yet"}
+                : scopeFilter === "shared"
+                  ? "Nothing shared with you by your manager yet"
+                  : "No tasks assigned yet"}
             </ThemedText>
           </View>
+        ) : null}
+        {hasMoreActive && filter !== "completed" ? (
+          <Pressable
+            style={styles.loadMoreButton}
+            onPress={() => setActiveLimit((current) => current + ACTIVE_PAGE_SIZE)}
+          >
+            <ThemedText style={{ color: PRIMARY, fontWeight: "700" }}>
+              Load more active tasks
+            </ThemedText>
+          </Pressable>
+        ) : null}
+        {hasMoreDone && (filter === "all" || filter === "completed") ? (
+          <Pressable
+            style={styles.loadMoreButton}
+            onPress={() => setDoneLimit((current) => current + DONE_PAGE_SIZE)}
+          >
+            <ThemedText style={{ color: PRIMARY, fontWeight: "700" }}>
+              Load more completed tasks
+            </ThemedText>
+          </Pressable>
         ) : null}
       </ScreenScrollView>
 
@@ -855,9 +1099,62 @@ export default function TasksScreen() {
                   </View>
                 ) : null}
 
+                {taskOrigin(selectedTask, user?.id) ? (
+                  <View style={styles.detailRow}>
+                    <ThemedText
+                      type="small"
+                      style={{ color: theme.textSecondary }}
+                    >
+                      From:
+                    </ThemedText>
+                    <ThemedText
+                      type="small"
+                      style={{ color: theme.primary, flexShrink: 1, textAlign: "right" }}
+                    >
+                      {taskOrigin(selectedTask, user?.id)}
+                    </ThemedText>
+                  </View>
+                ) : null}
+
+                {selectedTask.assigned_to_name &&
+                selectedTask.assigned_to !== user?.id ? (
+                  <View style={styles.detailRow}>
+                    <ThemedText
+                      type="small"
+                      style={{ color: theme.textSecondary }}
+                    >
+                      Assigned to:
+                    </ThemedText>
+                    <ThemedText
+                      type="small"
+                      style={{ flexShrink: 1, textAlign: "right" }}
+                    >
+                      {selectedTask.assigned_to_name}
+                    </ThemedText>
+                  </View>
+                ) : null}
+
                 <Spacer height={Spacing.xl} />
 
-                {selectedTask.status !== "completed" ? (
+                {!canUpdateTask(selectedTask) ? (
+                  <View
+                    style={[
+                      styles.viewOnlyNotice,
+                      {
+                        backgroundColor: theme.backgroundSecondary,
+                        borderColor: theme.border,
+                      },
+                    ]}
+                  >
+                    <Feather name="eye" size={16} color={theme.textSecondary} />
+                    <ThemedText
+                      type="small"
+                      style={{ color: theme.textSecondary, flex: 1 }}
+                    >
+                      View only - shared with you
+                    </ThemedText>
+                  </View>
+                ) : selectedTask.status !== "completed" ? (
                   <Button
                     onPress={() => {
                       handleStatusChange(selectedTask.id, "completed");
@@ -866,6 +1163,24 @@ export default function TasksScreen() {
                   >
                     Mark as Complete
                   </Button>
+                ) : null}
+
+                {selectedTask.can_forward ? (
+                  <>
+                    <Spacer height={Spacing.md} />
+                    <Button
+                      variant="outline"
+                      onPress={() => {
+                        const task = selectedTask;
+                        setShowDetailModal(false);
+                        setForwardTask(task);
+                      }}
+                    >
+                      {Number(selectedTask.forwarded_count || 0) > 0
+                        ? `Forward to my team (forwarded to ${selectedTask.forwarded_count})`
+                        : "Forward to my team"}
+                    </Button>
+                  </>
                 ) : null}
               </View>
             ) : null}
@@ -968,18 +1283,76 @@ export default function TasksScreen() {
                 ))}
               </View>
 
+              {hasDirectReports ? (
+                <>
+                  <Spacer height={Spacing.md} />
+                  <View
+                    style={[
+                      styles.shareSwitchRow,
+                      {
+                        backgroundColor: theme.backgroundSecondary,
+                        borderColor: theme.border,
+                      },
+                    ]}
+                  >
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <ThemedText type="small" style={{ fontWeight: "600" }}>
+                        Visible to my direct reports
+                      </ThemedText>
+                      <ThemedText
+                        type="caption"
+                        style={{ color: theme.textSecondary, marginTop: 2 }}
+                      >
+                        {shareWithReports
+                          ? "Your team can see this task."
+                          : "Only you can see this task."}
+                      </ThemedText>
+                    </View>
+                    <Switch
+                      value={shareWithReports}
+                      onValueChange={setShareWithReports}
+                      trackColor={{ false: theme.border, true: theme.primary }}
+                      thumbColor="#FFFFFF"
+                      accessibilityLabel="Visible to my direct reports"
+                    />
+                  </View>
+                </>
+              ) : null}
+
               <Spacer height={Spacing.xl} />
 
-              <Button onPress={handleCreateTask}>Create Task</Button>
+              <Button onPress={handleCreateTask} disabled={creatingTask}>
+                {creatingTask ? "Creating..." : "Create Task"}
+              </Button>
             </View>
           </ThemedView>
         </View>
       </Modal>
+
+      <ForwardTaskModal
+        visible={!!forwardTask}
+        task={forwardTask}
+        onClose={() => setForwardTask(null)}
+        onForwarded={(message) => {
+          setForwardTask(null);
+          Alert.alert("Task forwarded", message);
+          void loadTasks();
+        }}
+      />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  loadMoreButton: {
+    alignItems: "center",
+    justifyContent: "center",
+    minHeight: 44,
+    marginTop: Spacing.md,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    borderColor: PRIMARY,
+  },
   // ── hero header ───────────────────────────────────────────────────────────
   header: {
     paddingHorizontal: Spacing.lg,
@@ -1123,6 +1496,66 @@ const styles = StyleSheet.create({
   },
   deadlineContainer: { flexDirection: "row", alignItems: "center", gap: 4 },
   actionButtons: { flexDirection: "row", gap: Spacing.sm },
+  originRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    marginBottom: Spacing.sm,
+  },
+  viewOnlyBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 3,
+    borderRadius: BorderRadius.full,
+  },
+  viewOnlyNotice: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.sm,
+    padding: Spacing.md,
+    borderRadius: BorderRadius.sm,
+    borderWidth: 1,
+  },
+  forwardRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: Spacing.sm,
+    marginTop: Spacing.md,
+    paddingTop: Spacing.sm,
+    borderTopWidth: 1,
+  },
+  forwardBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    minHeight: 32,
+    paddingHorizontal: Spacing.md,
+    borderRadius: BorderRadius.full,
+    borderWidth: 1,
+  },
+  scopeRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: Spacing.sm,
+    marginBottom: Spacing.md,
+  },
+  scopeChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: BorderRadius.full,
+    borderWidth: 1,
+  },
+  shareSwitchRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.md,
+    padding: Spacing.md,
+    borderRadius: BorderRadius.sm,
+    borderWidth: 1,
+  },
   actionBtn: {
     width: 30,
     height: 30,

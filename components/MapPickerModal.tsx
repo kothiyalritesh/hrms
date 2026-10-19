@@ -16,6 +16,7 @@ import MapView, {
   PROVIDER_GOOGLE,
   type MapPressEvent,
 } from "react-native-maps";
+import SafeMapView from "@/components/SafeMapView";
 import { SafeAreaView } from "react-native-safe-area-context";
 import * as Location from "expo-location";
 
@@ -259,7 +260,7 @@ export default function MapPickerModal({
                 </ThemedText>
               </View>
             )}
-            <MapView
+            <SafeMapView
               key={mapKey}
               ref={mapRef}
               style={StyleSheet.absoluteFill}
@@ -284,7 +285,7 @@ export default function MapPickerModal({
                   void selectCoordinates(latitude, longitude);
                 }}
               />
-            </MapView>
+            </SafeMapView>
           </View>
 
           <View style={styles.footer}>

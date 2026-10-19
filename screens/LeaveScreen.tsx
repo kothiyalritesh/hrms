@@ -15,7 +15,8 @@ import DateTimePicker, {
   DateTimePickerEvent,
 } from "@react-native-community/datetimepicker";
 import Feather from "@expo/vector-icons/Feather";
-import { useFocusEffect } from "@react-navigation/native";
+import { useFocusEffect, useNavigation, useRoute } from "@react-navigation/native";
+import { DateInput } from "@/components/DateInput";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Button } from "@/components/Button";
 import { PageHeader } from "@/components/PageHeader";
@@ -92,6 +93,8 @@ export default function LeaveScreen() {
   const { theme } = useTheme();
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
+  const route = useRoute<any>();
+  const navigation = useNavigation<any>();
   const [leaves, setLeaves] = useState<LeaveApplication[]>([]);
   const [balance, setBalance] = useState<LeaveBalance>({
     sick: 0,
@@ -140,6 +143,15 @@ export default function LeaveScreen() {
       loadData();
     }, [loadData]),
   );
+  // Home -> Quick Actions -> "Apply Leave" opens the form directly.
+  const openApply = route.params?.openApply === true;
+  React.useEffect(() => {
+    // Wait for the server business date so the form is not seeded from the device clock.
+    if (!openApply || loading) return;
+    setForm(initialForm(businessDate));
+    setShowApply(true);
+    navigation.setParams({ openApply: undefined });
+  }, [openApply, loading]); // eslint-disable-line react-hooks/exhaustive-deps
   const onRefresh = async () => {
     setRefreshing(true);
     await loadData();
@@ -176,6 +188,9 @@ export default function LeaveScreen() {
 
   const submit = async () => {
     if (!user?.id || submitting) return;
+    const isoDate = /^\d{4}-\d{2}-\d{2}$/;
+    if (!isoDate.test(form.startDate) || !isoDate.test(form.endDate))
+      return Alert.alert("Select dates", "Choose both a start date and an end date.");
     if (form.endDate < form.startDate)
       return Alert.alert(
         "Invalid dates",
@@ -187,19 +202,25 @@ export default function LeaveScreen() {
         "Please enter a meaningful reason.",
       );
     setSubmitting(true);
-    const result = await LeaveService.submitLeave(user.id, {
-      type: form.type,
-      startDate: form.startDate,
-      endDate: form.endDate,
-      reason: form.reason,
-      isHalfDay: form.isHalfDay,
-      halfDayPeriod: form.isHalfDay ? form.halfDayPeriod : undefined,
-    });
-    setSubmitting(false);
-    if (!result.success)
+    let result: Awaited<ReturnType<typeof LeaveService.submitLeave>> | null = null;
+    try {
+      result = await LeaveService.submitLeave(user.id, {
+        type: form.type,
+        startDate: form.startDate,
+        endDate: form.endDate,
+        reason: form.reason,
+        isHalfDay: form.isHalfDay,
+        halfDayPeriod: form.isHalfDay ? form.halfDayPeriod : undefined,
+      });
+    } catch (error: any) {
+      result = { success: false, message: error?.message } as any;
+    } finally {
+      setSubmitting(false);
+    }
+    if (!result?.success)
       return Alert.alert(
         "Leave not submitted",
-        result.message ?? "Please check the details and try again.",
+        result?.message ?? "Please check the details and try again.",
       );
     setShowApply(false);
     setForm(initialForm(businessDate));
@@ -239,14 +260,20 @@ export default function LeaveScreen() {
         {label}
       </ThemedText>
       {Platform.OS === "web" ? (
-        <TextInput
+        <DateInput
           style={[
             styles.input,
-            { backgroundColor: theme.backgroundSecondary, color: theme.text },
+            { backgroundColor: theme.backgroundSecondary, color: theme.text, borderWidth: 0 },
           ]}
           value={form[key]}
-          onChangeText={(value) => setForm((old) => ({ ...old, [key]: value }))}
-          placeholder="YYYY-MM-DD"
+          min={key === "endDate" ? form.startDate : undefined}
+          onChange={(value) =>
+            setForm((old) =>
+              key === "startDate"
+                ? { ...old, startDate: value, endDate: old.endDate < value ? value : old.endDate }
+                : { ...old, endDate: value },
+            )
+          }
         />
       ) : (
         <Pressable
@@ -603,7 +630,7 @@ export default function LeaveScreen() {
         <DateTimePicker
           value={new Date(`${form[picker]}T00:00:00`)}
           mode="date"
-          minimumDate={new Date(new Date().setHours(0, 0, 0, 0))}
+          minimumDate={picker === "endDate" ? new Date(`${form.startDate}T00:00:00`) : undefined}
           onChange={onDateChange}
         />
       ) : null}

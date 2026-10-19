@@ -2,7 +2,10 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const EXPO_SEND_URL = "https://exp.host/--/api/v2/push/send";
 const EXPO_RECEIPTS_URL = "https://exp.host/--/api/v2/push/getReceipts";
-const MAX_BATCH = 100;
+const MAX_BATCH = 300;
+// Rows sent at the same time; each row is claimed atomically, so parallel
+// sends never deliver one notification twice.
+const SEND_CONCURRENCY = 10;
 const BACKEND_SCHEMA_VERSION = "20260810000000";
 const FUNCTION_VERSION = "20260810.1";
 
@@ -29,6 +32,8 @@ function json(body: unknown, status = 200) {
   return Response.json(body, { status });
 }
 
+const RECEIPT_TTL_MS = 24 * 60 * 60_000;
+
 function retryAt(attempts: number) {
   const delaySeconds = Math.min(3600, 30 * 2 ** Math.min(attempts, 7));
   return new Date(Date.now() + delaySeconds * 1000).toISOString();
@@ -41,7 +46,7 @@ function validExpoToken(token: string) {
 async function processReceipts(admin: any) {
   const { data: pending } = await admin
     .from("notification_push_deliveries")
-    .select("id,outbox_id,push_token_id,provider_ticket_id")
+    .select("id,outbox_id,push_token_id,provider_ticket_id,updated_at")
     .eq("status", "SENT")
     .not("provider_ticket_id", "is", null)
     .order("updated_at")
@@ -61,7 +66,22 @@ async function processReceipts(admin: any) {
     const payload = await response.json().catch(() => ({ data: {} }));
     for (const row of batch) {
       const receipt = payload?.data?.[row.provider_ticket_id];
-      if (!receipt) continue;
+      if (!receipt) {
+        // Expo keeps receipts ~24 h. Without this, expired tickets stay the
+        // oldest SENT rows forever and block every newer receipt check.
+        if (Date.parse(row.updated_at) < Date.now() - RECEIPT_TTL_MS) {
+          await admin
+            .from("notification_push_deliveries")
+            .update({
+              status: "DELIVERED",
+              error_code: "RECEIPT_EXPIRED",
+              error_message: "Accepted by the push service; delivery receipt no longer available",
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", row.id);
+        }
+        continue;
+      }
       const succeeded = receipt.status === "ok";
       await admin
         .from("notification_push_deliveries")
@@ -278,13 +298,33 @@ async function dispatchRow(admin: any, candidate: OutboxRow) {
 
 Deno.serve(async (request) => {
   if (request.method !== "POST") return json({ error: "METHOD_NOT_ALLOWED" }, 405);
-  const projectKey = Deno.env.get("SUPABASE_ANON_KEY");
-  const authorization = request.headers.get("authorization");
-  const suppliedApiKey = request.headers.get("apikey");
+  // The scheduled call (pg_cron) sends the project's publishable key
+  // (sb_publishable_...). Older projects expose only the legacy anon JWT as
+  // SUPABASE_ANON_KEY, so comparing with that alone rejected every scheduled
+  // run with 401 and no push was ever sent. Accept the legacy key or any of the
+  // project's publishable keys. The call carries no caller input: it only
+  // drains this project's own outbox.
+  const acceptedKeys = new Set<string>();
+  const legacyKey = Deno.env.get("SUPABASE_ANON_KEY");
+  if (legacyKey) acceptedKeys.add(legacyKey);
+  for (const name of ["SUPABASE_PUBLISHABLE_KEYS", "PUSH_DISPATCH_ACCEPTED_KEYS"]) {
+    const raw = Deno.env.get(name);
+    if (!raw) continue;
+    try {
+      const parsed = JSON.parse(raw);
+      for (const value of Object.values(parsed ?? {})) {
+        if (typeof value === "string" && value) acceptedKeys.add(value);
+      }
+    } catch {
+      for (const value of raw.split(",")) if (value.trim()) acceptedKeys.add(value.trim());
+    }
+  }
+  const authorization = request.headers.get("authorization") ?? "";
+  const suppliedApiKey = request.headers.get("apikey") ?? "";
   if (
-    !projectKey ||
-    authorization !== `Bearer ${projectKey}` ||
-    suppliedApiKey !== projectKey
+    !acceptedKeys.size ||
+    !acceptedKeys.has(suppliedApiKey) ||
+    authorization !== `Bearer ${suppliedApiKey}`
   ) {
     return json({ error: "UNAUTHORIZED" }, 401);
   }
@@ -305,18 +345,46 @@ Deno.serve(async (request) => {
     auth: { persistSession: false, autoRefreshToken: false },
   });
   const receipts = await processReceipts(admin);
-  const now = new Date().toISOString();
-  const { data: candidates, error } = await admin
+  // A run that crashed or timed out mid-send leaves rows in SENDING, which the
+  // candidate query below never picks up again. Hand them back for a retry.
+  await admin
     .from("notification_push_outbox")
-    .select("id,recipient_user_id,title,body,event_type,event_key,channel_id,category_id,deep_link,data,sound,priority,attempts,expires_at")
-    .in("status", ["PENDING", "FAILED", "WAITING_TOKEN"])
+    .update({
+      status: "FAILED",
+      last_error: "RECOVERED_STUCK_SENDING",
+      next_attempt_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("status", "SENDING")
+    .lt("updated_at", new Date(Date.now() - 5 * 60_000).toISOString());
+  const now = new Date().toISOString();
+  const columns = "id,recipient_user_id,title,body,event_type,event_key,channel_id,category_id,deep_link,data,sound,priority,attempts,expires_at";
+  // New notifications first. Retries (no phone registered yet, earlier
+  // failures) used to sit ahead of a fresh broadcast and delay it.
+  const { data: fresh, error } = await admin
+    .from("notification_push_outbox")
+    .select(columns)
+    .eq("status", "PENDING")
     .lte("next_attempt_at", now)
     .order("created_at")
     .limit(MAX_BATCH);
   if (error) return json({ error: "OUTBOX_QUERY_FAILED", message: error.message }, 500);
+  let retries: OutboxRow[] = [];
+  if ((fresh?.length ?? 0) < MAX_BATCH) {
+    const { data: retryRows, error: retryError } = await admin
+      .from("notification_push_outbox")
+      .select(columns)
+      .in("status", ["FAILED", "WAITING_TOKEN"])
+      .lte("next_attempt_at", now)
+      .order("next_attempt_at")
+      .limit(MAX_BATCH - (fresh?.length ?? 0));
+    if (retryError) return json({ error: "OUTBOX_QUERY_FAILED", message: retryError.message }, 500);
+    retries = (retryRows ?? []) as OutboxRow[];
+  }
+  const candidates = [...((fresh ?? []) as OutboxRow[]), ...retries];
 
   const outcomes = { sent: 0, failed: 0, waitingToken: 0, expired: 0, skipped: 0 };
-  for (const row of (candidates ?? []) as OutboxRow[]) {
+  const handle = async (row: OutboxRow) => {
     try {
       const result = await dispatchRow(admin, row);
       if (result.status === "SENT") outcomes.sent += result.sent;
@@ -333,6 +401,9 @@ Deno.serve(async (request) => {
         updated_at: new Date().toISOString(),
       }).eq("id", row.id);
     }
+  };
+  for (let index = 0; index < candidates.length; index += SEND_CONCURRENCY) {
+    await Promise.all(candidates.slice(index, index + SEND_CONCURRENCY).map(handle));
   }
-  return json({ success: true, receipts, candidates: candidates?.length ?? 0, ...outcomes });
+  return json({ success: true, receipts, candidates: candidates.length, ...outcomes });
 });

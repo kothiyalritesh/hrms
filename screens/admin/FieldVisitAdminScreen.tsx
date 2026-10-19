@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect, useRef } from "react";
 import {
   View, StyleSheet, ScrollView, TouchableOpacity,
   Modal, Platform, TextInput, ActivityIndicator, RefreshControl, Alert,
@@ -7,9 +7,13 @@ import Feather from "@expo/vector-icons/Feather";
 import { useFocusEffect } from "@react-navigation/native";
 import { ThemedText } from "@/components/ThemedText";
 import { ThemedView } from "@/components/ThemedView";
+import { useTheme } from "@/hooks/useTheme";
 import { supabase } from "@/lib/supabase";
 import MarkedLocationReviewPanel from "@/components/MarkedLocationReviewPanel";
 import LocationTimelineModal, { PingPoint } from "@/components/LocationTimelineModal";
+import type { LocationStory } from "@/components/LocationDayStory";
+import { EvidencePhoto } from "@/components/EvidencePhoto";
+import { collapseCurrentLocationSubmissions } from "@/services/field-visit.service";
 import { BusinessClockService } from "@/services/business-clock.service";
 import {
   addBusinessDays,
@@ -18,6 +22,7 @@ import {
 } from "@/utils/businessDate";
 import { fetchAllPages } from "@/utils/supabasePagination";
 import { formatHrmsTime } from "@/utils/attendanceTimestamp";
+import { freshnessOfTimestamp } from "@/utils/locationFreshness";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 function fmtTime(iso?: string | null) {
@@ -29,11 +34,50 @@ function fmtDate(s: string) {
 }
 
 const STATUS_COLOR: Record<string, { bg: string; text: string; label: string }> = {
-  PENDING:    { bg: "#FEF3C7", text: "#D97706", label: "En Route" },
+  PENDING:    { bg: "#FEF3C7", text: "#D97706", label: "Planned" },
+  IN_TRANSIT: { bg: "#E0E7FF", text: "#4338CA", label: "Travelling" },
   CHECKED_IN: { bg: "#DBEAFE", text: "#2563EB", label: "At Location" },
   COMPLETED:  { bg: "#D1FAE5", text: "#059669", label: "Completed" },
   MISSED:     { bg: "#FEE2E2", text: "#DC2626", label: "Missed" },
 };
+
+const TYPE_LABEL: Record<string, string> = { site: "Site", meeting: "Meeting", office: "Office", others: "Other" };
+
+type StatusFilter = "ALL" | "COMPLETED" | "ACTIVE" | "MISSED";
+const isActiveStatus = (st: string) => st === "CHECKED_IN" || st === "IN_TRANSIT";
+function matchesFilter(v: any, f: StatusFilter) {
+  if (f === "ALL") return true;
+  if (f === "ACTIVE") return isActiveStatus(v.status);
+  return v.status === f;
+}
+
+const EVIDENCE_TEXT: Record<string, { label: string; color: string; hint: string }> = {
+  STRONG: { label: "Strong", color: "#059669", hint: "Several reliable GPS points inside the site radius." },
+  PARTIAL: { label: "Partial", color: "#D97706", hint: "Some GPS points near the site, but not enough to be sure." },
+  NOT_AT_SITE: { label: "Not at site", color: "#DC2626", hint: "Reliable GPS points were recorded, none inside the site radius." },
+  NONE: { label: "No GPS data", color: "#6B7280", hint: "No location points were recorded for this visit." },
+};
+
+function minutesBetween(a?: string | null, b?: string | null) {
+  if (!a || !b) return null;
+  const m = (new Date(b).getTime() - new Date(a).getTime()) / 60000;
+  return Number.isFinite(m) && m >= 0 ? Math.round(m) : null;
+}
+function fmtDuration(m: number | null) {
+  if (m == null) return "—";
+  const h = Math.floor(m / 60);
+  return h ? `${h}h ${m % 60}m` : `${m}m`;
+}
+function haversineM(a: { latitude: number; longitude: number }, b: { latitude: number; longitude: number }) {
+  const R = 6371000, rad = Math.PI / 180;
+  const dLat = (b.latitude - a.latitude) * rad, dLon = (b.longitude - a.longitude) * rad;
+  const x = Math.sin(dLat / 2) ** 2 + Math.cos(a.latitude * rad) * Math.cos(b.latitude * rad) * Math.sin(dLon / 2) ** 2;
+  return Math.round(R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x)));
+}
+const coordText = (c: any) =>
+  c && Number.isFinite(Number(c.latitude)) && Number.isFinite(Number(c.longitude))
+    ? `${Number(c.latitude).toFixed(5)}, ${Number(c.longitude).toFixed(5)}`
+    : null;
 
 const PRESETS = [
   { label: "Today", range: (base: string) => [base, base] },
@@ -57,8 +101,34 @@ const PRESETS = [
 
 // ── Detail Modal ──────────────────────────────────────────────────────────────
 function DetailModal({ visit, onClose, openTimeline }: { visit: any; onClose: () => void; openTimeline?: (uid: string, name: string, date: string) => void }) {
+  const [evidence, setEvidence] = useState<any>(null);
+  const [live, setLive] = useState<any>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setEvidence(null);
+    setLive(null);
+    if (!visit) return;
+    if (visit.location_evidence && typeof visit.location_evidence === "object") {
+      setEvidence(visit.location_evidence);
+    } else if (visit.status !== "PENDING") {
+      void Promise.resolve(supabase.rpc("rpc_field_visit_location_evidence", { p_visit_id: visit.id }))
+        .then(({ data }: any) => { if (!cancelled && data && typeof data === "object") setEvidence(data); })
+        .catch(() => undefined);
+    }
+    if (isActiveStatus(visit.status)) {
+      void Promise.resolve(supabase.rpc("rpc_latest_locations_for_users", { p_user_ids: [visit.user_id] }))
+        .then(({ data }: any) => { if (!cancelled && Array.isArray(data) && data[0]) setLive(data[0]); })
+        .catch(() => undefined);
+    }
+    return () => { cancelled = true; };
+  }, [visit?.id]);
   if (!visit) return null;
   const sc = STATUS_COLOR[visit.status] || STATUS_COLOR.PENDING;
+  const dest = visit.destination_coords?.latitude != null ? visit.destination_coords : null;
+  const livePos = live?.latitude != null ? { latitude: Number(live.latitude), longitude: Number(live.longitude) } : null;
+  const liveFresh = live?.recorded_at ? freshnessOfTimestamp(live.recorded_at, Date.now()) : null;
+  const isMismatch = ["CURRENT_LOCATION_MARKED", "LOW_ACCURACY", "MOCK_LOCATION_FLAGGED", "MISMATCHED"].includes(String(visit.location_match_status || ""));
+  const ev = evidence?.level ? EVIDENCE_TEXT[evidence.level] ?? null : null;
 
   const destLat = visit.destination_coords?.latitude ?? visit.checkin_location?.latitude;
   const destLng = visit.destination_coords?.longitude ?? visit.checkin_location?.longitude;
@@ -91,9 +161,14 @@ function DetailModal({ visit, onClose, openTimeline }: { visit: any; onClose: ()
               </View>
               <View style={[d.badge, { backgroundColor: visit.visit_type === 'site' ? '#D1FAE5' : '#EFF6FF' }]}>
                 <ThemedText style={[d.badgeTxt, { color: visit.visit_type === 'site' ? '#065F46' : '#1E40AF' }]}>
-                  {visit.visit_type === 'site' ? '🏗️ Site' : visit.visit_type === 'office' ? '🏢 Office' : '🤝 Meeting'}
+                  {TYPE_LABEL[visit.visit_type] ?? 'Visit'}
                 </ThemedText>
               </View>
+              {visit.auto_closed ? (
+                <View style={[d.badge, { backgroundColor: '#F3F4F6' }]}>
+                  <ThemedText style={[d.badgeTxt, { color: '#4B5563' }]}>Auto-closed</ThemedText>
+                </View>
+              ) : null}
             </View>
           </View>
 
@@ -132,15 +207,86 @@ function DetailModal({ visit, onClose, openTimeline }: { visit: any; onClose: ()
               </View>
             ) : null}
 
+            {/* Active visit: where the person is now */}
+            {isActiveStatus(visit.status) ? (
+              <View style={d.section}>
+                <ThemedText style={d.sectionTitle}>📡 Live position</ThemedText>
+                {livePos ? (
+                  <>
+                    <Row icon="crosshair" label="Latest GPS" value={`${coordText(livePos)}${live.accuracy != null ? ` (±${Math.round(Number(live.accuracy))} m)` : ''}`} />
+                    <Row icon="clock" label="Updated" value={`${fmtTime(live.recorded_at)}${liveFresh ? ` · ${liveFresh === 'LIVE' ? 'live' : liveFresh === 'RECENT' ? 'recent' : 'old'}` : ''}`}
+                      color={liveFresh === 'LIVE' ? '#059669' : liveFresh === 'RECENT' ? '#D97706' : '#DC2626'} />
+                    {dest ? <Row icon="navigation" label="To site" value={`${haversineM(livePos, dest)} m (straight line)`} /> : null}
+                    {visit.checkin_location?.latitude != null ? (
+                      <Row icon="corner-down-right" label="From check-in" value={`${haversineM(livePos, visit.checkin_location)} m`} />
+                    ) : null}
+                  </>
+                ) : (
+                  <ThemedText style={d.muted}>No location received from this phone today.</ThemedText>
+                )}
+              </View>
+            ) : null}
+
             {/* Times */}
             <View style={d.section}>
               <ThemedText style={d.sectionTitle}>🕐 Timing</ThemedText>
+              <Row icon="calendar" label="Planned" value={fmtTime(visit.created_at)} />
+              {visit.tracking_started_at ? <Row icon="play" label="Started trip" value={fmtTime(visit.tracking_started_at)} /> : null}
               <Row icon="log-in" label="Check In" value={fmtTime(visit.checkin_time)} color="#059669" />
               <Row icon="log-out" label="Check Out" value={fmtTime(visit.checkout_time)} color="#DC2626" />
-              {visit.checkin_location?.latitude
-                ? <Row icon="crosshair" label="Checkin GPS" value={`${visit.checkin_location.latitude.toFixed(5)}, ${visit.checkin_location.longitude.toFixed(5)}`} color="#059669" />
+              <Row icon="watch" label="Time at site" value={fmtDuration(minutesBetween(visit.checkin_time, visit.checkout_time))} />
+              {coordText(visit.checkin_location)
+                ? <Row icon="crosshair" label="Checkin GPS" value={coordText(visit.checkin_location)!} color="#059669" />
+                : null}
+              {coordText(visit.checkout_location)
+                ? <Row icon="crosshair" label="Checkout GPS" value={`${coordText(visit.checkout_location)}${visit.checkout_accuracy_m != null ? ` (±${Math.round(visit.checkout_accuracy_m)} m)` : ''}`} color="#DC2626" />
+                : null}
+              {visit.checkout_distance_m != null
+                ? <Row icon="maximize" label="Checkout from site" value={`${Math.round(visit.checkout_distance_m)} m`} />
+                : null}
+              {visit.status === 'MISSED'
+                ? <Row icon="alert-circle" label="Missed" value={visit.auto_closed ? 'Closed automatically: no check-in that day' : 'Marked missed (no check-in)'} color="#DC2626" />
                 : null}
             </View>
+
+            {/* GPS evidence for the visit */}
+            {ev ? (
+              <View style={d.section}>
+                <ThemedText style={d.sectionTitle}>🛰️ Location evidence</ThemedText>
+                <Row icon="shield" label="Result" value={ev.label} color={ev.color} />
+                <ThemedText style={d.muted}>{ev.hint}</ThemedText>
+                {evidence.minutes_at_site != null ? <Row icon="watch" label="At site" value={`${Math.round(evidence.minutes_at_site)} min of GPS inside the radius`} /> : null}
+                {evidence.closest_m != null ? <Row icon="target" label="Closest" value={`${Math.round(evidence.closest_m)} m from site`} /> : null}
+                {evidence.good_points != null ? <Row icon="list" label="GPS points" value={`${evidence.good_points} reliable of ${evidence.total_points ?? 0}`} /> : null}
+                {Array.isArray(evidence.flags) && evidence.flags.length ? (
+                  <Row icon="flag" label="Flags" value={evidence.flags.map((f: string) => f.replace(/_/g, ' ').toLowerCase()).join(', ')} color="#B45309" />
+                ) : null}
+              </View>
+            ) : null}
+
+            {/* Location mismatch (the only place a photo is taken) */}
+            {isMismatch ? (
+              <View style={d.section}>
+                <ThemedText style={d.sectionTitle}>⚠️ Location mismatch</ThemedText>
+                <Row icon="map-pin" label="Marked at" value={visit.actual_location_name || coordText({ latitude: visit.actual_latitude, longitude: visit.actual_longitude }) || '—'} />
+                {visit.selected_site_distance_metres != null ? <Row icon="navigation" label="From site" value={`${Math.round(visit.selected_site_distance_metres)} m`} /> : null}
+                {visit.actual_location_accuracy_metres != null ? <Row icon="crosshair" label="Accuracy" value={`±${Math.round(visit.actual_location_accuracy_metres)} m`} /> : null}
+                {visit.location_mismatch_reason ? <Row icon="file-text" label="Reason" value={visit.location_mismatch_reason} /> : null}
+                <Row icon="check-square" label="Review" value={String(visit.verification_status || 'PENDING').replace(/_/g, ' ')} />
+                {visit.evidence_photo_path ? (
+                  <View style={{ marginTop: 8 }}>
+                    <EvidencePhoto path={visit.evidence_photo_path} height={200} />
+                  </View>
+                ) : null}
+              </View>
+            ) : null}
+
+            {openTimeline ? (
+              <TouchableOpacity style={[d.navBtn, { backgroundColor: '#2563EB' }]} onPress={() => openTimeline(visit.user_id, visit.profiles?.name || 'Employee', visit.date)}>
+                <Feather name="activity" size={15} color="#fff" />
+                <ThemedText style={d.navBtnTxt}>View route & day timeline</ThemedText>
+              </TouchableOpacity>
+            ) : null}
 
             {/* Checkout Notes */}
             {visit.checkout_notes ? (
@@ -191,6 +337,64 @@ const d = StyleSheet.create({
   sectionTitle: { fontSize: 12, fontWeight: "700", color: "#6B7280", marginBottom: 4, marginTop: 4 },
   navBtn: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: "#60045d", borderRadius: 10, paddingVertical: 12, paddingHorizontal: 16, marginTop: 10, justifyContent: "center" },
   navBtnTxt: { color: "#fff", fontWeight: "700", fontSize: 14 },
+  muted: { fontSize: 12, color: "#6B7280", marginTop: 4 },
+});
+
+// ── View toggle (All Field Visits / Current Locations Marked) ────────────────
+function ViewToggle({
+  view,
+  onChange,
+}: {
+  view: "VISITS" | "MARKED";
+  onChange: (v: "VISITS" | "MARKED") => void;
+}) {
+  const { theme } = useTheme();
+  const options: { key: "VISITS" | "MARKED"; label: string; icon: React.ComponentProps<typeof Feather>["name"] }[] = [
+    { key: "VISITS", label: "All Field Visits", icon: "briefcase" },
+    { key: "MARKED", label: "Current Locations Marked", icon: "map-pin" },
+  ];
+  return (
+    <View style={[vt.bar, { backgroundColor: theme.backgroundDefault, borderBottomColor: theme.border }]}>
+      <View style={[vt.track, { backgroundColor: theme.backgroundSecondary, borderColor: theme.border }]}>
+        {options.map((o) => {
+          const active = view === o.key;
+          return (
+            <TouchableOpacity
+              key={o.key}
+              style={[vt.btn, active && { backgroundColor: theme.primary }]}
+              onPress={() => onChange(o.key)}
+              accessibilityRole="button"
+              accessibilityState={{ selected: active }}
+            >
+              <Feather name={o.icon} size={14} color={active ? "#FFFFFF" : theme.textSecondary} />
+              <ThemedText
+                numberOfLines={2}
+                style={[vt.txt, { color: active ? "#FFFFFF" : theme.text }, active && { fontWeight: "800" }]}
+              >
+                {o.label}
+              </ThemedText>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+const vt = StyleSheet.create({
+  bar: { paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1 },
+  track: { flexDirection: "row", borderWidth: 1, borderRadius: 12, padding: 3, gap: 3 },
+  btn: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    borderRadius: 9,
+    paddingVertical: 9,
+    paddingHorizontal: 8,
+  },
+  txt: { fontSize: 13, fontWeight: "600", lineHeight: 17, textAlign: "center", flexShrink: 1 },
 });
 
 // ── Main Screen ───────────────────────────────────────────────────────────────
@@ -207,8 +411,35 @@ export default function FieldVisitAdminScreen() {
   const [empFilter, setEmpFilter] = useState("");
   const [expandedDates, setExpandedDates] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<any>(null);
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
+  const [timeline, setTimeline] = useState<{ name: string; date: string } | null>(null);
+  const [timelineStory, setTimelineStory] = useState<LocationStory | null>(null);
+  const [timelinePings, setTimelinePings] = useState<PingPoint[]>([]);
+  const [timelineLoading, setTimelineLoading] = useState(false);
+  // The applied query, used by refresh / focus (editing a date does not query).
+  const applied = useRef({ s: "", e: "", emp: "" });
 
-  const load = useCallback(async (s = startDate, e = endDate, emp = empFilter) => {
+  const openTimeline = useCallback(async (userId: string, name: string, date: string) => {
+    setSelected(null);
+    setTimeline({ name, date });
+    setTimelineLoading(true);
+    setTimelineStory(null);
+    setTimelinePings([]);
+    const res: any = await supabase.rpc("rpc_location_timeline", { p_user_id: userId, p_date: date });
+    if (!res.error && res.data) {
+      const story = res.data as LocationStory;
+      setTimelineStory(story);
+      setTimelinePings((story.points ?? []).map((p: any) => ({
+        latitude: p.latitude, longitude: p.longitude, recorded_at: p.recorded_at,
+        gps_available: true, status: p.quality === "RELIABLE" || p.quality === "STALE" ? "GREEN" : "RED_RANGE",
+        source: "app", quality: p.quality, accuracy: p.accuracy,
+      })));
+    }
+    setTimelineLoading(false);
+  }, []);
+
+  const load = useCallback(async (s: string, e: string, emp: string) => {
+    applied.current = { s, e, emp };
     setLoading(true);
     try {
       const [visitResult, employeeResult] = await Promise.all([
@@ -231,18 +462,20 @@ export default function FieldVisitAdminScreen() {
       ]);
       if (visitResult.error) throw visitResult.error;
       if (employeeResult.error) throw employeeResult.error;
-      setVisits(visitResult.data || []);
+      // A location re-submission replaces its source visit (one row per visit).
+      setVisits(collapseCurrentLocationSubmissions(visitResult.data || []));
       setEmployees(employeeResult.data || []);
     } catch (error: any) {
       Alert.alert("Field visits unavailable", error?.message || "Data query failed");
     } finally {
       setLoading(false);
     }
-  }, [startDate, endDate, empFilter]);
+  }, []);
 
   useFocusEffect(useCallback(() => {
     if (businessDate) {
-      void load();
+      const a = applied.current;
+      void load(a.s || businessDate, a.e || businessDate, a.emp);
       return;
     }
     void BusinessClockService.getDate(true).then((date) => {
@@ -250,9 +483,9 @@ export default function FieldVisitAdminScreen() {
       setStartDate(date);
       setEndDate(date);
       setExpandedDates(new Set([date]));
-      return load(date, date, empFilter);
+      return load(date, date, "");
     });
-  }, [businessDate, empFilter, load]));
+  }, [businessDate, load]));
 
   const applyPreset = (p: typeof PRESETS[0]) => {
     if (!businessDate) return;
@@ -271,58 +504,69 @@ export default function FieldVisitAdminScreen() {
   const toggleDate = (date: string) =>
     setExpandedDates(prev => { const n = new Set(prev); n.has(date) ? n.delete(date) : n.add(date); return n; });
 
-  // group by date
+  // group by date (after the status filter)
   const grouped: { date: string; rows: any[] }[] = [];
   const seen = new Set<string>();
-  for (const v of visits) {
+  for (const v of visits.filter((x) => matchesFilter(x, statusFilter))) {
     if (!seen.has(v.date)) { seen.add(v.date); grouped.push({ date: v.date, rows: [] }); }
     grouped.find(g => g.date === v.date)!.rows.push(v);
   }
 
-  const totalToday = visits.filter(v => v.date === businessDate).length;
-  const completedToday = visits.filter(v => v.date === businessDate && v.status === "COMPLETED").length;
 
   if (view === "MARKED") return (
     <ThemedView style={s.root}>
-      <View style={{ flexDirection: "row", padding: 12, gap: 8, backgroundColor: "#fff" }}>
-        <TouchableOpacity style={[s.preset, { flex: 1 }]} onPress={() => setView("VISITS")}><ThemedText style={s.presetTxt}>All Field Visits</ThemedText></TouchableOpacity>
-        <TouchableOpacity style={[s.preset, s.presetActive, { flex: 1 }]} onPress={() => setView("MARKED")}><ThemedText style={s.presetTxtActive}>Current Locations Marked</ThemedText></TouchableOpacity>
-      </View>
+      <ViewToggle view={view} onChange={setView} />
       <ScrollView contentContainerStyle={s.container}><MarkedLocationReviewPanel /></ScrollView>
     </ThemedView>
   );
 
   return (
     <ThemedView style={s.root}>
-      <DetailModal visit={selected} onClose={() => setSelected(null)} />
+      <DetailModal visit={selected} onClose={() => setSelected(null)} openTimeline={openTimeline} />
+      <LocationTimelineModal
+        visible={!!timeline}
+        employeeName={timeline?.name ?? ""}
+        date={timeline?.date ?? ""}
+        pings={timelinePings}
+        story={timelineStory}
+        loading={timelineLoading}
+        onClose={() => setTimeline(null)}
+      />
 
-      <View style={{ flexDirection: "row", padding: 12, gap: 8, backgroundColor: "#fff" }}>
-        <TouchableOpacity style={[s.preset, s.presetActive, { flex: 1 }]} onPress={() => setView("VISITS")}><ThemedText style={s.presetTxtActive}>All Field Visits</ThemedText></TouchableOpacity>
-        <TouchableOpacity style={[s.preset, { flex: 1 }]} onPress={() => setView("MARKED")}><ThemedText style={s.presetTxt}>Current Locations Marked</ThemedText></TouchableOpacity>
-      </View>
+      <ViewToggle view={view} onChange={setView} />
 
       <ScrollView
         contentContainerStyle={s.container}
         showsVerticalScrollIndicator={false}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }} tintColor="#60045d" />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={async () => { setRefreshing(true); await load(applied.current.s || businessDate, applied.current.e || businessDate, applied.current.emp); setRefreshing(false); }} tintColor="#60045d" />}
       >
         {/* summary strip */}
         <View style={s.summaryRow}>
-          {[
-            { label: "Total", val: visits.length, color: "#60045d" },
-            { label: "Completed", val: visits.filter(v => v.status === "COMPLETED").length, color: "#059669" },
-            { label: "Active", val: visits.filter(v => v.status === "CHECKED_IN").length, color: "#2563EB" },
-            { label: "Missed", val: visits.filter(v => v.status === "MISSED").length, color: "#DC2626" },
-          ].map((item, i) => (
+          {([
+            { key: "ALL", label: "Total", val: visits.length, color: "#60045d" },
+            { key: "COMPLETED", label: "Completed", val: visits.filter(v => v.status === "COMPLETED").length, color: "#059669" },
+            { key: "ACTIVE", label: "Active", val: visits.filter(v => isActiveStatus(v.status)).length, color: "#2563EB" },
+            { key: "MISSED", label: "Missed", val: visits.filter(v => v.status === "MISSED").length, color: "#DC2626" },
+          ] as const).map((item, i) => (
             <React.Fragment key={item.label}>
               {i > 0 && <View style={s.summaryDiv} />}
-              <View style={s.summaryCell}>
+              <TouchableOpacity
+                style={[s.summaryCell, statusFilter === item.key && { backgroundColor: item.color + "14", borderRadius: 8 }]}
+                onPress={() => setStatusFilter(item.key)}
+                accessibilityRole="button"
+                accessibilityState={{ selected: statusFilter === item.key }}
+              >
                 <ThemedText style={[s.summaryN, { color: item.color }]}>{item.val}</ThemedText>
-                <ThemedText style={s.summaryL}>{item.label}</ThemedText>
-              </View>
+                <ThemedText style={[s.summaryL, statusFilter === item.key && { color: item.color, fontWeight: "700" }]}>{item.label}</ThemedText>
+              </TouchableOpacity>
             </React.Fragment>
           ))}
         </View>
+        {statusFilter !== "ALL" ? (
+          <ThemedText style={{ fontSize: 12, color: "#6B7280", marginBottom: 8 }}>
+            Showing {statusFilter === "ACTIVE" ? "active (at site or travelling)" : statusFilter.toLowerCase()} visits · tap Total to show all
+          </ThemedText>
+        ) : null}
 
         {/* presets */}
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
@@ -380,7 +624,13 @@ export default function FieldVisitAdminScreen() {
             </View>
           </ScrollView>
 
-          <TouchableOpacity style={s.searchBtn} onPress={() => { setActivePreset(""); load(startDate, endDate, empFilter); }}>
+          <TouchableOpacity style={s.searchBtn} onPress={() => {
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate) || startDate > endDate) {
+              Alert.alert("Check the dates", "Use YYYY-MM-DD, with From on or before To.");
+              return;
+            }
+            setActivePreset(""); load(startDate, endDate, empFilter);
+          }}>
             <Feather name="search" size={14} color="#fff" />
             <ThemedText style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>Search</ThemedText>
           </TouchableOpacity>
@@ -392,13 +642,15 @@ export default function FieldVisitAdminScreen() {
         ) : grouped.length === 0 ? (
           <View style={s.empty}>
             <Feather name="map" size={40} color="#D1D5DB" />
-            <ThemedText style={s.emptyTxt}>No field visits for this period</ThemedText>
+            <ThemedText style={s.emptyTxt}>
+              {visits.length && statusFilter !== "ALL" ? "No visits match this filter" : "No field visits for this period"}
+            </ThemedText>
           </View>
         ) : (
           grouped.map(({ date, rows }) => {
             const expanded = expandedDates.has(date);
             const done = rows.filter(r => r.status === "COMPLETED").length;
-            const active = rows.filter(r => r.status === "CHECKED_IN").length;
+            const active = rows.filter(r => isActiveStatus(r.status)).length;
             const missed = rows.filter(r => r.status === "MISSED").length;
             return (
               <View key={date} style={{ marginBottom: 10 }}>
@@ -440,7 +692,7 @@ export default function FieldVisitAdminScreen() {
                         <ThemedText style={s.locName} numberOfLines={1}>{visit.location_name}</ThemedText>
                         <View style={[s.typePill, { backgroundColor: visit.visit_type === "site" ? "#D1FAE5" : "#EFF6FF" }]}>
                           <ThemedText style={[s.typeTxt, { color: visit.visit_type === "site" ? "#065F46" : "#1E40AF" }]}>
-                            {visit.visit_type === "site" ? "Site" : "Meeting"}
+                            {TYPE_LABEL[visit.visit_type] ?? "Visit"}
                           </ThemedText>
                         </View>
                       </View>

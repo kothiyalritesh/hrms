@@ -1,13 +1,13 @@
 {
   "project_info": {
-    "project_number": "123456789012",
-    "project_id": "dummy-project",
-    "storage_bucket": "dummy-project.appspot.com"
+    "project_number": "657861641749",
+    "project_id": "realty-bop-hrms",
+    "storage_bucket": "realty-bop-hrms.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:123456789012:android:abcdef0123456789",
+        "mobilesdk_app_id": "1:657861641749:android:f1ec38d5e0c3dfa41bb01c",
         "android_client_info": {
           "package_name": "com.rehrms.app"
         }
@@ -15,7 +15,7 @@
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyBdummy12345dummy12345dummy1234567"
+          "current_key": "AIzaSyAzc2v-Gnt7SrIBvahXXLtnCME_KGp1Cb4"
         }
       ],
       "services": {

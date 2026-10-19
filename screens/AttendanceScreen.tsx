@@ -6,14 +6,12 @@ import {
   Alert,
   Platform,
   ActivityIndicator,
-  Modal,
 } from "react-native";
 import Feather from "@expo/vector-icons/Feather";
 import * as Location from "expo-location";
-import { useFocusEffect, useNavigation } from "@react-navigation/native";
+import { useFocusEffect, useIsFocused, useNavigation } from "@react-navigation/native";
 import { ScreenScrollView } from "@/components/ScreenScrollView";
 import { ThemedText } from "@/components/ThemedText";
-import { Button } from "@/components/Button";
 import { useTheme } from "@/hooks/useTheme";
 import { Spacing, BorderRadius, Colors } from "@/constants/theme";
 import Spacer from "@/components/Spacer";
@@ -31,6 +29,8 @@ import { AttendanceRegularizationService } from "@/services/attendance-regulariz
 import { isDeveloperModeEnabled } from "expo-developer-mode";
 import { supabase } from "@/lib/supabase";
 import { attendanceInternetAvailable } from "@/utils/attendanceConnectivity";
+import { runOfflineAttendanceAction } from "@/utils/offlineAttendanceFlow";
+import { getCurrentGPS, gpsFailureMessage } from "@/utils/gps";
 import { reportNonFatalError } from "@/utils/operationalErrors";
 import { BusinessClockService } from "@/services/business-clock.service";
 import AttendanceCheckoutFlow, {
@@ -41,6 +41,7 @@ import {
   startAttendanceTracking,
 } from "@/services/location/attendanceTrackingLifecycle";
 import { nativeBridge } from "@/services/nativeBridge/client";
+import MissedDayRegularizationPanel from "@/components/MissedDayRegularizationPanel";
 
 import { secureStorage } from "@/utils/secureStorage";
 const PRIMARY = "#6D1B6D";
@@ -57,7 +58,6 @@ type AttendanceStatus =
   | "compoff";
 
 function confirmedAttendanceStatus(value: any): AttendanceStatus {
-  if (Number(value?.compOffEarned || 0) > 0) return "compoff";
   const status = String(
     value?.attendance_status ?? value?.day_status ?? value?.status ?? "",
   ).toUpperCase();
@@ -68,8 +68,12 @@ function confirmedAttendanceStatus(value: any): AttendanceStatus {
   if (status === "WEEKLY_OFF" || status === "WO") return "weeklyoff";
   if (status === "WFH" || status.includes("WORK_FROM_HOME")) return "wfh";
   if (status.includes("LEAVE")) return "leave";
+  if (status === "PRESENT" || status === "P") return "present";
+  if (value?.checkin_time || value?.checkIn) return "present";
+  // No attendance that day: an approved comp-off credit (e.g. HR credit) is shown.
+  if (Number(value?.compOffEarned || 0) > 0) return "compoff";
   if (status === "ABSENT") return "absent";
-  return value?.checkin_time || value?.checkIn ? "present" : "absent";
+  return "absent";
 }
 
 const STATUS_COLORS: Record<AttendanceStatus, string> = {
@@ -180,9 +184,14 @@ export default function AttendanceScreen() {
   const [businessClockError, setBusinessClockError] = useState<string | null>(
     null,
   );
-  const [offices, setOffices] = useState<any[]>([]);
-  const [selectedOffice, setSelectedOffice] = useState<any | null>(null);
-  const [showOfficeModal, setShowOfficeModal] = useState(false);
+  const isFocused = useIsFocused();
+  const [, setClockTick] = useState(0);
+  const checkInInFlightRef = useRef(false);
+  const regularizeInFlightRef = useRef(false);
+  const [regularizing, setRegularizing] = useState(false);
+  const monthRequestIdRef = useRef(0);
+  const loadDataPromiseRef = useRef<Promise<void> | null>(null);
+  const loadDataQueuedRef = useRef(false);
   const [checkInCoords, setCheckInCoords] = useState<{
     latitude: number;
     longitude: number;
@@ -278,12 +287,19 @@ export default function AttendanceScreen() {
     }) ?? "Loading attendance…";
 
   const loadMonthlyAttendance = useCallback(async (monthStart: string) => {
+    const requestId = ++monthRequestIdRef.current;
+    // A response for a month that is no longer selected must not overwrite it.
+    const isStale = () =>
+      requestId !== monthRequestIdRef.current ||
+      (!!calendarMonthStartRef.current &&
+        calendarMonthStartRef.current !== monthStart);
     setMonthlyHistoryLoading(true);
     try {
       const { data, error } = await supabase.rpc(
         "rpc_get_my_monthly_attendance_v3",
         { p_month: monthStart },
       );
+      if (isStale()) return null;
       if (error) throw error;
       const response = firstRpcRow<any>(data);
       if (response?.success !== true || !Array.isArray(response?.records)) {
@@ -298,17 +314,20 @@ export default function AttendanceScreen() {
       setMonthlyHistoryError(null);
       return records;
     } catch (error) {
+      if (isStale()) return null;
       setMonthlyHistoryError(
         (error as any)?.message || "Monthly attendance could not be loaded",
       );
       void reportNonFatalError("attendance.monthly_history", error);
       return null;
     } finally {
-      setMonthlyHistoryLoading(false);
+      if (requestId === monthRequestIdRef.current) {
+        setMonthlyHistoryLoading(false);
+      }
     }
   }, []);
 
-  const loadData = useCallback(async () => {
+  const loadDataOnce = useCallback(async () => {
     try {
       if (user?.id) {
         const serverDate = await BusinessClockService.getDate(true);
@@ -407,6 +426,27 @@ export default function AttendanceScreen() {
     }
   }, [loadMonthlyAttendance, user?.id]);
 
+  // Focus, realtime and the interval can all trigger a load; never overlap
+  // them, and coalesce triggers during a run into exactly one follow-up run.
+  const loadData = useCallback((): Promise<void> => {
+    if (loadDataPromiseRef.current) {
+      loadDataQueuedRef.current = true;
+      return loadDataPromiseRef.current;
+    }
+    const run = (async () => {
+      try {
+        do {
+          loadDataQueuedRef.current = false;
+          await loadDataOnce();
+        } while (loadDataQueuedRef.current);
+      } finally {
+        loadDataPromiseRef.current = null;
+      }
+    })();
+    loadDataPromiseRef.current = run;
+    return run;
+  }, [loadDataOnce]);
+
   useFocusEffect(
     useCallback(() => {
       loadData();
@@ -414,10 +454,18 @@ export default function AttendanceScreen() {
     }, [loadData]),
   );
 
-  // Keep the employee's attendance state in sync with server-imported
-  // biometric punches while this screen remains open.
+  // The header clock re-renders every 30 s while the screen is visible.
   useEffect(() => {
-    if (!user?.id) return;
+    if (!isFocused) return;
+    setClockTick((tick) => tick + 1);
+    const interval = setInterval(() => setClockTick((tick) => tick + 1), 30_000);
+    return () => clearInterval(interval);
+  }, [isFocused]);
+
+  // Keep the employee's attendance state in sync with server-imported
+  // biometric punches while this screen is focused.
+  useEffect(() => {
+    if (!user?.id || !isFocused) return;
     const channel = supabase
       .channel(`attendance-screen-${user.id}`)
       .on(
@@ -436,7 +484,7 @@ export default function AttendanceScreen() {
       clearInterval(interval);
       supabase.removeChannel(channel);
     };
-  }, [user?.id, loadData]);
+  }, [user?.id, isFocused, loadData]);
 
   const checkLocationPermission = async () => {
     const { status } = await Location.getForegroundPermissionsAsync();
@@ -449,8 +497,6 @@ export default function AttendanceScreen() {
     return status === "granted";
   };
 
-  // Extracted so the office modal can pass the selected office directly,
-  // avoiding the React async-state race where selectedOffice is still stale.
   const getLocation = (): Promise<{
     latitude: number;
     longitude: number;
@@ -510,7 +556,7 @@ export default function AttendanceScreen() {
         }
       });
     }
-    return Location.getCurrentPositionAsync({
+    const nativeFix = Location.getCurrentPositionAsync({
       accuracy: Location.Accuracy.Balanced,
     })
       .then((loc) => ({
@@ -520,6 +566,19 @@ export default function AttendanceScreen() {
         mocked: loc.mocked,
       }))
       .catch(() => null);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () =>
+          reject(
+            new Error(
+              "Could not get your location within 20 seconds. Move near a window or turn on high-accuracy location and try again.",
+            ),
+          ),
+        20_000,
+      );
+    });
+    return Promise.race([nativeFix, timeout]).finally(() => clearTimeout(timer));
   };
 
   const executeCheckIn = async () => {
@@ -643,11 +702,41 @@ export default function AttendanceScreen() {
       );
     } finally {
       setIsLoading(false);
-      setShowOfficeModal(false);
+    }
+  };
+
+  const runOfflineFromThisScreen = async () => {
+    if (!user?.id) return;
+    setIsLoading(true);
+    try {
+      await runOfflineAttendanceAction({
+        userId: user.id,
+        serverCheckedIn: !!todayRecord?.checkIn,
+        serverCheckedOut: !!todayRecord?.checkOut,
+        getLocation: async () => {
+          const gps = await getCurrentGPS();
+          if (!gps) Alert.alert("Location not available", gpsFailureMessage());
+          return gps;
+        },
+        alert: (title, message) => Alert.alert(title, message),
+      });
+    } finally {
+      setIsLoading(false);
     }
   };
 
   const handleCheckIn = async () => {
+    // Set before any await so a double tap cannot start two check-ins.
+    if (checkInInFlightRef.current) return;
+    checkInInFlightRef.current = true;
+    try {
+      await runCheckIn();
+    } finally {
+      checkInInFlightRef.current = false;
+    }
+  };
+
+  const runCheckIn = async () => {
     if (attendanceLoadError) {
       Alert.alert(
         "Attendance unavailable",
@@ -660,10 +749,7 @@ export default function AttendanceScreen() {
       return;
     }
     if (!(await attendanceInternetAvailable())) {
-      Alert.alert(
-        "Internet Required",
-        "A verified internet connection is required to mark attendance. No offline check-in was created.",
-      );
+      await runOfflineFromThisScreen();
       return;
     }
 
@@ -688,16 +774,13 @@ export default function AttendanceScreen() {
     }
 
     // Every attendance entry point uses the same assigned-office validation.
-    void executeCheckIn();
+    await executeCheckIn();
   };
 
   const handleCheckOut = async () => {
     if (!user?.id) return;
     if (!(await attendanceInternetAvailable())) {
-      Alert.alert(
-        "Internet Required",
-        "A verified internet connection is required to mark attendance. No offline checkout was created.",
-      );
+      await runOfflineFromThisScreen();
       return;
     }
 
@@ -776,14 +859,43 @@ export default function AttendanceScreen() {
     }
   };
 
+  const handleRegularizeStale = async (session: { id: string; date: string }) => {
+    if (!user?.id || regularizeInFlightRef.current) return;
+    regularizeInFlightRef.current = true;
+    setRegularizing(true);
+    try {
+      const request = await AttendanceRegularizationService.request({
+        userId: user.id,
+        attendanceId: session.id,
+        type: "MISSED_CHECKOUT",
+        reason: "Employee requested missed-checkout regularization",
+        requestedCheckout: new Date(
+          `${session.date}T23:59:00+05:30`,
+        ).toISOString(),
+      });
+      if (request.error) {
+        Alert.alert("Request Failed", request.error.message);
+        return;
+      }
+      Alert.alert(
+        "Request Submitted",
+        "HR will review your missed checkout.",
+      );
+    } catch (error: any) {
+      Alert.alert("Request Failed", error?.message || "Please try again.");
+    } finally {
+      regularizeInFlightRef.current = false;
+      setRegularizing(false);
+    }
+  };
+
   const getRecordForDay = (day: number): AttendanceRecord | undefined => {
     const dateStr = `${visibleMonth.slice(0, 7)}-${String(day).padStart(2, "0")}`;
     return monthRecords.find((r) => r.date === dateStr);
   };
 
-  const presentDays = monthRecords.filter(
-    (r) => r.status === "present" || r.status === "compoff",
-  ).length;
+  // Days physically worked on time; late days and comp-off credits are counted separately.
+  const presentDays = monthRecords.filter((r) => r.status === "present").length;
   const lateDays = monthRecords.filter((r) => r.status === "late").length;
   const absentDays = monthRecords.filter((r) => r.status === "absent").length;
   const notYetDays = monthRecords.filter((r) => r.status === "notyet").length;
@@ -1121,6 +1233,51 @@ export default function AttendanceScreen() {
             )}
           </Pressable>
         </View>
+        {/* Stale Session Warning Banner */}
+        {staleSession && !todayRecord && (
+          <View
+            style={[
+              styles.undoBanner,
+              {
+                backgroundColor: "#FEF3C7",
+                borderColor: "#FDE68A",
+                marginTop: Spacing.md,
+                marginHorizontal: 0,
+                marginBottom: 0,
+              },
+            ]}
+          >
+            <View style={styles.undoBannerContent}>
+              <Feather name="alert-triangle" size={16} color="#D97706" />
+              <View style={styles.undoBannerText}>
+                <ThemedText style={[styles.undoTitle, { color: "#92400E" }]}>
+                  Previous session not closed
+                </ThemedText>
+                <ThemedText style={[styles.undoSubtitle, { color: "#A16207" }]}>
+                  You forgot to check out on{" "}
+                  {new Date(staleSession.date).toLocaleDateString("en-IN", {
+                    weekday: "short",
+                    day: "numeric",
+                    month: "short",
+                  })}
+                  . It remains open until you submit a correction or HR resolves
+                  it.
+                </ThemedText>
+              </View>
+              <Pressable
+                style={[styles.undoButton, { opacity: regularizing ? 0.55 : 1 }]}
+                disabled={regularizing}
+                onPress={() => void handleRegularizeStale(staleSession)}
+              >
+                {regularizing ? (
+                  <ActivityIndicator size="small" color="#60045d" />
+                ) : (
+                  <ThemedText style={styles.undoButtonText}>Regularize</ThemedText>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        )}
         <ThemedText
           type="caption"
           style={{ color: "#FFFFFF", textAlign: "center", marginTop: 10 }}
@@ -1799,6 +1956,16 @@ export default function AttendanceScreen() {
                 </ThemedText>
               </View>
             ) : null}
+            {selectedRecord.status === "absent" &&
+            !!businessToday &&
+            !!selectedDateString &&
+            selectedDateString <= businessToday ? (
+              <MissedDayRegularizationPanel
+                key={selectedDateString}
+                date={selectedDateString}
+                onChanged={() => void loadData()}
+              />
+            ) : null}
           </>
         ) : (
           <View style={styles.selectedDayEmpty}>
@@ -1851,63 +2018,6 @@ export default function AttendanceScreen() {
 
       <Spacer height={Spacing["2xl"]} />
 
-      {/* Stale Session Warning Banner */}
-      {staleSession && !todayRecord && (
-        <View
-          style={[
-            styles.undoBanner,
-            {
-              backgroundColor: "#FEF3C7",
-              borderColor: "#FDE68A",
-              marginTop: Spacing.md,
-            },
-          ]}
-        >
-          <View style={styles.undoBannerContent}>
-            <Feather name="alert-triangle" size={16} color="#D97706" />
-            <View style={styles.undoBannerText}>
-              <ThemedText style={[styles.undoTitle, { color: "#92400E" }]}>
-                Previous session not closed
-              </ThemedText>
-              <ThemedText style={[styles.undoSubtitle, { color: "#A16207" }]}>
-                You forgot to check out on{" "}
-                {new Date(staleSession.date).toLocaleDateString("en-IN", {
-                  weekday: "short",
-                  day: "numeric",
-                  month: "short",
-                })}
-                . It remains open until you submit a correction or HR resolves
-                it.
-              </ThemedText>
-            </View>
-            <Pressable
-              style={styles.undoButton}
-              onPress={async () => {
-                const request = await AttendanceRegularizationService.request({
-                  userId: user!.id,
-                  attendanceId: staleSession.id,
-                  type: "MISSED_CHECKOUT",
-                  reason: "Employee requested missed-checkout regularization",
-                  requestedCheckout: new Date(
-                    `${staleSession.date}T23:59:00+05:30`,
-                  ).toISOString(),
-                });
-                if (request.error) {
-                  Alert.alert("Request Failed", request.error.message);
-                  return;
-                }
-                Alert.alert(
-                  "Request Submitted",
-                  "HR will review your missed checkout.",
-                );
-              }}
-            >
-              <ThemedText style={styles.undoButtonText}>Regularize</ThemedText>
-            </Pressable>
-          </View>
-        </View>
-      )}
-
       {/* Undo Checkout Banner */}
       {showUndoBanner && undoTimer > 0 && (
         <View
@@ -1935,89 +2045,6 @@ export default function AttendanceScreen() {
           </Pressable>
         </View>
       )}
-
-
-      <Modal
-        visible={showOfficeModal}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setShowOfficeModal(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <Pressable
-            style={StyleSheet.absoluteFill}
-            onPress={() => setShowOfficeModal(false)}
-          />
-          <View
-            style={[
-              styles.officeModal,
-              {
-                backgroundColor: theme.backgroundDefault,
-                paddingBottom: insets.bottom + Spacing.md,
-              },
-            ]}
-          >
-            <ThemedText type="h3" style={{ marginBottom: Spacing.lg }}>
-              Select Your Office
-            </ThemedText>
-            {offices.map((item) => (
-              <Pressable
-                key={item.id}
-                style={[
-                  styles.officeOption,
-                  {
-                    backgroundColor:
-                      selectedOffice?.id === item.id
-                        ? theme.primary + "20"
-                        : "transparent",
-                    borderColor:
-                      selectedOffice?.id === item.id
-                        ? theme.primary
-                        : theme.textSecondary,
-                  },
-                ]}
-                onPress={() => {
-                  setShowOfficeModal(false);
-                  setSelectedOffice(item);
-                  void executeCheckIn();
-                }}
-              >
-                <Feather
-                  name={
-                    selectedOffice?.id === item.id ? "check-circle" : "map-pin"
-                  }
-                  size={18}
-                  color={
-                    selectedOffice?.id === item.id
-                      ? theme.primary
-                      : theme.textSecondary
-                  }
-                />
-                <View style={{ flex: 1 }}>
-                  <ThemedText type="body">{item.name}</ThemedText>
-                  <ThemedText
-                    type="caption"
-                    style={{ color: theme.textSecondary }}
-                  >
-                    {item.latitude
-                      ? `📍 Geo-fenced · ${item.attendance_radius}m radius`
-                      : `${item.attendance_radius}m radius`}
-                  </ThemedText>
-                </View>
-              </Pressable>
-            ))}
-            <Button
-              onPress={() => setShowOfficeModal(false)}
-              style={{
-                marginTop: Spacing.lg,
-                backgroundColor: Colors.light.error,
-              }}
-            >
-              Cancel
-            </Button>
-          </View>
-        </View>
-      </Modal>
     </ScreenScrollView>
     {user?.id ? (
       <AttendanceCheckoutFlow

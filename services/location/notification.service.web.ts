@@ -1,4 +1,5 @@
 import { Destination, JourneyEventType } from "@/services/location/types";
+import { nativeBridge } from "@/services/nativeBridge/client";
 
 export const TRACKING_CHANNEL_ID = "hrms_tracking";
 export const ARRIVAL_CHANNEL_ID = "hrms_arrival";
@@ -30,6 +31,10 @@ export async function isNotificationPermissionGranted() {
   return false;
 }
 
+export async function getNotificationStatus() {
+  return { granted: false, canAskAgain: false, mutedChannels: [] as string[] };
+}
+
 export async function notifyJourneyEvent(
   _event: JourneyEventType,
   _destination: Destination,
@@ -59,3 +64,15 @@ export async function scheduleAttendanceReminders(_schedule: {
   checkout_time: string;
   office_id: string;
 }) {}
+
+/**
+ * Called on logout while the session is still valid. In a browser there is no
+ * device token. Inside the Android app the shell owns the push token, so ask
+ * it to deactivate this device; otherwise the next person to sign in on this
+ * phone would keep receiving the previous employee's notifications.
+ * (Without this export, logout on the web build threw "is not a function".)
+ */
+export async function deactivateCurrentDevicePushToken() {
+  if (!nativeBridge.isAvailable()) return;
+  await nativeBridge.request("notifications.unregister", undefined, 5_000).catch(() => undefined);
+}

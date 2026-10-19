@@ -21,3 +21,14 @@ describe("BusinessClockService", () => {
     expect(mockRpc).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("BusinessClockService offline fallback", () => {
+  it("retries once, then falls back to the device IST date instead of throwing", async () => {
+    mockRpc.mockReset();
+    mockRpc.mockRejectedValue(new TypeError("Load failed"));
+    const clock = await BusinessClockService.get(true);
+    expect(clock.source).toBe("device");
+    expect(clock.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(mockRpc).toHaveBeenCalledTimes(2);
+  });
+});

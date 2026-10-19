@@ -6,6 +6,7 @@
 import { supabase } from "@/lib/supabase";
 import { fetchAllPages } from "@/utils/supabasePagination";
 import { CanonicalEmployee } from "./types";
+import { DEFAULT_LATE_CHECKIN_TIME } from "@/constants/attendancePolicy";
 import {
   cleanStr,
   normalizeNameKey,
@@ -98,7 +99,7 @@ export class EmployeeMasterService {
         employment_status: "ACTIVE",
         joining_date: p.created_at ? p.created_at.slice(0, 10) : null,
         shift_name: "Standard Morning Shift",
-        shift_start: "10:32:00",
+        shift_start: DEFAULT_LATE_CHECKIN_TIME,
         shift_end: "18:30:00",
         grace_minutes: 0,
         match_status: rawId ? "MATCHED_BY_ID" : "MATCHED_BY_NAME",

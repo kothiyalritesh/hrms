@@ -7,6 +7,7 @@ import { useTheme } from "@/hooks/useTheme";
 import { getCommonScreenOptions } from "@/navigation/screenOptions";
 import { deferredScreen } from "@/navigation/deferredScreen";
 import { withPermissionGuard } from "@/components/PermissionGuard";
+import { SCREEN_PERMISSIONS } from "@/constants/permissionCatalog";
 
 export type AdminStackParamList = {
   AnonymousFeedback: undefined;
@@ -38,8 +39,10 @@ export type AdminStackParamList = {
   SmartOfficeImportedData: undefined;
   BiometricUserMatch: undefined;
   SuspiciousAttendance: undefined;
+  ComplianceScores: undefined;
   AttendanceCalendar: undefined;
   AttendanceRegularization: undefined;
+  BackdatedAttendance: { userId?: string; userName?: string; date?: string } | undefined;
   AdvancedAttendanceReport: undefined;
 };
 
@@ -66,39 +69,41 @@ function lazyScreen<T extends React.ComponentType<any>>(
   return permission ? withPermissionGuard(DeferredScreen, permission) : DeferredScreen;
 }
 
-const AttendanceControlScreen = lazyScreen(() => import("@/screens/admin/AttendanceControlScreenNew"), ["screen.attendance_control", "attendance.view", "attendance.edit", "attendance.approve"]);
-const UserManagementScreen = lazyScreen(() => import("@/screens/admin/UserManagementScreen"), ["screen.user_management", "employee.view", "employee.create", "employee.edit"]);
-const LeaveManagementScreen = lazyScreen(() => import("@/screens/admin/LeaveManagementScreen"), ["screen.leave_balance", "leave.view", "leave.approve", "manage_leave"]);
-const TaskProjectControlScreen = lazyScreen(() => import("@/screens/admin/TaskProjectControlScreen"), "screen.task_project_control");
-const NotificationManagementScreen = lazyScreen(() => import("@/screens/admin/NotificationManagementScreen"), "screen.notification_management"); 
-const AnonymousFeedbackScreen = withPermissionGuard(deferredScreen(() => import("@/screens/admin/AnonymousFeedbackScreen")), "screen.anonymous_feedback");
-const AdminDeviceSessionsScreen = lazyScreen(() => import("@/screens/admin/AdminDeviceSessionsScreen"), "screen.duplicate_devices");
-const OfficeSettingsScreen = lazyScreen(() => import("@/screens/admin/OfficeSettingsScreen"), "screen.office_settings");
-const SiteSettingsScreen = lazyScreen(() => import("@/screens/admin/SiteSettingsScreen"), "screen.site_settings");
-const AuditLogsScreen = lazyScreen(() => import("@/screens/admin/AuditLogsScreen"), "screen.audit_logs");
-const BiometricDeviceManagementScreen = lazyScreen(() => import("@/screens/admin/BiometricDeviceManagementScreen"), ["screen.smartoffice_integration", "biometric.manage", "biometric.sync"]);
-const ActivityAnalysisScreen = lazyScreen(() => import("@/screens/admin/ActivityAnalysisScreen"), ["screen.live_tracking", "location.view_live"]);
-const FieldVisitAdminScreen = lazyScreen(() => import("@/screens/admin/FieldVisitAdminScreen"), "screen.field_visit_admin");
-const LiveTrackingScreen = lazyScreen(() => import("@/screens/admin/LiveTrackingScreen"), ["screen.live_tracking", "location.view_live"]);
-const TicketManagementScreen = lazyScreen(() => import("@/screens/admin/TicketManagementScreen"), "screen.ticket_management");
-const EventManagementScreen = lazyScreen(() => import("@/screens/admin/EventManagementScreen"), "screen.event_management");
-const CheckInLogsScreen = lazyScreen(() => import("@/screens/admin/CheckInLogsScreen"), "screen.check_in_logs");
-const TVDisplayScreen = lazyScreen(() => import("@/screens/admin/TVDisplayScreen"));
-const LeaveBalanceScreen = lazyScreen(() => import("@/screens/admin/LeaveBalanceScreen"), ["screen.leave_balance", "leave.view", "leave.approve", "manage_leave"]);
-const BiometricUserMatchScreen = lazyScreen(() => import("@/screens/admin/BiometricUserMatchScreen"), "screen.smartoffice_integration");
-const SuspiciousAttendanceScreen = lazyScreen(() => import("@/screens/admin/SuspiciousAttendanceScreen"), "screen.suspicious_attendance");
-const AttendanceCalendarScreen = lazyScreen(() => import("@/screens/admin/AttendanceCalendarScreen"), ["screen.attendance_control", "attendance.view", "attendance.edit", "attendance.approve"]);
-const AttendanceRegularizationScreen = lazyScreen(() => import("@/screens/admin/AttendanceRegularizationScreen"), "screen.attendance_regularization");
-const AdvancedAttendanceReportScreen = lazyScreen(() => import("@/screens/admin/AdvancedAttendanceReportScreen"), ["screen.attendance_control", "attendance.view", "attendance.edit", "attendance.approve"]);
-const TeamHierarchyScreen = lazyScreen(() => import("@/screens/admin/TeamHierarchyScreen"), "screen.team_hierarchy");
-const SmartOfficeIntegrationScreen = lazyScreen(() => import("@/screens/admin/SmartOfficeSecureSyncScreen").then(m => ({ default: m.SmartOfficeSecureSyncScreen })), "screen.smartoffice_integration");
-const PermissionsManagerScreen = lazyScreen(() => import("@/screens/admin/PermissionsManagerScreen"), "screen.permissions_manager");
-const EmployeeBirthdayManagementScreen = lazyScreen(() => import("@/screens/admin/EmployeeBirthdayManagementScreen"), "screen.birthday_management");
-const SiteVisitObserverScreen = lazyScreen(() => import("@/screens/admin/SiteVisitObserverScreen"), ["screen.site_visit_observer", "screen.live_tracking", "location.view_live"]);
-const InTransitScreen = lazyScreen(() => import("@/screens/admin/InTransitScreen"), ["screen.in_transit", "screen.live_tracking", "location.view_live"]);
+const AttendanceControlScreen = lazyScreen(() => import("@/screens/admin/AttendanceControlScreenNew"), SCREEN_PERMISSIONS.AttendanceControl);
+const UserManagementScreen = lazyScreen(() => import("@/screens/admin/UserManagementScreen"), SCREEN_PERMISSIONS.UserManagement);
+const LeaveManagementScreen = lazyScreen(() => import("@/screens/admin/LeaveManagementScreen"), SCREEN_PERMISSIONS.LeaveManagement);
+const TaskProjectControlScreen = lazyScreen(() => import("@/screens/admin/TaskProjectControlScreen"), SCREEN_PERMISSIONS.TaskProjectControl);
+const NotificationManagementScreen = lazyScreen(() => import("@/screens/admin/NotificationManagementScreen"), SCREEN_PERMISSIONS.NotificationManagement);
+const AnonymousFeedbackScreen = withPermissionGuard(deferredScreen(() => import("@/screens/admin/AnonymousFeedbackScreen")), SCREEN_PERMISSIONS.AnonymousFeedback);
+const AdminDeviceSessionsScreen = lazyScreen(() => import("@/screens/admin/AdminDeviceSessionsScreen"), SCREEN_PERMISSIONS.AdminDeviceSessions);
+const OfficeSettingsScreen = lazyScreen(() => import("@/screens/admin/OfficeSettingsScreen"), SCREEN_PERMISSIONS.OfficeSettings);
+const SiteSettingsScreen = lazyScreen(() => import("@/screens/admin/SiteSettingsScreen"), SCREEN_PERMISSIONS.SiteSettings);
+const AuditLogsScreen = lazyScreen(() => import("@/screens/admin/AuditLogsScreen"), SCREEN_PERMISSIONS.AuditLogs);
+const BiometricDeviceManagementScreen = lazyScreen(() => import("@/screens/admin/BiometricDeviceManagementScreen"), SCREEN_PERMISSIONS.SmartOfficeIntegration);
+const ActivityAnalysisScreen = lazyScreen(() => import("@/screens/admin/ActivityAnalysisScreen"), SCREEN_PERMISSIONS.ActivityAnalysis);
+const FieldVisitAdminScreen = lazyScreen(() => import("@/screens/admin/FieldVisitAdminScreen"), SCREEN_PERMISSIONS.FieldVisitAdmin);
+const LiveTrackingScreen = lazyScreen(() => import("@/screens/admin/LiveTrackingScreen"), SCREEN_PERMISSIONS.LiveTracking);
+const TicketManagementScreen = lazyScreen(() => import("@/screens/admin/TicketManagementScreen"), SCREEN_PERMISSIONS.TicketManagement);
+const EventManagementScreen = lazyScreen(() => import("@/screens/admin/EventManagementScreen"), SCREEN_PERMISSIONS.EventManagement);
+const CheckInLogsScreen = lazyScreen(() => import("@/screens/admin/CheckInLogsScreen"), SCREEN_PERMISSIONS.CheckInLogs);
+const TVDisplayScreen = lazyScreen(() => import("@/screens/admin/TVDisplayScreen"), SCREEN_PERMISSIONS.TVDisplay);
+const LeaveBalanceScreen = lazyScreen(() => import("@/screens/admin/LeaveBalanceScreen"), SCREEN_PERMISSIONS.LeaveBalance);
+const BiometricUserMatchScreen = lazyScreen(() => import("@/screens/admin/BiometricUserMatchScreen"), SCREEN_PERMISSIONS.BiometricUserMatch);
+const SuspiciousAttendanceScreen = lazyScreen(() => import("@/screens/admin/SuspiciousAttendanceScreen"), SCREEN_PERMISSIONS.SuspiciousAttendance);
+const ComplianceScoresScreen = lazyScreen(() => import("@/screens/admin/ComplianceScoresScreen"), SCREEN_PERMISSIONS.ComplianceScores);
+const AttendanceCalendarScreen = lazyScreen(() => import("@/screens/admin/AttendanceCalendarScreen"), SCREEN_PERMISSIONS.AttendanceCalendar);
+const AttendanceRegularizationScreen = lazyScreen(() => import("@/screens/admin/AttendanceRegularizationScreen"), SCREEN_PERMISSIONS.AttendanceRegularization);
+const BackdatedAttendanceScreen = lazyScreen(() => import("@/screens/admin/BackdatedAttendanceScreen"), SCREEN_PERMISSIONS.BackdatedAttendance);
+const AdvancedAttendanceReportScreen = lazyScreen(() => import("@/screens/admin/AdvancedAttendanceReportScreen"), SCREEN_PERMISSIONS.AdvancedAttendanceReport);
+const TeamHierarchyScreen = lazyScreen(() => import("@/screens/admin/TeamHierarchyScreen"), SCREEN_PERMISSIONS.TeamHierarchy);
+const SmartOfficeIntegrationScreen = lazyScreen(() => import("@/screens/admin/SmartOfficeSecureSyncScreen").then(m => ({ default: m.SmartOfficeSecureSyncScreen })), SCREEN_PERMISSIONS.SmartOfficeIntegration);
+const PermissionsManagerScreen = lazyScreen(() => import("@/screens/admin/PermissionsManagerScreen"), SCREEN_PERMISSIONS.PermissionsManager);
+const EmployeeBirthdayManagementScreen = lazyScreen(() => import("@/screens/admin/EmployeeBirthdayManagementScreen"), SCREEN_PERMISSIONS.EmployeeBirthdayManagement);
+const SiteVisitObserverScreen = lazyScreen(() => import("@/screens/admin/SiteVisitObserverScreen"), SCREEN_PERMISSIONS.SiteVisitObserver);
+const InTransitScreen = lazyScreen(() => import("@/screens/admin/InTransitScreen"), SCREEN_PERMISSIONS.InTransit);
 
-const SmartOfficeEmployeeImport = lazyScreen(() => import("@/screens/admin/SmartOfficeEmployeeImport").then(m => ({ default: m.SmartOfficeEmployeeImport })), ["screen.user_management", "employee.view", "employee.create", "employee.edit"]);
-const SmartOfficeImportedData = lazyScreen(() => import("@/screens/admin/SmartOfficeImportedData").then(m => ({ default: m.SmartOfficeImportedData })), "screen.smartoffice_integration");
+const SmartOfficeEmployeeImport = lazyScreen(() => import("@/screens/admin/SmartOfficeEmployeeImport").then(m => ({ default: m.SmartOfficeEmployeeImport })), SCREEN_PERMISSIONS.SmartOfficeEmployeeImport);
+const SmartOfficeImportedData = lazyScreen(() => import("@/screens/admin/SmartOfficeImportedData").then(m => ({ default: m.SmartOfficeImportedData })), SCREEN_PERMISSIONS.SmartOfficeImportedData);
 
 export default function AdminStackNavigator() {
   const { theme, isDark } = useTheme();
@@ -236,8 +241,10 @@ export default function AdminStackNavigator() {
         component={SuspiciousAttendanceScreen}
         options={{ headerTitle: "Suspicious Attendance" }}
       />
+      <Stack.Screen name="ComplianceScores" component={ComplianceScoresScreen} options={{ headerTitle: "Compliance Scores" }} />
       <Stack.Screen name="AttendanceCalendar" component={AttendanceCalendarScreen} options={{ headerTitle: "Weekly Offs & Holidays" }} />
       <Stack.Screen name="AttendanceRegularization" component={AttendanceRegularizationScreen} options={{ headerTitle: "Attendance Regularization" }} />
+      <Stack.Screen name="BackdatedAttendance" component={BackdatedAttendanceScreen} options={{ headerTitle: "Regularization Requests" }} />
       <Stack.Screen name="AdvancedAttendanceReport" component={AdvancedAttendanceReportScreen} options={{ headerTitle: "Advanced Attendance Report" }} />
       <Stack.Screen name="PermissionsManager" component={PermissionsManagerScreen} options={{ headerTitle: "Permissions Manager" }} />
       <Stack.Screen name="EmployeeBirthdayManagement" component={EmployeeBirthdayManagementScreen} options={{ headerTitle: "Manage Birthdays" }} />

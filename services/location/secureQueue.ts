@@ -6,7 +6,9 @@ import { sortOfflinePings } from "@/services/location/offline";
 
 const INDEX_KEY = "@hrms_location_queue_index_v1";
 const ENTRY_PREFIX = "hrms.location.queue.";
-const MAX_QUEUE_SIZE = 200;
+// ~10 h of office tracking at the stationary rate (one fix / 2 min) or
+// ~2.5 h of continuous driving at one fix / 15 s.
+const MAX_QUEUE_SIZE = 600;
 
 async function getIndex(): Promise<string[]> {
   if (Platform.OS === "web") {
@@ -91,6 +93,11 @@ export async function removeOfflinePing(clientEventId: string) {
   const index = (await getIndex()).filter((id) => id !== clientEventId);
   await setProtectedValue(ENTRY_PREFIX + clientEventId, null);
   await AsyncStorage.setItem(INDEX_KEY, JSON.stringify(index));
+}
+
+/** Number of points waiting to be uploaded (for tracking health). */
+export async function offlineQueueSize() {
+  return (await getIndex()).length;
 }
 
 /** Remove every encrypted ping for the signing-out employee/device. */

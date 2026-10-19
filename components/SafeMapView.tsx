@@ -3,8 +3,11 @@ import { Platform, StyleSheet, Text, View } from "react-native";
 import Constants from "expo-constants";
 import MapView, { type MapViewProps } from "react-native-maps";
 
-// Google Maps API key is configured and verified in app.config.js and eas.json.
-export const nativeMapsAvailable = true;
+// Google Maps on Android closes the app when the APK has no Maps API key, so
+// the map is only mounted when the build reports one (app.config.js).
+export const nativeMapsAvailable =
+  Platform.OS !== "android" ||
+  Constants.expoConfig?.extra?.androidMapsConfigured === true;
 
 const SafeMapView = forwardRef<MapView, MapViewProps & { children?: React.ReactNode }>(
   function SafeMapView(props, ref) {

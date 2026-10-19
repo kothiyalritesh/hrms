@@ -2,6 +2,7 @@ import React, { useEffect, useRef } from "react";
 import { View, StyleSheet, ScrollView, TouchableOpacity, Modal, Platform } from "react-native";
 import Feather from "@expo/vector-icons/Feather";
 import { ThemedText } from "@/components/ThemedText";
+import { useTheme } from "@/hooks/useTheme";
 import { FieldVisit } from "@/services/field-visit.service";
 import LocationComparisonMap from "@/components/LocationComparisonMap";
 import { loadGoogleMaps } from "@/utils/googleMapsLoader";
@@ -31,12 +32,28 @@ const STATUS_COLOR: Record<string, { bg: string; text: string; label: string }> 
   MISSED:     { bg: "#FEE2E2", text: "#DC2626",  label: "Missed" },
 };
 
+// Same pills on dark surfaces: lighter text on a translucent tint.
+const STATUS_COLOR_DARK: Record<string, { bg: string; text: string }> = {
+  PENDING:    { bg: "#FBBF2426", text: "#FBBF24" },
+  CHECKED_IN: { bg: "#7DB3FF26", text: "#7DB3FF" },
+  COMPLETED:  { bg: "#34D39926", text: "#34D399" },
+  MISSED:     { bg: "#F8717126", text: "#F87171" },
+};
+
+// Row value colours that need a lighter tone in dark mode.
+const DARK_ROW_TONE: Record<string, string> = {
+  "#059669": "#34D399",
+  "#DC2626": "#F87171",
+};
+
 function Row({ icon, label, value, color }: { icon: any; label: string; value: string; color?: string }) {
+  const { theme, isDark } = useTheme();
+  const tone = color && isDark ? DARK_ROW_TONE[color] ?? color : color;
   return (
-    <View style={s.row}>
-      <Feather name={icon} size={13} color={color || "#9CA3AF"} style={{ marginTop: 1 }} />
-      <ThemedText style={s.rowLabel}>{label}</ThemedText>
-      <ThemedText style={[s.rowValue, color ? { color } : {}]} numberOfLines={4}>{value}</ThemedText>
+    <View style={[s.row, isDark && { borderBottomColor: theme.borderLight }]}>
+      <Feather name={icon} size={13} color={tone || (isDark ? theme.textSecondary : "#9CA3AF")} style={{ marginTop: 1 }} />
+      <ThemedText style={[s.rowLabel, isDark && { color: theme.textSecondary }]}>{label}</ThemedText>
+      <ThemedText style={[s.rowValue, isDark && { color: theme.text }, tone ? { color: tone } : {}]} numberOfLines={4}>{value}</ThemedText>
     </View>
   );
 }
@@ -131,8 +148,17 @@ interface Props {
 }
 
 export default function VisitDetailModal({ visit, onClose }: Props) {
+  const { theme, isDark } = useTheme();
   if (!visit) return null;
-  const sc = STATUS_COLOR[visit.status] || STATUS_COLOR.PENDING;
+  const scLight = STATUS_COLOR[visit.status] || STATUS_COLOR.PENDING;
+  const sc = isDark
+    ? { ...scLight, ...(STATUS_COLOR_DARK[visit.status] || STATUS_COLOR_DARK.PENDING) }
+    : scLight;
+  const divider = isDark ? theme.border : "#F3F4F6";
+  const muted = isDark ? theme.textSecondary : "#6B7280";
+  const typeBadge = visit.visit_type === "site"
+    ? (isDark ? { bg: "#34D39926", text: "#6EE4C0" } : { bg: "#D1FAE5", text: "#065F46" })
+    : (isDark ? { bg: "#7DB3FF26", text: "#A8C8FC" } : { bg: "#EFF6FF", text: "#1E40AF" });
 
   const typeLabel = visit.visit_type === "site" ? "🏗️ Site"
     : visit.visit_type === "office" ? "🏢 Office"
@@ -160,21 +186,21 @@ export default function VisitDetailModal({ visit, onClose }: Props) {
   return (
     <Modal visible animationType="slide" transparent presentationStyle="overFullScreen" onRequestClose={onClose}>
       <View style={s.overlay}>
-        <View style={s.sheet}>
-          <View style={s.header}>
-            <View style={s.handle} />
+        <View style={[s.sheet, { backgroundColor: theme.backgroundDefault }]}>
+          <View style={[s.header, { borderBottomColor: divider }]}>
+            <View style={[s.handle, isDark && { backgroundColor: theme.border }]} />
             <View style={s.headerRow}>
-              <ThemedText style={s.title} numberOfLines={1}>{displayLocationName}</ThemedText>
+              <ThemedText style={[s.title, { color: isDark ? theme.text : "#111" }]} numberOfLines={1}>{displayLocationName}</ThemedText>
               <TouchableOpacity onPress={onClose} style={{ padding: 4 }}>
-                <Feather name="x" size={20} color="#6B7280" />
+                <Feather name="x" size={20} color={muted} />
               </TouchableOpacity>
             </View>
             <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
               <View style={[s.badge, { backgroundColor: sc.bg }]}>
                 <ThemedText style={[s.badgeTxt, { color: sc.text }]}>{sc.label}</ThemedText>
               </View>
-              <View style={[s.badge, { backgroundColor: visit.visit_type === "site" ? "#D1FAE5" : "#EFF6FF" }]}>
-                <ThemedText style={[s.badgeTxt, { color: visit.visit_type === "site" ? "#065F46" : "#1E40AF" }]}>
+              <View style={[s.badge, { backgroundColor: typeBadge.bg }]}>
+                <ThemedText style={[s.badgeTxt, { color: typeBadge.text }]}>
                   {typeLabel}{meetingLabel}
                 </ThemedText>
               </View>
@@ -184,8 +210,8 @@ export default function VisitDetailModal({ visit, onClose }: Props) {
           <ScrollView style={s.body} showsVerticalScrollIndicator={false}>
 
             {isMarkedLocation ? (
-              <View style={s.markedBox}>
-                <ThemedText style={s.markedTitle}>Checked in at current location · Evidence {visit.verification_status?.replace("_", " ")}</ThemedText>
+              <View style={[s.markedBox, isDark && { backgroundColor: theme.warningBg }]}>
+                <ThemedText style={[s.markedTitle, isDark && { color: theme.warningText }]}>Checked in at current location · Evidence {visit.verification_status?.replace("_", " ")}</ThemedText>
                 <Row icon="map-pin" label="Marked at" value={visit.actual_location_name || visit.location_name} />
                 <Row icon="navigation" label="Distance" value={`${Math.round(visit.selected_site_distance_metres || 0)} metres from selected site`} />
                 <Row icon="crosshair" label="Accuracy" value={`±${Math.round(visit.actual_location_accuracy_metres || 0)} metres`} />
@@ -209,7 +235,7 @@ export default function VisitDetailModal({ visit, onClose }: Props) {
             {/* Embedded Route Map */}
             {hasMap && Platform.OS === "web" && (
               <View style={{ marginTop: 16 }}>
-                <ThemedText style={s.sectionTitle}>
+                <ThemedText style={[s.sectionTitle, { color: muted }]}>
                   {originLat ? "🗺️ Route: Starting Point → Destination" : "📍 Destination"}
                 </ThemedText>
                 {/* @ts-ignore */}
@@ -219,7 +245,7 @@ export default function VisitDetailModal({ visit, onClose }: Props) {
                   checkinLat={checkinLat} checkinLng={checkinLng}
                 />
                 {originName ? (
-                  <ThemedText style={{ fontSize: 11, color: "#6B7280", marginTop: 6 }}>
+                  <ThemedText style={{ fontSize: 11, color: muted, marginTop: 6 }}>
                     🟢 Started from: {originName} &nbsp;|&nbsp; 🔴 Destination: {visit.location_name}
                     {checkinLat ? "  |  🟩 Actual check-in" : ""}
                   </ThemedText>
@@ -228,7 +254,7 @@ export default function VisitDetailModal({ visit, onClose }: Props) {
             )}
 
             {/* Visit details */}
-            <View style={s.section}>
+            <View style={[s.section, { borderBottomColor: divider }]}>
               {(isMarkedLocation ? visit.actual_location_address || visit.location_address : visit.location_address) ? <Row icon="navigation" label="Address" value={(isMarkedLocation ? visit.actual_location_address || visit.location_address : visit.location_address)!} /> : null}
               {visit.contact_name ? <Row icon="phone" label="Contact" value={`${visit.contact_name}${visit.contact_phone ? " · " + visit.contact_phone : ""}`} /> : null}
               {visit.company_name ? <Row icon="briefcase" label="Company" value={visit.company_name} /> : null}
@@ -237,7 +263,7 @@ export default function VisitDetailModal({ visit, onClose }: Props) {
             </View>
 
             {/* Times */}
-            <View style={s.section}>
+            <View style={[s.section, { borderBottomColor: divider }]}>
               <Row icon="calendar" label="Date" value={fmtDate(visit.date)} />
               <Row icon="log-in" label="Check In" value={fmtTime(visit.checkin_time)} color="#059669" />
               <Row icon="log-out" label="Check Out" value={fmtTime(visit.checkout_time)} color="#DC2626" />
@@ -245,9 +271,9 @@ export default function VisitDetailModal({ visit, onClose }: Props) {
 
             {/* Checkout notes */}
             {visit.checkout_notes ? (
-              <View style={s.notesBox}>
-                <ThemedText style={s.notesLabel}>📝 Meeting Notes</ThemedText>
-                <ThemedText style={s.notesText}>{visit.checkout_notes}</ThemedText>
+              <View style={[s.notesBox, isDark && { backgroundColor: theme.infoBg, borderLeftColor: theme.info }]}>
+                <ThemedText style={[s.notesLabel, isDark && { color: theme.infoText }]}>📝 Meeting Notes</ThemedText>
+                <ThemedText style={[s.notesText, isDark && { color: theme.infoText }]}>{visit.checkout_notes}</ThemedText>
               </View>
             ) : null}
 

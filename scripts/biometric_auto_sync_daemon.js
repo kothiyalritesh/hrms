@@ -1,9 +1,22 @@
 const { createClient } = require("@supabase/supabase-js");
 
-const SUPABASE_URL = "https://fuchvtzbgwzdpzfaizbj.supabase.co";
-const SUPABASE_ANON_KEY = "sb_publishable_SVIfa_ezLPPgKaQ7xlw3mA_uS2_p4PX";
+// rpc_sync_biometric_punches is restricted to the service role
+// (migration 20261006101000), so this daemon needs the service-role key.
+// Never commit these values; set them in the environment of the machine
+// that runs the daemon.
+const SUPABASE_URL = process.env.SUPABASE_URL || "https://fuchvtzbgwzdpzfaizbj.supabase.co";
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const SMARTOFFICE_URL = process.env.SMARTOFFICE_URL || "http://122.176.140.154:81";
+const SMARTOFFICE_API_KEY = process.env.SMARTOFFICE_API_KEY;
 
-const MACHINE_URL = "http://122.176.140.154:81/api/v2/WebAPI/GetDeviceLogs?APIKey=240916062617";
+if (!SUPABASE_SERVICE_ROLE_KEY || !SMARTOFFICE_API_KEY) {
+  console.error(
+    "Missing SUPABASE_SERVICE_ROLE_KEY or SMARTOFFICE_API_KEY environment variable.",
+  );
+  process.exit(1);
+}
+
+const MACHINE_URL = `${SMARTOFFICE_URL}/api/v2/WebAPI/GetDeviceLogs?APIKey=${encodeURIComponent(SMARTOFFICE_API_KEY)}`;
 
 // Real-time polling interval: 3 seconds (customizable via --interval flag or env)
 const intervalArg = process.argv.find((a) => a.startsWith("--interval="));
@@ -11,7 +24,9 @@ const POLL_INTERVAL_MS = intervalArg
   ? Number(intervalArg.split("=")[1])
   : Number(process.env.POLL_INTERVAL_MS) || 3000;
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+  auth: { persistSession: false, autoRefreshToken: false },
+});
 
 function getTodayIST() {
   const now = new Date();

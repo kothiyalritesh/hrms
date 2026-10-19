@@ -1,7 +1,7 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useRef } from "react";
 import { StyleSheet, View, Pressable, RefreshControl, Platform, Alert } from "react-native";
 import Feather from "@expo/vector-icons/Feather";
-import { useFocusEffect, useNavigation } from "@react-navigation/native";
+import { useFocusEffect, useLinkTo, useNavigation } from "@react-navigation/native";
 import { ScreenScrollView } from "@/components/ScreenScrollView";
 import { PageHeader } from "@/components/PageHeader";
 import { ThemedText } from "@/components/ThemedText";
@@ -13,6 +13,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { EventService } from "@/services/event.service";
 import { getBusinessDateIST } from "@/utils/businessDate";
 import { PaginationControls } from "@/components/PaginationControls";
+import { DashboardSummaryService } from "@/services/dashboard-summary.service";
 
 const PAGE_SIZE = 50;
 
@@ -25,6 +26,7 @@ interface DbNotification {
   type?: string;
   event_id?: string | null;
   acknowledged_at?: string | null;
+  deep_link?: string | null;
 }
 
 const TYPE_META: Record<string, { icon: keyof typeof Feather.glyphMap; color: string }> = {
@@ -44,12 +46,50 @@ function getType(title: string, type?: string) {
   return "announcement";
 }
 
+/**
+ * notifications.created_at is written by the database default now(). When the
+ * value arrives without a zone designator (timestamp WITHOUT time zone), it is
+ * UTC wall-clock time; parsing it as device-local time put every notification
+ * 5h30m in the past on Indian devices ("5h ago" for something just sent).
+ */
+function parseServerTime(value: string): Date {
+  const text = String(value ?? "").trim();
+  const hasZone = /(?:z|[+-]\d{2}(?::?\d{2})?)$/i.test(text);
+  return new Date(hasZone ? text : `${text.replace(" ", "T")}Z`);
+}
+
+const IST_TIME = new Intl.DateTimeFormat("en-IN", {
+  timeZone: "Asia/Kolkata",
+  hour: "numeric",
+  minute: "2-digit",
+  hour12: true,
+});
+const IST_DATE_TIME = new Intl.DateTimeFormat("en-IN", {
+  timeZone: "Asia/Kolkata",
+  day: "2-digit",
+  month: "short",
+  hour: "numeric",
+  minute: "2-digit",
+  hour12: true,
+});
+
 function timeAgo(iso: string) {
-  const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
-  if (diff < 60)    return `${diff}s ago`;
-  if (diff < 3600)  return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return `${Math.floor(diff / 86400)}d ago`;
+  const date = parseServerTime(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  const diff = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
+  if (diff < 60) return "Just now";
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago · ${IST_TIME.format(date)}`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago · ${IST_TIME.format(date)}`;
+  return IST_DATE_TIME.format(date);
+}
+
+function istDateOf(iso: string) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(parseServerTime(iso));
 }
 
 function NotifCard({
@@ -134,19 +174,24 @@ export default function NotificationsScreen() {
   const { theme } = useTheme();
   const { user } = useAuth();
   const navigation = useNavigation<any>();
+  const linkTo = useLinkTo();
   const [notifications, setNotifications] = useState<DbNotification[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [page, setPage] = useState(0);
   const [total, setTotal] = useState(0);
   const [unreadTotal, setUnreadTotal] = useState(0);
+  const requestIdRef = useRef(0);
+  const pageRef = useRef(page);
+  pageRef.current = page;
 
   const loadData = useCallback(async () => {
     if (!user?.id) return;
+    const requestId = ++requestIdRef.current;
     const from = page * PAGE_SIZE;
     const [pageResult, unreadResult] = await Promise.all([
       supabase
         .from("notifications")
-        .select("id, title, message, read, created_at, type, event_id, acknowledged_at", { count: "exact" })
+        .select("id, title, message, read, created_at, type, event_id, acknowledged_at, deep_link", { count: "exact" })
         .eq("user_id", user.id)
         .order("created_at", { ascending: false })
         .order("id")
@@ -154,6 +199,7 @@ export default function NotificationsScreen() {
       supabase.from("notifications").select("id", { count: "exact", head: true })
         .eq("user_id", user.id).eq("read", false),
     ]);
+    if (requestId !== requestIdRef.current) return;
     if (pageResult.error || unreadResult.error) {
       const error = pageResult.error || unreadResult.error;
       Alert.alert("Unable to load notifications", error?.message || "Please try again.");
@@ -165,25 +211,81 @@ export default function NotificationsScreen() {
   }, [page, user?.id]);
 
   useFocusEffect(useCallback(() => { loadData(); }, [loadData]));
-  const onRefresh = async () => { setRefreshing(true); await loadData(); setRefreshing(false); };
+  const loadDataRef = useRef(loadData);
+  loadDataRef.current = loadData;
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    try {
+      if (page !== 0) setPage(0);
+      else await loadData();
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  useFocusEffect(useCallback(() => {
+    if (!user?.id) return;
+    let debounce: ReturnType<typeof setTimeout> | null = null;
+    const channel = supabase
+      .channel(`notifications-screen-${user.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "notifications",
+          filter: `user_id=eq.${user.id}`,
+        },
+        () => {
+          if (debounce) clearTimeout(debounce);
+          debounce = setTimeout(() => {
+            if (pageRef.current !== 0) setPage(0);
+            else void loadDataRef.current();
+          }, 1000);
+        },
+      )
+      .subscribe();
+    return () => {
+      if (debounce) clearTimeout(debounce);
+      supabase.removeChannel(channel);
+    };
+  }, [user?.id]));
 
   const markAllRead = async () => {
-    await supabase.from("notifications").update({ read: true }).eq("user_id", user!.id).eq("read", false);
+    const { error } = await supabase.from("notifications").update({ read: true }).eq("user_id", user!.id).eq("read", false);
+    if (error) {
+      Alert.alert("Could not mark as read", error.message || "Please try again.");
+      return;
+    }
+    DashboardSummaryService.invalidateEmployee(user!.id);
     loadData();
   };
 
   const clearAll = async () => {
+    let confirmed: boolean;
     if (Platform.OS === "web") {
-      if (!window.confirm("Clear all notifications?")) return;
+      confirmed = window.confirm("Clear all notifications?");
     } else {
-      await new Promise<void>((res, rej) =>
+      confirmed = await new Promise<boolean>((res) =>
         Alert.alert("Clear All", "Remove all notifications?", [
-          { text: "Cancel", style: "cancel", onPress: () => rej() },
-          { text: "Clear", style: "destructive", onPress: () => res() },
-        ])
-      ).catch(() => { return; });
+          { text: "Cancel", style: "cancel", onPress: () => res(false) },
+          { text: "Clear", style: "destructive", onPress: () => res(true) },
+        ], { cancelable: true, onDismiss: () => res(false) })
+      );
     }
-    await supabase.from("notifications").delete().eq("user_id", user!.id);
+    if (!confirmed) return;
+    // Only clear the list once the server confirms the rows are gone; otherwise
+    // they would reappear on the next refresh.
+    const { error } = await supabase.from("notifications").delete().eq("user_id", user!.id);
+    if (error) {
+      const msg = error.message || "Please try again.";
+      if (Platform.OS === "web") window.alert(`Could not clear notifications: ${msg}`);
+      else Alert.alert("Could not clear notifications", msg);
+      return;
+    }
+    DashboardSummaryService.invalidateEmployee(user!.id);
+    setPage(0);
     setNotifications([]);
     setTotal(0);
     setUnreadTotal(0);
@@ -191,15 +293,27 @@ export default function NotificationsScreen() {
 
   const onPress = async (notif: DbNotification) => {
     if (!notif.read) {
-      await supabase.from("notifications").update({ read: true }).eq("id", notif.id);
-      setNotifications((prev) => prev.map((n) => n.id === notif.id ? { ...n, read: true } : n));
-      setUnreadTotal((current) => Math.max(0, current - 1));
+      const { error } = await supabase.from("notifications").update({ read: true }).eq("id", notif.id);
+      if (!error) {
+        setNotifications((prev) => prev.map((n) => n.id === notif.id ? { ...n, read: true } : n));
+        setUnreadTotal((current) => Math.max(0, current - 1));
+      }
     }
     if (notif.event_id) {
       navigation.getParent()?.navigate("TasksTab", {
         screen: "Tasks",
         params: { eventId: notif.event_id },
       });
+      return;
+    }
+    // Server notifications carry the screen to open, e.g. /HRMS/admin/live-tracking.
+    const link = notif.deep_link?.trim();
+    if (link && link.startsWith("/HRMS/") && !link.startsWith("/HRMS/notifications")) {
+      try {
+        linkTo(Platform.OS === "web" ? link : link.replace(/^\/HRMS/, ""));
+      } catch {
+        // Unknown route: the notification stays readable here.
+      }
     }
   };
 
@@ -224,16 +338,8 @@ export default function NotificationsScreen() {
   };
 
   const todayDateIST = getBusinessDateIST();
-  const today    = notifications.filter((n) => {
-    // n.created_at is timestamptz (e.g. "2026-09-30T23:59:00+00:00")
-    // We must format it to IST before string comparison, otherwise 11 PM UTC matches tomorrow's date in IST.
-    const notifIST = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(n.created_at));
-    return notifIST === todayDateIST;
-  });
-  const earlier  = notifications.filter((n) => {
-    const notifIST = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(n.created_at));
-    return notifIST !== todayDateIST;
-  });
+  const today = notifications.filter((n) => istDateOf(n.created_at) === todayDateIST);
+  const earlier = notifications.filter((n) => istDateOf(n.created_at) !== todayDateIST);
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.backgroundRoot }}>

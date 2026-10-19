@@ -1,5 +1,6 @@
 ﻿import React, { useEffect, useState } from "react";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
+import { CommonActions } from "@react-navigation/native";
 import Feather from "@expo/vector-icons/Feather";
 import { ActivityIndicator, Platform, StyleSheet, View, Pressable, Dimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -11,6 +12,7 @@ import ReportsStackNavigator from "@/navigation/ReportsStackNavigator";
 import { useTheme } from "@/hooks/useTheme";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePermissions } from "@/hooks/usePermissions";
+import { SCREEN_PERMISSIONS } from "@/constants/permissionCatalog";
 import { ThemedText } from "@/components/ThemedText";
 import { supabase } from "@/lib/supabase";
 import {
@@ -69,10 +71,18 @@ const TAB_ICONS: Record<string, keyof typeof Feather.glyphMap> = {
   MyTeamTab:  "users",
 };
 
+const TAB_ROOT_SCREENS: Record<string, string> = {
+  HomeTab:    "Dashboard",
+  TasksTab:   "Tasks",
+  ProfileTab: "Profile",
+  AdminTab:   "AdminDashboard",
+  ReportsTab: "ReportsHub",
+};
+
 function CustomTabBar({ state, descriptors, navigation }: any) {
   const { theme, isDark } = useTheme();
   const { user } = useAuth();
-  const { scopedPermissions } = usePermissions();
+  const { canOpenScreen, hasPermission } = usePermissions();
   const insets = useSafeAreaInsets();
 
   const normalizedRole = normalizeUserRole(user?.role);
@@ -100,9 +110,13 @@ function CustomTabBar({ state, descriptors, navigation }: any) {
       .then(({ data }: { data: any[] | null }) => setIsEscalationMember(!!data?.length));
   }, [user?.id, isAdmin, isHR, isSalesRole]);
 
-  const hasAnyAdminPermission = scopedPermissions.some(p => p.permission.startsWith("screen.") || p.permission.includes(".view") || p.permission.includes(".edit") || p.permission.includes("manage_"));
-const canSeeAdmin = (!isSalesRole && (isAdmin || isHR || isEscalationMember)) || hasAnyAdminPermission;
-  useEffect(() => { if (!isAdmin && !isHR) console.log('DEBUG TAB BAR -> User:', user?.name, 'Permissions:', JSON.stringify(scopedPermissions), 'canSeeAdmin:', canSeeAdmin); }, [scopedPermissions, canSeeAdmin, user?.name, isAdmin, isHR]);
+  // The HR Panel is shown when at least one of its screens can be opened
+  // (same rules the screens and the database enforce), never just because
+  // some unrelated permission key contains ".view".
+  const hasAnyAdminPermission = Object.keys(SCREEN_PERMISSIONS).some(
+    (route) => route !== "TVDisplay" && !route.startsWith("Reports") && canOpenScreen(route),
+  );
+  const canSeeAdmin = (!isSalesRole && (isAdmin || isHR)) || hasAnyAdminPermission;
 
   // Check if user has team members
   useEffect(() => {
@@ -128,12 +142,11 @@ const canSeeAdmin = (!isSalesRole && (isAdmin || isHR || isEscalationMember)) ||
   }, [user?.id, isAdmin, isHR, isSalesRole]);
 
   // Filter routes based on admin visibility
-  let filtered = canSeeAdmin
-    ? state.routes
-    : state.routes.filter((r: any) => r.name !== "AdminTab" && r.name !== "ReportsTab");
-  if (!isAdmin && !isHR && !hasAnyAdminPermission) {
-    filtered = filtered.filter((r: any) => r.name !== "ReportsTab");
-  }
+  const canSeeReports = (!isSalesRole && (isAdmin || isHR)) || hasPermission("reports.view");
+  let filtered = state.routes.filter(
+    (r: any) =>
+      (r.name !== "AdminTab" || canSeeAdmin) && (r.name !== "ReportsTab" || canSeeReports),
+  );
 
   // Filter out MyTeamTab if user doesn't have team members OR is admin/HR
   const showMyTeam = !isSalesRole && !isAdmin && !isHR && (isEscalationMember || hasTeamMembers);
@@ -152,7 +165,30 @@ const canSeeAdmin = (!isSalesRole && (isAdmin || isHR || isEscalationMember)) ||
       const iconName  = TAB_ICONS[route.name] ?? "circle";
       const onPress   = () => {
         const event = navigation.emit({ type: "tabPress", target: route.key, canPreventDefault: true });
-        if (!isFocused && !event.defaultPrevented) navigation.navigate(route.name, route.params);
+        if (event.defaultPrevented) return;
+        const root = TAB_ROOT_SCREENS[route.name];
+        const nested = route.state;
+        if (!isFocused) {
+          // No stale { screen } params: a tab opened earlier into one of its
+          // screens (e.g. HR Panel → Attendance) must not reopen that screen.
+          navigation.navigate(route.name);
+          return;
+        }
+        // Tapping the tab you are already on returns to its first screen.
+        // React Navigation only does this when the stack has history; a tab
+        // opened straight onto a screen (link, URL, notification) has none,
+        // so the press used to do nothing and only a reload helped.
+        // When the stack starts at its first screen, the stack's own popToTop
+        // handles the tap; otherwise reset it (after that handler has run).
+        if (root && nested?.key && nested.routes?.[0]?.name !== root) {
+          const target = nested.key;
+          requestAnimationFrame(() => {
+            navigation.dispatch({
+              ...CommonActions.reset({ index: 0, routes: [{ name: root }] }),
+              target,
+            });
+          });
+        }
       };
 
       if (desktop) {

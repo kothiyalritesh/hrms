@@ -45,7 +45,8 @@ import { AttendanceReconciliationEngine } from "@/services/attendanceIntelligenc
 import { AttendanceInsightEngine } from "@/services/attendanceIntelligence/insights.service";
 import { AskAttendanceEngine } from "@/services/attendanceIntelligence/askAttendance.service";
 import { AttendanceSnapshotService } from "@/services/attendanceIntelligence/snapshot.service";
-import { getBusinessDateIST } from "@/utils/businessDate";
+import { addBusinessDays, businessMonthStart, getBusinessDateIST } from "@/utils/businessDate";
+import { DEFAULT_LATE_CHECKIN_TIME } from "@/constants/attendancePolicy";
 
 // ── SIMPLIFIED PRIMARY NAVIGATION ──────────────────────────────────────────
 type PrimaryNav = "OVERVIEW" | "WORKFORCE" | "ATTENDANCE" | "PERFORMANCE" | "EXCEPTIONS" | "INSIGHTS" | "REPORTS" | "ADMIN";
@@ -95,7 +96,7 @@ export default function AttendanceIntelligenceScreen() {
   const [aiResponse, setAiResponse] = useState<AskAttendanceResponse | null>(null);
 
   // Policy Config State
-  const [configShiftStart, setConfigShiftStart] = useState("10:32:00");
+  const [configShiftStart, setConfigShiftStart] = useState(DEFAULT_LATE_CHECKIN_TIME);
   const [configGraceMins, setConfigGraceMins] = useState("0");
   const [configValidate2359, setConfigValidate2359] = useState(true);
 
@@ -115,7 +116,7 @@ export default function AttendanceIntelligenceScreen() {
           e,
           true,
           {
-            shift_start: configShiftStart || "10:32:00",
+            shift_start: configShiftStart || DEFAULT_LATE_CHECKIN_TIME,
             grace_minutes: parseInt(configGraceMins, 10) || 0,
             filter_2359: configValidate2359,
           },
@@ -137,8 +138,7 @@ export default function AttendanceIntelligenceScreen() {
 
   const handleSelectPreset = (preset: DatePreset) => {
     setDatePreset(preset);
-    const today = new Date();
-    const todayStr = getBusinessDateIST(today);
+    const todayStr = getBusinessDateIST();
 
     let newStart = startDate;
     let newEnd = endDate;
@@ -150,15 +150,11 @@ export default function AttendanceIntelligenceScreen() {
       newStart = todayStr;
       newEnd = todayStr;
     } else if (preset === "THIS_WEEK") {
-      const d = new Date(today);
-      const day = d.getDay();
-      const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-      d.setDate(diff);
-      newStart = getBusinessDateIST(d);
+      const day = new Date(`${todayStr}T12:00:00Z`).getUTCDay();
+      newStart = addBusinessDays(todayStr, day === 0 ? -6 : 1 - day);
       newEnd = todayStr;
     } else if (preset === "THIS_MONTH") {
-      const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
-      newStart = getBusinessDateIST(firstDay);
+      newStart = businessMonthStart(todayStr);
       newEnd = todayStr;
     }
 
@@ -1672,13 +1668,13 @@ export default function AttendanceIntelligenceScreen() {
                   <View style={styles.adminConfigRow}>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.configLabel}>Standard Morning Shift Start</Text>
-                      <Text style={styles.configSub}>Check-ins occurring after this time are marked as late arrivals.</Text>
+                      <Text style={styles.configSub}>Check-ins at or after this time are marked as late arrivals.</Text>
                     </View>
                     <TextInput
                       style={styles.configInput}
                       value={configShiftStart}
                       onChangeText={setConfigShiftStart}
-                      placeholder="10:32:00"
+                      placeholder={DEFAULT_LATE_CHECKIN_TIME}
                     />
                   </View>
 

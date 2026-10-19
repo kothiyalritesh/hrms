@@ -1,6 +1,6 @@
 import { supabase } from "@/lib/supabase";
 import { BusinessClockService } from "@/services/business-clock.service";
-import { locationTrackingCoordinator } from "@/services/location/LocationTrackingCoordinator";
+import { syncTrackingDestination } from "@/services/location/attendanceTrackingLifecycle";
 import { businessDateUtcRange } from "@/utils/businessDate";
 import { firstRpcRow } from "@/utils/supabaseRpc";
 import * as Crypto from "expo-crypto";
@@ -77,7 +77,7 @@ export interface FieldVisit {
  * stop, so render the submission in place of its source instead of counting and
  * displaying both records as separate visits.
  */
-function collapseCurrentLocationSubmissions(
+export function collapseCurrentLocationSubmissions(
   visits: FieldVisit[],
 ): FieldVisit[] {
   const latestSubmissionBySource = new Map<string, string>();
@@ -264,7 +264,7 @@ export const FieldVisitService = {
     if (error) return { data: null, error };
     try {
       const data = confirmedVisitMutation(result, { status: "PENDING" });
-      void locationTrackingCoordinator.updateActiveDestination(data.id);
+      void syncTrackingDestination(data.id);
       return { data, error: null };
     } catch (confirmationError) {
       return { data: null, error: confirmationError };
@@ -322,7 +322,7 @@ export const FieldVisitService = {
         status: "CHECKED_IN",
         timestamp: "checkin_time",
       });
-      void locationTrackingCoordinator.updateActiveDestination(visitId);
+      void syncTrackingDestination(visitId);
       return { data: confirmed, error: null };
     } catch (confirmationError) {
       return { data: null, error: confirmationError };
@@ -361,7 +361,7 @@ export const FieldVisitService = {
         ),
       };
     }
-    void locationTrackingCoordinator.updateActiveDestination(visitId);
+    void syncTrackingDestination(visitId);
     return {
       data: {
         id: response.visit_id,
@@ -374,17 +374,24 @@ export const FieldVisitService = {
 
   async checkOut(
     visitId: string,
-    location: { latitude: number; longitude: number },
+    location: import("@/utils/gps").GPSCoords,
     notes?: string,
     nearestOfficeId?: string,
+    evidencePhotoPath?: string,
   ): Promise<{ data: FieldVisit | null; error: any }> {
     const { data, error } = await supabase.rpc("rpc_mutate_own_field_visit", {
       p_action: "CHECK_OUT",
       p_visit_id: visitId,
       p_values: {
-        ...location,
+        latitude: location.latitude,
+        longitude: location.longitude,
+        accuracy: location.accuracy,
+        captured_at: location.capturedAt,
+        provider: location.provider,
+        mocked: location.mocked ?? false,
         notes: notes || null,
         nearest_office_id: nearestOfficeId || null,
+        evidence_photo_path: evidencePhotoPath || null,
       },
     });
     if (error) return { data: null, error };
@@ -394,7 +401,7 @@ export const FieldVisitService = {
         status: "COMPLETED",
         timestamp: "checkout_time",
       });
-      void locationTrackingCoordinator.clearActiveDestination();
+      void syncTrackingDestination(null);
       return { data: confirmed, error: null };
     } catch (confirmationError) {
       return { data: null, error: confirmationError };
@@ -410,7 +417,7 @@ export const FieldVisitService = {
     if (error) return { error };
     try {
       confirmedVisitMutation(data, { visitId, status: "MISSED" });
-      void locationTrackingCoordinator.clearActiveDestination();
+      void syncTrackingDestination(null);
       return { error: null };
     } catch (confirmationError) {
       return { error: confirmationError };

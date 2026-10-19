@@ -8,7 +8,14 @@ $distPath = [System.IO.Path]::GetFullPath(
 )
 $releaseConfigPath = Join-Path $workspaceRoot "release.config.json"
 $releaseConfig = Get-Content -LiteralPath $releaseConfigPath -Raw | ConvertFrom-Json
-$buildId = [string]$releaseConfig.buildId
+# Every export gets a unique release ID (IST timestamp) so installed browsers and
+# the Android app can tell a new upload apart from the one they are running.
+# Set HRMS_BUILD_ID to force a specific ID.
+$buildId = if ($env:HRMS_BUILD_ID) {
+  [string]$env:HRMS_BUILD_ID
+} else {
+  [DateTime]::UtcNow.AddHours(5.5).ToString("yyyyMMdd.HHmmss")
+}
 $requiredSchema = [string]$releaseConfig.requiredBackendSchemaVersion
 if (
   [string]::IsNullOrWhiteSpace($buildId) -or
@@ -33,6 +40,8 @@ try {
   # Dynamic Expo config embeds release.config.json. Metro's cache can otherwise
   # reuse an older Constants manifest even when the release manifest changed.
   $env:EXPO_PUBLIC_WEB_BASE_PATH = '/HRMS/'
+  $previousBuildId = $env:EXPO_PUBLIC_BUILD_ID
+  $env:EXPO_PUBLIC_BUILD_ID = $buildId
   & npx expo export --platform web --clear
   if ($LASTEXITCODE -ne 0) {
     throw "Expo web export failed with exit code $LASTEXITCODE"
@@ -99,7 +108,26 @@ try {
     $releaseScriptsJson
   )
   Set-Content -LiteralPath $serviceWorkerPath -Value $serviceWorker -NoNewline
+
+  # Release manifest read by ReleaseUpdateNotice (web + Android WebView).
+  $releaseManifest = [ordered]@{
+    buildId = $buildId
+    builtAt = [DateTime]::UtcNow.ToString("o")
+    mandatory = [bool]$releaseConfig.mandatoryWebUpdate
+    message = [string]$releaseConfig.updateMessage
+    minAndroidAppVersion = [string]$releaseConfig.minAndroidAppVersion
+    androidDownloadUrl = [string]$releaseConfig.androidDownloadUrl
+    requiredBackendSchemaVersion = $requiredSchema
+  }
+  $releaseManifestJson = ConvertTo-Json -InputObject $releaseManifest
+  [System.IO.File]::WriteAllText(
+    (Join-Path $distPath "version.json"),
+    $releaseManifestJson,
+    (New-Object System.Text.UTF8Encoding($false))
+  )
+  Write-Host "Release $buildId written to dist/version.json"
 } finally {
+  $env:EXPO_PUBLIC_BUILD_ID = $previousBuildId
   Pop-Location
 }
 

@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -9,7 +9,6 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { Picker } from "@react-native-picker/picker";
 import Feather from "@expo/vector-icons/Feather";
 import { useFocusEffect } from "@react-navigation/native";
 import { ThemedText } from "@/components/ThemedText";
@@ -19,6 +18,8 @@ import { fetchAllPages } from "@/utils/supabasePagination";
 import { firstRpcRow } from "@/utils/supabaseRpc";
 import { isBusinessDate } from "@/utils/businessDate";
 import { getBusinessDateIST } from "@/utils/attendanceTimestamp";
+import { DateInput } from "@/components/DateInput";
+import { SearchableSelect, SelectOption } from "@/components/SearchableSelect";
 
 const DAYS = [
   "Sunday",
@@ -64,9 +65,34 @@ export default function AttendanceCalendarScreen() {
   const [weekOfMonth, setWeekOfMonth] = useState("");
   const [validFrom, setValidFrom] = useState(getBusinessDateIST());
   const [validTo, setValidTo] = useState("");
+  const [saving, setSaving] = useState<null | "holiday" | "weekly">(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const scopeOptions = useMemo<SelectOption[]>(
+    () => [
+      { value: "all", label: "All employees", subtitle: "Company-wide", icon: "globe" },
+      ...offices.map((o) => ({ value: `office:${o.id}`, label: o.name, group: "Offices", icon: "home" as const })),
+      ...teams.map((t) => ({ value: `team:${t.id}`, label: t.name, group: "Teams", icon: "users" as const })),
+      ...employees.map((p) => ({
+        value: `user:${p.id}`,
+        label: p.name,
+        subtitle: p.employee_number ? `Emp. no. ${p.employee_number}` : undefined,
+        group: "Employees",
+        icon: "user" as const,
+      })),
+    ],
+    [offices, teams, employees],
+  );
+  const scopeLabel = (row: any) =>
+    row.profiles?.name
+      ? `Employee · ${row.profiles.name}`
+      : row.teams?.name
+        ? `Team · ${row.teams.name}`
+        : row.offices?.name
+          ? `Office · ${row.offices.name}`
+          : "All employees";
+
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     const [h, w, o, t, p] = await Promise.all([
       fetchAllPages<any>((from, to) => supabase
         .from("holiday_calendar")
@@ -113,7 +139,7 @@ export default function AttendanceCalendarScreen() {
   }, []);
   useFocusEffect(
     useCallback(() => {
-      load();
+      void load();
     }, [load]),
   );
 
@@ -125,6 +151,8 @@ export default function AttendanceCalendarScreen() {
       );
     if (name.trim().length < 2)
       return Alert.alert("Holiday name required", "Enter the holiday name.");
+    if (saving) return;
+    setSaving("holiday");
     const { data, error } = await supabase.rpc(
       "rpc_admin_mutate_configuration",
       {
@@ -139,11 +167,12 @@ export default function AttendanceCalendarScreen() {
         },
       },
     );
+    setSaving(null);
     if (error)
       return Alert.alert(
         "Unable to add holiday",
         error.code === "23505"
-          ? "A holiday already exists for this date and office."
+          ? "A holiday already exists for this date and scope."
           : error.message,
       );
     const response = firstRpcRow<any>(data);
@@ -152,10 +181,12 @@ export default function AttendanceCalendarScreen() {
         "Unable to add holiday",
         "The server did not confirm the holiday.",
       );
+    const added = `${name.trim()} on ${date}`;
     setDate("");
     setName("");
     setOptional(false);
-    await load();
+    await load(true);
+    Alert.alert("Holiday added", added);
   };
   const addWeeklyOff = async () => {
     if (!validDate(validFrom))
@@ -177,8 +208,10 @@ export default function AttendanceCalendarScreen() {
     if (duplicate)
       return Alert.alert(
         "Rule already exists",
-        "This weekly-off rule is already configured.",
+        `${DAYS[weekday]} is already a weekly off for this scope. Pick another day, recurrence or "Applies to".`,
       );
+    if (saving) return;
+    setSaving("weekly");
     const { data, error } = await supabase.rpc(
       "rpc_admin_mutate_configuration",
       {
@@ -194,6 +227,7 @@ export default function AttendanceCalendarScreen() {
         },
       },
     );
+    setSaving(null);
     if (error) return Alert.alert("Unable to add weekly off", error.message);
     const response = firstRpcRow<any>(data);
     if (response?.success !== true || !response?.id)
@@ -202,7 +236,8 @@ export default function AttendanceCalendarScreen() {
         "The server did not confirm the weekly-off rule.",
       );
     setValidTo("");
-    await load();
+    await load(true);
+    Alert.alert("Weekly off added", `${DAYS[weekday]} from ${validFrom}`);
   };
   const remove = (
     table: "holiday_calendar" | "weekly_off_rules",
@@ -234,7 +269,7 @@ export default function AttendanceCalendarScreen() {
                 "Unable to remove",
                 "The server did not confirm removal of this calendar rule.",
               );
-            } else await load();
+            } else await load(true);
           }
         },
       },
@@ -262,41 +297,35 @@ export default function AttendanceCalendarScreen() {
         </View>
       </View>
       <View style={[s.panel, { backgroundColor: theme.backgroundDefault }]}>
-        <ThemedText style={s.label}>Date</ThemedText>
-        <TextInput
-          style={[s.input, { color: theme.text, borderColor: theme.border }]}
-          placeholder="YYYY-MM-DD"
-          placeholderTextColor={theme.textSecondary}
-          value={date}
-          onChangeText={setDate}
-        />
-        <ThemedText style={s.label}>Holiday name</ThemedText>
-        <TextInput
-          style={[s.input, { color: theme.text, borderColor: theme.border }]}
-          placeholder="e.g. Diwali"
-          placeholderTextColor={theme.textSecondary}
-          value={name}
-          onChangeText={setName}
-        />
-        <ThemedText style={s.label}>Applies to</ThemedText>
-        <View style={[s.picker, { borderColor: theme.border }]}>
-          <Picker
-            selectedValue={holidayScope}
-            onValueChange={setHolidayScope}
-            style={{ color: theme.text }}
-          >
-            <Picker.Item label="All employees" value="all" />
-            {offices.map((o) => (
-              <Picker.Item key={`office:${o.id}`} label={`Office - ${o.name}`} value={`office:${o.id}`} />
-            ))}
-            {teams.map((t) => (
-              <Picker.Item key={`team:${t.id}`} label={`Team - ${t.name}`} value={`team:${t.id}`} />
-            ))}
-            {employees.map((p) => (
-              <Picker.Item key={`user:${p.id}`} label={`Employee - ${p.name}${p.employee_number ? ` (${p.employee_number})` : ""}`} value={`user:${p.id}`} />
-            ))}
-          </Picker>
+        <View style={s.row2}>
+          <View style={s.col}>
+            <ThemedText style={s.label}>Date</ThemedText>
+            <DateInput
+              style={[s.input, { color: theme.text, borderColor: theme.border, backgroundColor: theme.backgroundSecondary }]}
+              placeholderTextColor={theme.textSecondary}
+              value={date}
+              onChange={setDate}
+            />
+          </View>
+          <View style={s.colWide}>
+            <ThemedText style={s.label}>Holiday name</ThemedText>
+            <TextInput
+              style={[s.input, { color: theme.text, borderColor: theme.border, backgroundColor: theme.backgroundSecondary }]}
+              placeholder="e.g. Diwali"
+              placeholderTextColor={theme.textSecondary}
+              value={name}
+              onChangeText={setName}
+            />
+          </View>
         </View>
+        <ThemedText style={s.label}>Applies to</ThemedText>
+        <SearchableSelect
+          title="Holiday applies to"
+          value={holidayScope}
+          options={scopeOptions}
+          onChange={setHolidayScope}
+          searchPlaceholder="Search office, team or employee"
+        />
         <View style={s.switchRow}>
           <View style={{ flex: 1 }}>
             <ThemedText style={s.label}>Optional holiday</ThemedText>
@@ -313,10 +342,14 @@ export default function AttendanceCalendarScreen() {
         <Pressable
           style={[s.primary, { backgroundColor: theme.primary }]}
           onPress={addHoliday}
+          disabled={saving !== null}
         >
-          <ThemedText style={s.white}>Add holiday</ThemedText>
+          <ThemedText style={s.white}>{saving === "holiday" ? "Saving..." : "Add holiday"}</ThemedText>
         </Pressable>
       </View>
+      {holidays.length === 0 ? (
+        <ThemedText style={[s.emptyText, { color: theme.textSecondary }]}>No holidays added yet.</ThemedText>
+      ) : null}
       {holidays.map((h) => (
         <View
           key={h.id}
@@ -331,11 +364,18 @@ export default function AttendanceCalendarScreen() {
           <View style={{ flex: 1 }}>
             <ThemedText style={s.bold}>{h.name}</ThemedText>
             <ThemedText type="caption" style={{ color: theme.textSecondary }}>
-              {h.holiday_date} · {h.profiles?.name || h.teams?.name || h.offices?.name || "All employees"}
-              {h.is_optional ? " · Optional" : ""}
+              {h.holiday_date} · {scopeLabel(h)}
             </ThemedText>
+            {h.is_optional ? (
+              <View style={[s.badge, { backgroundColor: "#F59E0B22" }]}>
+                <ThemedText style={[s.badgeText, { color: "#B45309" }]}>Optional</ThemedText>
+              </View>
+            ) : null}
           </View>
           <Pressable
+            accessibilityLabel={`Remove ${h.name}`}
+            hitSlop={8}
+            style={s.iconBtn}
             onPress={() =>
               remove("holiday_calendar", h.id, `${h.name} on ${h.holiday_date}`)
             }
@@ -356,24 +396,13 @@ export default function AttendanceCalendarScreen() {
       </View>
       <View style={[s.panel, { backgroundColor: theme.backgroundDefault }]}>
         <ThemedText style={s.label}>Applies to</ThemedText>
-        <View style={[s.picker, { borderColor: theme.border }]}>
-          <Picker
-            selectedValue={ruleScope}
-            onValueChange={setRuleScope}
-            style={{ color: theme.text }}
-          >
-            <Picker.Item label="All employees" value="all" />
-            {offices.map((o) => (
-              <Picker.Item key={`office:${o.id}`} label={`Office - ${o.name}`} value={`office:${o.id}`} />
-            ))}
-            {teams.map((t) => (
-              <Picker.Item key={`team:${t.id}`} label={`Team - ${t.name}`} value={`team:${t.id}`} />
-            ))}
-            {employees.map((p) => (
-              <Picker.Item key={`user:${p.id}`} label={`Employee - ${p.name}${p.employee_number ? ` (${p.employee_number})` : ""}`} value={`user:${p.id}`} />
-            ))}
-          </Picker>
-        </View>
+        <SearchableSelect
+          title="Weekly off applies to"
+          value={ruleScope}
+          options={scopeOptions}
+          onChange={setRuleScope}
+          searchPlaceholder="Search office, team or employee"
+        />
         <ThemedText style={s.label}>Day</ThemedText>
         <View style={s.days}>
           {DAYS.map((day, index) => (
@@ -398,45 +427,68 @@ export default function AttendanceCalendarScreen() {
             </Pressable>
           ))}
         </View>
-        <ThemedText style={s.label}>Recurrence</ThemedText>
-        <View style={[s.picker, { borderColor: theme.border }]}>
-          <Picker
-            selectedValue={weekOfMonth}
-            onValueChange={setWeekOfMonth}
-            style={{ color: theme.text }}
-          >
-            {WEEK_OPTIONS.map((o) => (
-              <Picker.Item
+        <ThemedText style={s.label}>Repeats</ThemedText>
+        <View style={s.days}>
+          {WEEK_OPTIONS.map((o) => {
+            const active = weekOfMonth === o.value;
+            return (
+              <Pressable
                 key={o.value || "all"}
-                label={o.label}
-                value={o.value}
-              />
-            ))}
-          </Picker>
+                onPress={() => setWeekOfMonth(o.value)}
+                style={[
+                  s.day,
+                  {
+                    borderColor: active ? theme.primary : theme.border,
+                    backgroundColor: active ? theme.primary : "transparent",
+                  },
+                ]}
+              >
+                <ThemedText type="caption" style={{ color: active ? "#fff" : theme.text, fontWeight: "600" }}>
+                  {o.label}
+                </ThemedText>
+              </Pressable>
+            );
+          })}
         </View>
-        <ThemedText style={s.label}>Valid from</ThemedText>
-        <TextInput
-          style={[s.input, { color: theme.text, borderColor: theme.border }]}
-          placeholder="YYYY-MM-DD"
-          placeholderTextColor={theme.textSecondary}
-          value={validFrom}
-          onChangeText={setValidFrom}
-        />
-        <ThemedText style={s.label}>Valid to (optional)</ThemedText>
-        <TextInput
-          style={[s.input, { color: theme.text, borderColor: theme.border }]}
-          placeholder="YYYY-MM-DD"
-          placeholderTextColor={theme.textSecondary}
-          value={validTo}
-          onChangeText={setValidTo}
-        />
+        <ThemedText type="caption" style={[s.preview, { color: theme.textSecondary, backgroundColor: theme.backgroundSecondary }]}>
+          {weekOfMonth
+            ? `${WEEK_OPTIONS.find((o) => o.value === weekOfMonth)?.label} ${DAYS[weekday]} of every month`
+            : `Every ${DAYS[weekday]}`}
+          {" · "}
+          {scopeOptions.find((o) => o.value === ruleScope)?.label ?? "All employees"}
+        </ThemedText>
+        <View style={s.row2}>
+          <View style={s.col}>
+            <ThemedText style={s.label}>Valid from</ThemedText>
+            <DateInput
+              style={[s.input, { color: theme.text, borderColor: theme.border, backgroundColor: theme.backgroundSecondary }]}
+              placeholderTextColor={theme.textSecondary}
+              value={validFrom}
+              onChange={setValidFrom}
+            />
+          </View>
+          <View style={s.col}>
+            <ThemedText style={s.label}>Valid to (optional)</ThemedText>
+            <DateInput
+              style={[s.input, { color: theme.text, borderColor: theme.border, backgroundColor: theme.backgroundSecondary }]}
+              placeholderTextColor={theme.textSecondary}
+              value={validTo}
+              onChange={setValidTo}
+              min={validFrom || undefined}
+            />
+          </View>
+        </View>
         <Pressable
           style={[s.primary, { backgroundColor: theme.primary }]}
           onPress={addWeeklyOff}
+          disabled={saving !== null}
         >
-          <ThemedText style={s.white}>Add weekly-off rule</ThemedText>
+          <ThemedText style={s.white}>{saving === "weekly" ? "Saving..." : "Add weekly-off rule"}</ThemedText>
         </Pressable>
       </View>
+      {rules.length === 0 ? (
+        <ThemedText style={[s.emptyText, { color: theme.textSecondary }]}>No weekly-off rules yet.</ThemedText>
+      ) : null}
       {rules.map((r) => (
         <View
           key={r.id}
@@ -444,9 +496,7 @@ export default function AttendanceCalendarScreen() {
         >
           <Feather name="moon" size={18} color={theme.primary} />
           <View style={{ flex: 1 }}>
-            <ThemedText style={s.bold}>
-              {r.profiles?.name || r.teams?.name || r.offices?.name || "All employees"}
-            </ThemedText>
+            <ThemedText style={s.bold}>{scopeLabel(r)}</ThemedText>
             <ThemedText type="caption" style={{ color: theme.textSecondary }}>
               {r.week_of_month
                 ? `${WEEK_OPTIONS.find((o) => o.value === String(r.week_of_month))?.label} of every month`
@@ -456,6 +506,9 @@ export default function AttendanceCalendarScreen() {
             </ThemedText>
           </View>
           <Pressable
+            accessibilityLabel="Remove weekly-off rule"
+            hitSlop={8}
+            style={s.iconBtn}
             onPress={() =>
               remove(
                 "weekly_off_rules",
@@ -473,7 +526,7 @@ export default function AttendanceCalendarScreen() {
 }
 const s = StyleSheet.create({
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
-  wrap: { padding: 16, paddingBottom: 48 },
+  wrap: { padding: 16, paddingBottom: 48, width: "100%", maxWidth: 820, alignSelf: "center" },
   heading: {
     flexDirection: "row",
     alignItems: "center",
@@ -483,13 +536,15 @@ const s = StyleSheet.create({
   title: { fontSize: 21, fontWeight: "800" },
   panel: { padding: 14, borderRadius: 14, marginBottom: 12 },
   label: { fontWeight: "700", fontSize: 13, marginBottom: 6 },
-  input: { borderWidth: 1, borderRadius: 9, padding: 11, marginBottom: 12 },
-  picker: {
-    borderWidth: 1,
-    borderRadius: 9,
-    overflow: "hidden",
-    marginBottom: 12,
-  },
+  input: { borderWidth: 1, borderRadius: 10, padding: 11, minHeight: 46, marginBottom: 12 },
+  row2: { flexDirection: "row", flexWrap: "wrap", columnGap: 12 },
+  col: { flexGrow: 1, flexBasis: 150 },
+  colWide: { flexGrow: 2, flexBasis: 200 },
+  preview: { padding: 10, borderRadius: 9, marginBottom: 12, overflow: "hidden" },
+  badge: { alignSelf: "flex-start", paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10, marginTop: 4 },
+  badgeText: { fontSize: 11, fontWeight: "700" },
+  iconBtn: { padding: 8, borderRadius: 8 },
+  emptyText: { textAlign: "center", paddingVertical: 12 },
   switchRow: { flexDirection: "row", alignItems: "center", marginBottom: 12 },
   primary: { padding: 12, borderRadius: 9, alignItems: "center" },
   white: { color: "#fff", fontWeight: "700" },

@@ -6,6 +6,7 @@ import MapView, {
   Polyline,
   PROVIDER_GOOGLE,
 } from "react-native-maps";
+import SafeMapView from "@/components/SafeMapView";
 
 type Props = {
   selected: { latitude: number; longitude: number; name: string };
@@ -27,7 +28,7 @@ export default function LocationComparisonMap({
     0.01,
   );
   return (
-    <MapView
+    <SafeMapView
       style={styles.map}
       provider={
         process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY
@@ -65,7 +66,7 @@ export default function LocationComparisonMap({
         strokeColor="#7C3AED"
         strokeWidth={3}
       />
-    </MapView>
+    </SafeMapView>
   );
 }
 

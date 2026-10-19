@@ -63,7 +63,7 @@
         }
       ],
       "expo-web-browser",
-      ["expo-notifications", { "icon": "./assets/images/android-icon-monochrome.png", "color": "#6D1B6D", "defaultChannel": "hrms_attendance" }],
+      ["expo-notifications", { "icon": "./assets/images/android-icon-monochrome.png", "color": "#6D1B6D", "defaultChannel": "hrms_attendance", "sounds": ["./assets/sounds/arrival_ping.wav"] }],
       [
         "expo-location",
         {

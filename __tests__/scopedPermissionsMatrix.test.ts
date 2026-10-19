@@ -270,8 +270,8 @@ describe("Multi-Dimensional Scoped Permissions Matrix", () => {
     });
 
     test("PermissionsManagerScreen contains defensive access guard and fallback UI for non-admins", () => {
-      expect(permissionsManagerTsx).toContain("if (!isAdmin)");
-      expect(permissionsManagerTsx).toContain("Access Restricted");
+      expect(permissionsManagerTsx).toContain("if (!canView)");
+      expect(permissionsManagerTsx).toContain("Access restricted");
       expect(permissionsManagerTsx).toContain("Administrators and System Administrators");
     });
   });

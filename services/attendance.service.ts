@@ -1,3 +1,4 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { supabase } from "@/lib/supabase";
 import { BusinessClockService } from "@/services/business-clock.service";
 import { reportNonFatalError } from "@/utils/operationalErrors";
@@ -27,6 +28,8 @@ export function distanceMetres(
       Math.sin(dLon / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
+
+const ACTIVE_OFFICES_CACHE_KEY = "@hrms_active_offices_cache_v1";
 
 export class GeoFenceError extends Error {
   constructor(
@@ -182,7 +185,24 @@ export const AttendanceService = {
       .eq("is_active", true);
 
     if (error) throw error;
-    return (data || []) as OfficeLocation[];
+    const offices = (data || []) as OfficeLocation[];
+    // Kept for offline check-in (nearest office + radius without internet).
+    void AsyncStorage.setItem(
+      ACTIVE_OFFICES_CACHE_KEY,
+      JSON.stringify({ savedAt: Date.now(), offices }),
+    ).catch(() => undefined);
+    return offices;
+  },
+
+  /** Last downloaded active offices (offline check-in). */
+  async getCachedActiveOffices(): Promise<OfficeLocation[]> {
+    try {
+      const raw = await AsyncStorage.getItem(ACTIVE_OFFICES_CACHE_KEY);
+      const parsed = raw ? JSON.parse(raw) : null;
+      return Array.isArray(parsed?.offices) ? parsed.offices : [];
+    } catch {
+      return [];
+    }
   },
 
   async getAllowedOffices(userId: string): Promise<OfficeLocation[]> {
@@ -449,7 +469,14 @@ export const AttendanceService = {
     newCheckout?: string;
     newStatus?: string;
     reason: string;
-  }): Promise<{ success: boolean; message: string; error?: string }> {
+  }): Promise<{
+    success: boolean;
+    message: string;
+    error?: string;
+    checkin_ist?: string | null;
+    checkout_ist?: string | null;
+    is_late?: boolean | null;
+  }> {
     const { data, error } = await supabase.rpc("rpc_admin_correct_attendance", {
       p_admin_id: params.adminId,
       p_attendance_id: params.attendanceId,
@@ -471,6 +498,9 @@ export const AttendanceService = {
       success: boolean;
       message: string;
       error?: string;
+      checkin_ist?: string | null;
+      checkout_ist?: string | null;
+      is_late?: boolean | null;
     }>(data);
   },
 
@@ -572,6 +602,22 @@ export const AttendanceService = {
 
     const radius = effectiveOfficeRadius(nearest.office);
     if (nearest.distanceMetres + accuracy > radius) {
+      // Tell the server about the attempt; it re-measures the distance and
+      // lists it under Suspicious Attendance only when the reading is really
+      // outside the office area. Never delays or changes the user's message.
+      void supabase
+        .rpc("rpc_report_outside_office_checkin", {
+          p_office_id: nearest.office.id,
+          p_location: {
+            latitude: location.latitude,
+            longitude: location.longitude,
+            accuracy,
+          },
+        })
+        .then(
+          () => undefined,
+          () => undefined,
+        );
       throw new GeoFenceError(
         nearest.distanceMetres + accuracy,
         radius,

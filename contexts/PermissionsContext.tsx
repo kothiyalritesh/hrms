@@ -39,11 +39,20 @@ export interface ScopedPermission {
   permission: string;
   scope: PermissionScope;
   scope_id?: string | null;
+  /** Legacy multidimensional columns (dropped in 20261005010000); kept optional for old rows. */
+  office_id?: string | null;
+  department?: string | null;
+  team_lead_id?: string | null;
 }
 
 export interface GrantScopeOptions {
   scope?: PermissionScope;
   scopeId?: string | null;
+  /** Legacy options, no longer sent by the Permission Manager. */
+  officeId?: string | null;
+  department?: string | null;
+  teamLeadId?: string | null;
+  teamName?: string | null;
 }
 
 export interface PermissionsContextValue {

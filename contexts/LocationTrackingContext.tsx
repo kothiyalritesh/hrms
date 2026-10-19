@@ -17,6 +17,8 @@ import { nativeBridge } from "@/services/nativeBridge/client";
 interface LocationTrackingContextValue {
   health: TrackingHealth;
   refresh: () => Promise<TrackingHealth>;
+  /** Restart tracking if it should run, then refresh health. Never throws. */
+  recheck: () => Promise<TrackingHealth>;
   requestRequiredPermissions: (
     backgroundEducationAccepted: boolean,
   ) => Promise<TrackingHealth>;
@@ -27,6 +29,10 @@ const LocationTrackingContext =
   createContext<LocationTrackingContextValue | null>(null);
 
 type BrowserLocationPermission = "granted" | "denied" | "prompt";
+
+function reportTrackingError(error: unknown) {
+  console.warn("[tracking] background re-check failed", error);
+}
 
 async function inspectBrowserLocationPermission(): Promise<{
   available: boolean;
@@ -161,6 +167,9 @@ export function LocationTrackingProvider({
           null,
         warning:
           "Continuous and background tracking are unavailable in the web app. Use the installed Android app with foreground-service permissions.",
+        warningCode: null,
+        notificationHint: null,
+        trackingExpected: !!openAttendance,
       };
       setHealth(next);
       return next;
@@ -176,13 +185,27 @@ export function LocationTrackingProvider({
     let disposed = false;
     const reconcile = async () => {
       if (Platform.OS === "web") {
-        if (!disposed && nativeBridge.isAvailable()) {
-          await nativeBridge.request("tracking.restore").catch(() => undefined);
+        try {
+          if (!disposed && nativeBridge.isAvailable()) {
+            await nativeBridge.request("tracking.restore").catch(() => undefined);
+          }
+        } finally {
+          if (!disposed) await refreshWebHealth().catch(reportTrackingError);
         }
-        if (!disposed) await refreshWebHealth();
         return;
       }
-      await locationTrackingCoordinator.restoreIfRequired();
+      try {
+        await locationTrackingCoordinator.restoreIfRequired();
+      } catch (error) {
+        reportTrackingError(error);
+      } finally {
+        // A failed restore must still publish fresh health, never a stale one.
+        if (!disposed) {
+          await locationTrackingCoordinator
+            .refreshHealth()
+            .catch(reportTrackingError);
+        }
+      }
     };
 
     if (Platform.OS === "web") {
@@ -190,6 +213,7 @@ export function LocationTrackingProvider({
     } else {
       void locationTrackingCoordinator
         .initialize({ id: user.id, name: user.name })
+        .catch(reportTrackingError)
         .then(reconcile);
     }
 
@@ -231,9 +255,13 @@ export function LocationTrackingProvider({
             visit?.id &&
             ["PENDING", "IN_TRANSIT", "CHECKED_IN"].includes(visit.status)
           ) {
-            void locationTrackingCoordinator.updateActiveDestination(visit.id);
+            void locationTrackingCoordinator
+              .updateActiveDestination(visit.id)
+              .catch(reportTrackingError);
           } else {
-            void locationTrackingCoordinator.handleAppStateChange("active");
+            void locationTrackingCoordinator
+              .handleAppStateChange("active")
+              .catch(reportTrackingError);
           }
         },
       )
@@ -242,13 +270,16 @@ export function LocationTrackingProvider({
       "change",
       (state) => {
         if (Platform.OS === "web") {
-          if (state === "active") void refreshWebHealth();
-        } else {
-          void locationTrackingCoordinator.handleAppStateChange(state);
+          if (state === "active") void refreshWebHealth().catch(reportTrackingError);
+        } else if (state === "active") {
+          // handleAppStateChange refreshes health in its own finally block.
+          void locationTrackingCoordinator
+            .handleAppStateChange(state)
+            .catch(reportTrackingError);
         }
       },
     );
-    const interval = setInterval(reconcile, 2 * 60 * 1000);
+    const interval = setInterval(() => void reconcile(), 2 * 60 * 1000);
 
     return () => {
       disposed = true;
@@ -263,6 +294,19 @@ export function LocationTrackingProvider({
     if (Platform.OS === "web") return refreshWebHealth();
     return locationTrackingCoordinator.refreshHealth();
   }, [refreshWebHealth]);
+  const recheck = useCallback(async (): Promise<TrackingHealth> => {
+    if (Platform.OS === "web") {
+      if (user?.id && nativeBridge.isAvailable()) {
+        await nativeBridge.request("tracking.restore").catch(() => undefined);
+      }
+      return refreshWebHealth().catch((error) => {
+        reportTrackingError(error);
+        return locationTrackingCoordinator.getTrackingHealth();
+      });
+    }
+    if (!user?.id) return locationTrackingCoordinator.getTrackingHealth();
+    return locationTrackingCoordinator.recheck();
+  }, [refreshWebHealth, user?.id]);
   const requestRequiredPermissions = useCallback(
     async (backgroundEducationAccepted: boolean) => {
       if (Platform.OS === "web") {
@@ -290,6 +334,7 @@ export function LocationTrackingProvider({
       value={{
         health,
         refresh,
+        recheck,
         requestRequiredPermissions,
         requiresBackgroundPermissionEducation:
           Platform.OS === "web" && nativeBridge.isAvailable()

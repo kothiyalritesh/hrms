@@ -10,6 +10,18 @@ const easProjectId =
 const localGoogleServices = fs.existsSync(path.join(__dirname, "google-services.json"))
   ? "./google-services.json"
   : undefined;
+// A placeholder Firebase file builds fine but gives an APK that can never get a
+// push token, so phones silently receive no notifications. Stop such builds.
+if (process.env.EAS_BUILD === "true" && !process.env.GOOGLE_SERVICES_JSON && localGoogleServices) {
+  const firebase = JSON.parse(
+    fs.readFileSync(path.join(__dirname, "google-services.json"), "utf8"),
+  );
+  if (/dummy/i.test(String(firebase?.project_info?.project_id ?? ""))) {
+    throw new Error(
+      "google-services.json is a placeholder (dummy-project). Download the real file for com.rehrms.app from the Firebase console.",
+    );
+  }
+}
 const enableReactCompiler =
   process.env.EXPO_PUBLIC_ENABLE_REACT_COMPILER === "true";
 
@@ -27,6 +39,18 @@ const googleMapsApiKey =
 module.exports = ({ config }) => ({
   ...config,
   version: releaseConfig.version,
+  // react-native-maps' own config plugin writes com.google.android.geo.API_KEY
+  // into AndroidManifest.xml — and REMOVES it when called without the key, so
+  // android.config.googleMaps alone leaves the APK without a key.
+  plugins: [
+    ...(config.plugins || []).filter(
+      (plugin) => (Array.isArray(plugin) ? plugin[0] : plugin) !== "react-native-maps",
+    ),
+    [
+      "react-native-maps",
+      { androidGoogleMapsApiKey: googleMapsApiKey, iosGoogleMapsApiKey: googleMapsApiKey },
+    ],
+  ],
   ios: {
     ...config.ios,
     config: {
@@ -81,7 +105,7 @@ module.exports = ({ config }) => ({
     webBasePath: expoBaseUrl || "/",
     requiredBackendSchemaVersion: releaseConfig.requiredBackendSchemaVersion,
     buildId: process.env.EXPO_PUBLIC_BUILD_ID || releaseConfig.buildId,
-    androidMapsConfigured: true,
+    androidMapsConfigured: Boolean(googleMapsApiKey),
     eas: {
       ...(config.extra?.eas || {}),
       projectId: easProjectId,

@@ -346,6 +346,29 @@ async function uploadPhoto(
   return String(data.path);
 }
 
+/**
+ * Uploads a compressed evidence photo for an ordinary site-visit check-out.
+ * Same authenticated Edge Function and storage layout as current-location
+ * evidence; the server checks the path at check-out.
+ */
+export async function uploadFieldVisitEvidence(
+  visitId: string,
+  photo: EvidencePhoto,
+  capturedAt: string,
+): Promise<string> {
+  const { session, user } = await authenticatedSession();
+  return (await uploadPhoto(
+    {
+      visitId,
+      idempotencyKey: createUuid(),
+      location: { capturedAt },
+      photo,
+    } as unknown as CurrentLocationSubmission,
+    user.id,
+    session.access_token,
+  )) as string;
+}
+
 export const CurrentLocationVisitService = {
   async submit(
     submission: CurrentLocationSubmission,

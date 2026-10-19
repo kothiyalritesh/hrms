@@ -1,4 +1,6 @@
 import React from "react";
+import { Pressable } from "react-native";
+import Feather from "@expo/vector-icons/Feather";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import DashboardScreen from "@/screens/DashboardScreen";
 import { deferredScreen } from "@/navigation/deferredScreen";
@@ -8,7 +10,7 @@ import { getCommonScreenOptions } from "@/navigation/screenOptions";
 
 export type HomeStackParamList = {
   Dashboard: undefined;
-  LeaveScreen: undefined;
+  LeaveScreen: { openApply?: boolean } | undefined;
   Notifications: undefined;
   UpcomingBirthdays: undefined;
   ActivityLogging: undefined;
@@ -102,7 +104,24 @@ export default function HomeStackNavigator() {
       <Stack.Screen
         name="LocationTrackingSetup"
         component={LocationTrackingSetupScreen}
-        options={{ headerTitle: "Location Tracking Setup" }}
+        options={({ navigation }) => ({
+          headerTitle: "Location Tracking Setup",
+          // Opened from a notification there may be nothing to go back to;
+          // always offer a way out to Home.
+          headerLeft: navigation.canGoBack()
+            ? undefined
+            : () => (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Back to Home"
+                  hitSlop={12}
+                  onPress={() => navigation.navigate("Dashboard")}
+                  style={{ paddingHorizontal: 6, paddingVertical: 4 }}
+                >
+                  <Feather name="arrow-left" size={24} color={theme.text} />
+                </Pressable>
+              ),
+        })}
       />
     </Stack.Navigator>
   );

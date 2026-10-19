@@ -17,6 +17,7 @@ import {
   loadAdvancedMarkerLibrary,
 } from "@/utils/googleAdvancedMarkers";
 import { parseDatabaseTimestamp } from "@/utils/businessDate";
+import LocationDayStory, { LocationStory } from "@/components/LocationDayStory";
 
 export interface PingPoint {
   latitude: number | null;
@@ -25,6 +26,9 @@ export interface PingPoint {
   gps_available: boolean;
   status: string;
   source?: string;
+  /** Server quality of the point (RELIABLE, STALE, LOW_ACCURACY, IMPOSSIBLE_SPEED, MOCKED). */
+  quality?: string;
+  accuracy?: number | null;
 }
 
 interface Props {
@@ -34,6 +38,8 @@ interface Props {
   pings: PingPoint[];
   loading: boolean;
   onClose: () => void;
+  /** The day as stays / trips / gaps (rpc_location_timeline). */
+  story?: LocationStory | null;
 }
 
 function toIST(recorded_at: string) {
@@ -45,7 +51,20 @@ function toIST(recorded_at: string) {
   }
 }
 
+const QUALITY_LABELS: Record<string, { label: string; color: string }> = {
+  RELIABLE: { label: "Good GPS", color: "#10B981" },
+  STALE: { label: "Sent late", color: "#0284C7" },
+  LOW_ACCURACY: { label: "Weak GPS", color: "#F59E0B" },
+  IMPOSSIBLE_SPEED: { label: "GPS jump", color: "#DC2626" },
+  MOCKED: { label: "Fake GPS", color: "#DC2626" },
+  OUTSIDE_ALLOWED_REGION: { label: "Outside India", color: "#DC2626" },
+};
+
 function pingStatusLabel(p: PingPoint): { label: string; color: string } {
+  if (p.quality && QUALITY_LABELS[p.quality]) {
+    const q = QUALITY_LABELS[p.quality];
+    return p.accuracy != null ? { label: `${q.label} ±${Math.round(p.accuracy)}m`, color: q.color } : q;
+  }
   if (!p.gps_available) return { label: "GPS OFF", color: "#DC2626" };
   if (!p.latitude || !p.longitude)
     return { label: "No Coords", color: "#9CA3AF" };
@@ -188,6 +207,7 @@ export default function LocationTimelineModal({
   pings,
   loading,
   onClose,
+  story,
 }: Props) {
   const { theme } = useTheme();
 
@@ -206,7 +226,7 @@ export default function LocationTimelineModal({
                 📍 {employeeName}
               </ThemedText>
               <ThemedText style={{ color: theme.textSecondary, fontSize: 12 }}>
-                Hourly location timeline — {date}
+                Location timeline — {date}
               </ThemedText>
             </View>
             <TouchableOpacity onPress={onClose}>
@@ -224,7 +244,7 @@ export default function LocationTimelineModal({
             >
               Loading...
             </ThemedText>
-          ) : pings.length === 0 ? (
+          ) : pings.length === 0 && !story?.events?.length ? (
             <View style={{ alignItems: "center", paddingTop: 40 }}>
               <Feather name="map-pin" size={32} color={theme.textSecondary} />
               <Spacer height={12} />
@@ -236,6 +256,11 @@ export default function LocationTimelineModal({
             <>
               {/* @ts-ignore */}
               <GoogleMapView pings={pings} />
+              {story ? (
+                <ScrollView style={{ maxHeight: 260 }}>
+                  <LocationDayStory story={story} />
+                </ScrollView>
+              ) : null}
               <ThemedText
                 style={{
                   fontSize: 11,
@@ -294,7 +319,7 @@ export default function LocationTimelineModal({
                           <ThemedText
                             style={{ fontSize: 11, color: theme.textSecondary }}
                           >
-                            {isCheckin ? "🏢 Check-in · " : ""}
+                            {isCheckin ? "🏢 Check-in (event, not GPS) · " : ""}
                             {p.latitude.toFixed(5)}, {p.longitude.toFixed(5)}
                           </ThemedText>
                         ) : (

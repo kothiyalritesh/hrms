@@ -8,17 +8,21 @@ import Feather from "@expo/vector-icons/Feather";
 import { useFocusEffect } from "@react-navigation/native";
 import { ThemedText } from "@/components/ThemedText";
 import { ModuleErrorBoundary } from "@/components/ModuleErrorBoundary";
+import RouteMiniMap from "@/components/RouteMiniMap";
 import { useTheme } from "@/hooks/useTheme";
 import { Spacing, BorderRadius } from "@/constants/theme";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/contexts/AuthContext";
+import { usePermissions } from "@/hooks/usePermissions";
 import { BusinessClockService } from "@/services/business-clock.service";
 import { TransitWarningService } from "@/services/transit-warning.service";
 import { addBusinessDays } from "@/utils/businessDate";
 import { getDrivingMinutes } from "@/utils/googleMaps";
 import { formatDate } from "@/utils/format";
 import { fetchAllPages } from "@/utils/supabasePagination";
+import { collapseCurrentLocationSubmissions } from "@/services/field-visit.service";
 const GMAPS_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
+const GMAPS_MAP_ID = process.env.EXPO_PUBLIC_GOOGLE_MAPS_MAP_ID || "DEMO_MAP_ID";
 
 // ─── Grace period config ─────────────────────────────────────────────────────
 const GRACE_MINUTES = 30;
@@ -77,8 +81,10 @@ function toUTC(iso: string | null): Date | null {
 }
 function fmtTime(iso: string | null) {
   if (!iso) return "—";
-  return toUTC(iso)!.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return toUTC(iso)!.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" });
 }
+/** Minutes before the expected arrival at which a visit counts as "at risk". */
+const AT_RISK_MINUTES = 15;
 function fmtDateTime(iso: string | null) {
   if (!iso) return "—";
   return toUTC(iso)!.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -138,14 +144,22 @@ function AnimatedRouteMap({
   originLat: number; originLon: number; destLat: number; destLon: number;
   etaMinutes: number; name: string;
 }) {
-  if (Platform.OS !== "web") return null;
+  if (Platform.OS !== "web") {
+    return (
+      <RouteMiniMap
+        origin={{ latitude: originLat, longitude: originLon }}
+        destination={{ latitude: destLat, longitude: destLon }}
+        etaMinutes={etaMinutes}
+        originLabel={`${name}: last known position`}
+      />
+    );
+  }
   const safeName = name.replace(/['"<>&]/g, "");
-  const GMAPS_KEY2 = GMAPS_KEY || (process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ?? "");
   const etaSec = Math.max(etaMinutes * 60, 30);
 
   const html = `<!DOCTYPE html><html><head>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"/>
-<script src="https://maps.googleapis.com/maps/api/js?key=${GMAPS_KEY2}&libraries=marker"></script>
+<script src="https://maps.googleapis.com/maps/api/js?key=${GMAPS_KEY}&libraries=marker"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 html,body,#map{width:100%;height:100%;overflow:hidden;font-family:sans-serif}
@@ -160,7 +174,7 @@ html,body,#map{width:100%;height:100%;overflow:hidden;font-family:sans-serif}
 <script>
 var map=new google.maps.Map(document.getElementById("map"),{
   zoom:13,mapTypeControl:false,streetViewControl:false,fullscreenControl:false,
-  zoomControl:true,center:{lat:${originLat},lng:${originLon}},mapId:"DEMO_MAP_ID"
+  zoomControl:true,center:{lat:${originLat},lng:${originLon}},mapId:"${GMAPS_MAP_ID}"
 });
 var origin={lat:${originLat},lng:${originLon}};
 var dest={lat:${destLat},lng:${destLon}};
@@ -253,8 +267,10 @@ function startAnimate(){
   google.maps.event.addListener(map,"idle",moveCar);
 }
 </script></body></html>`;
+  // srcDoc (not a data: URL) so the document inherits this page's origin and
+  // the referrer-restricted Maps key sees https://bop.in as the referrer.
   // @ts-ignore
-  return <iframe src={`data:text/html;charset=utf-8,${encodeURIComponent(html)}`}
+  return <iframe srcDoc={html}
     style={{ width: "100%", height: 280, border: "none", borderRadius: 10, display: "block", marginTop: 8 }}
     title={`Route for ${safeName}`} />;
 }
@@ -265,8 +281,12 @@ function TransitCard({ entry, onDismiss }: { entry: TransitEntry; onDismiss: (e:
   const [expanded, setExpanded] = useState(false);
   const eta = entry.google_eta_minutes ?? entry.eta_minutes ?? entry.travel_minutes;
   const isOverdueGrace = (entry.overdue_grace_deadline_ms ?? 0) > 0 && Date.now() > (entry.overdue_grace_deadline_ms ?? 0);
+  const notDueYet = !entry.is_transit_from_checkin && entry.overdue_minutes < 0;
+  const atRisk = notDueYet && -entry.overdue_minutes <= AT_RISK_MINUTES;
   const urgency = isOverdueGrace ? "#EF4444"
     : entry.is_transit_from_checkin ? "#3B82F6"
+    : atRisk ? "#F59E0B"
+    : notDueYet ? "#10B981"
     : entry.overdue_minutes > 60 ? "#EF4444"
     : entry.overdue_minutes > 30 ? "#F59E0B" : "#3B82F6";
 
@@ -294,7 +314,7 @@ function TransitCard({ entry, onDismiss }: { entry: TransitEntry; onDismiss: (e:
           <ThemedText type="small" style={{ fontWeight: "700" }} numberOfLines={1}>{entry.user_name}</ThemedText>
           <ThemedText type="caption" style={{ color: theme.textSecondary }}>{entry.user_role}</ThemedText>
           <ThemedText type="caption" style={{ color: theme.textSecondary, marginTop: 2 }} numberOfLines={1}>
-            {entry.visit_type === "site" ? "🏗️ Site" : "🤝 Meeting"}: {entry.location_name}
+            {entry.visit_type === "site" ? "🏗️ Site" : entry.visit_type === "office" ? "🏢 Office" : entry.visit_type === "others" ? "📍 Other" : "🤝 Meeting"}: {entry.location_name}
           </ThemedText>
         </View>
         <View style={{ alignItems: "flex-end", gap: 4 }}>
@@ -302,7 +322,11 @@ function TransitCard({ entry, onDismiss }: { entry: TransitEntry; onDismiss: (e:
             <View style={[styles.pill, { backgroundColor: isOverdueGrace ? "#FEE2E2" : entry.is_transit_from_checkin ? "#DBEAFE" : urgency + "20" }]}>
               <Feather name={entry.is_transit_from_checkin ? "truck" : "clock"} size={10} color={urgency} />
               <ThemedText type="caption" style={{ color: urgency, fontWeight: "700", fontSize: 10, marginLeft: 3 }}>
-                {entry.is_transit_from_checkin ? `🚗 En Route · ~${eta}m` : `${entry.overdue_minutes}m overdue`}
+                {entry.is_transit_from_checkin
+                  ? `🚗 En Route · ~${eta}m`
+                  : notDueYet
+                    ? `${atRisk ? "At risk · " : "On time · "}${-entry.overdue_minutes}m left`
+                    : `${entry.overdue_minutes}m overdue`}
               </ThemedText>
             </View>
           )}
@@ -359,7 +383,7 @@ function TransitCard({ entry, onDismiss }: { entry: TransitEntry; onDismiss: (e:
             </View>
           )}
 
-          {/* Animated route map — web only */}
+          {/* Route map: animated on the website, native map on the phone */}
           {hasRoute && expanded && (
             <AnimatedRouteMap
               originLat={entry.origin_coords!.latitude}
@@ -637,8 +661,11 @@ function InTransitScreenContent() {
   const [refreshing, setRefreshing] = useState(false);
   const [dismissTarget, setDismissTarget] = useState<TransitEntry | SuspiciousEntry | null>(null);
   const [dismissType, setDismissType] = useState<"transit" | "suspicious">("transit");
+  const [loadError, setLoadError] = useState<string | null>(null);
 
-  const isHR = ["HR", "HRD", "SYSTEM_ADMIN", "ADMIN"].includes(user?.role ?? "");
+  const { hasPermission } = usePermissions();
+  // admins or live_tracking.view; the server limits rows to the caller's scope
+  const isHR = hasPermission("live_tracking.view");
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -648,23 +675,31 @@ function InTransitScreenContent() {
 
     try {
       // ── Profiles
-      const { data: profiles } = await supabase.from("profiles").select("id, name, role");
+      const { data: profiles, error: profilesError } = await fetchAllPages<any>((from, to) =>
+        supabase.from("profiles").select("id, name, role").order("id").range(from, to));
+      if (profilesError) throw profilesError;
       const pm: Record<string, { name: string; role: string }> = {};
       for (const p of profiles ?? []) pm[p.id] = { name: p.name, role: p.role || "—" };
 
       // ── Offices (for office name in transit display)
       const { data: offices } = await supabase
         .from("offices")
-        .select("id, name, latitude, longitude")
+        .select("id, name, latitude, longitude, allowed_radius_meters, attendance_radius")
         .eq("is_active", true);
 
       // ── Today's PENDING and IN_TRANSIT field visits (not yet checked in)
-      const { data: visits } = await supabase
-        .from("field_visits")
-        .select("*")
-        .eq("date", today)
-        .in("status", ["PENDING", "IN_TRANSIT"])
-        .order("created_at", { ascending: true });
+      const { data: rawVisits, error: visitsError } = await fetchAllPages<any>((from, to) =>
+        supabase
+          .from("field_visits")
+          .select("*")
+          .eq("date", today)
+          .in("status", ["PENDING", "IN_TRANSIT"])
+          .order("created_at", { ascending: true })
+          .order("id")
+          .range(from, to));
+      if (visitsError) throw visitsError;
+      // A location re-submission replaces its source visit.
+      const visits = collapseCurrentLocationSubmissions(rawVisits ?? []) as any[];
 
       // ── Existing dismissals for today
       const { data: warnings } = await supabase
@@ -679,42 +714,75 @@ function InTransitScreenContent() {
       }
 
       // ── Latest GPS ping per user (to use as origin for travel time)
-      const { data: pings } = await supabase
-        .from("location_tracking")
-        .select("user_id, latitude, longitude, recorded_at")
-        .gte("recorded_at", today + "T00:00:00.000Z")
-        .lte("recorded_at", today + "T23:59:59.999Z")
-        .not("latitude", "is", null)
-        .not("longitude", "is", null)
-        .order("recorded_at", { ascending: false });
-
-      // Keep only the latest coord ping per user
+      // One latest RELIABLE position per person, computed by the server (no
+      // 1000-row cap, mock / impossible-speed points excluded, IST day).
+      const { data: checkedInRows } = await supabase
+        .from("attendance_logs").select("user_id").eq("date", today).eq("status", "CHECKED_IN");
+      const trackedIds = [...new Set([
+        ...visits.map((v: any) => v.user_id),
+        ...((checkedInRows ?? []) as any[]).map((a) => a.user_id),
+      ])];
       const pingMap: Record<string, { latitude: number; longitude: number }> = {};
-      for (const p of pings ?? []) {
-        if (!pingMap[p.user_id]) pingMap[p.user_id] = { latitude: p.latitude, longitude: p.longitude };
+      if (trackedIds.length) {
+        const latest: any = await supabase.rpc("rpc_latest_locations_for_users", { p_user_ids: trackedIds });
+        if (!latest.error) {
+          for (const p of (latest.data ?? []) as any[]) {
+            if (p.latitude != null && p.longitude != null) {
+              pingMap[p.user_id] = { latitude: Number(p.latitude), longitude: Number(p.longitude) };
+            }
+          }
+        } else {
+          // Older database without the RPC: IST wall-clock bounds (recorded_at is IST).
+          const { data: pings } = await supabase
+            .from("location_tracking")
+            .select("user_id, latitude, longitude, recorded_at, quality_status")
+            .gte("recorded_at", `${today}T00:00:00`)
+            .lte("recorded_at", `${today}T23:59:59.999`)
+            .in("user_id", trackedIds.slice(0, 200))
+            .not("latitude", "is", null)
+            .not("longitude", "is", null)
+            .order("recorded_at", { ascending: false })
+            .limit(1000);
+          for (const p of (pings ?? []) as any[]) {
+            const q = String(p.quality_status || "RELIABLE").toUpperCase();
+            if (q === "MOCKED" || q === "IMPOSSIBLE_SPEED") continue;
+            if (!pingMap[p.user_id]) pingMap[p.user_id] = { latitude: p.latitude, longitude: p.longitude };
+          }
+        }
       }
 
       // ── Build transit entries with real travel time per visit
       const DEFAULT_TRAVEL_MIN = 45;
       const transitList: TransitEntry[] = [];
 
-      for (const v of visits ?? []) {
-        const createdMs = toUTC(v.created_at)?.getTime() ?? 0;
-        if (!createdMs) continue;
+      // Driving time per visit, fetched in parallel.
+      const travelByVisit = new Map<string, number>(
+        await Promise.all(visits.map(async (v: any): Promise<[string, number]> => {
+          const origin = pingMap[v.user_id];
+          const dest = v.destination_coords;
+          if (!origin || !dest?.latitude || !dest?.longitude) return [v.id, DEFAULT_TRAVEL_MIN];
+          try {
+            return [v.id, await getDrivingMinutes(origin, dest)];
+          } catch {
+            return [v.id, DEFAULT_TRAVEL_MIN];
+          }
+        })),
+      );
+
+      for (const v of visits) {
+        // The clock starts when the trip starts (tracking_started_at), not when
+        // the visit was planned - a visit planned in the morning for the
+        // afternoon is not "overdue" at noon.
+        const startedMs = toUTC(v.tracking_started_at ?? v.created_at)?.getTime() ?? 0;
+        if (!startedMs) continue;
 
         const destCoords = v.destination_coords ?? null;
         const originCoords = pingMap[v.user_id] ?? null;
-
-        // Calculate travel time: use Google Maps / haversine if both coords are available
-        let travelMin = DEFAULT_TRAVEL_MIN;
-        if (originCoords && destCoords) {
-          travelMin = await getDrivingMinutes(originCoords, destCoords);
-        }
+        const travelMin = travelByVisit.get(v.id) ?? DEFAULT_TRAVEL_MIN;
+        const createdMs = startedMs;
 
         const deadlineMs = createdMs + (travelMin + GRACE_MINUTES) * 60 * 1000;
         const overdueMin = Math.floor((now - deadlineMs) / 60000);
-
-        if (overdueMin < 0) continue; // not yet overdue
 
         const expectedBy = new Date(deadlineMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
         const w = warningMap[v.id + "_transit_overdue"];
@@ -746,8 +814,8 @@ function InTransitScreenContent() {
           warning_id: w?.id ?? null,
         });
 
-        // Auto-create warning record if not yet stored
-        if (!w) {
+        // Auto-create a warning record only once the visit is actually overdue
+        if (!w && overdueMin >= 0) {
           void TransitWarningService.save(null, {
             user_id: v.user_id,
             date: today,
@@ -803,7 +871,7 @@ function InTransitScreenContent() {
         if (distM <= departureRadius) continue;
 
         // Find ALL PENDING meetings for this user (not just the next one)
-        const pendingVisits = (visits ?? []).filter((v: any) => v.user_id === att.user_id && v.status === "PENDING");
+        const pendingVisits = visits.filter((v: any) => v.user_id === att.user_id && (v.status === "PENDING" || v.status === "IN_TRANSIT"));
         
         if (pendingVisits.length === 0) continue;
 
@@ -868,9 +936,13 @@ function InTransitScreenContent() {
         }
       }
 
+      // Most urgent first: overdue (longest first), then at risk, then on time.
+      transitList.sort((x, y) => Number(x.is_dismissed) - Number(y.is_dismissed) || y.overdue_minutes - x.overdue_minutes);
       setTransitEntries(transitList);
 
-      // ── Suspicious activity (GPS mismatch at check-in or drift while checked-in)
+      // ── Suspicious activity: a check-in made from OUTSIDE the office area.
+      // Same limit the check-in itself uses (office radius, 100 m by default).
+      // Walking away after checking in (lunch, field work) is not suspicious.
       const { data: attLogs } = await supabase
         .from("attendance_logs")
         .select("*")
@@ -879,17 +951,16 @@ function InTransitScreenContent() {
 
       // offices already loaded above
 
-      const FRAUD_RADIUS = 50;
-      const DRIFT_RADIUS = 100;
       const suspList: SuspiciousEntry[] = [];
 
       for (const a of attLogs ?? []) {
         const office = (offices ?? []).find((o: any) => o.id === a.office_id);
         if (!office || office.latitude == null || office.longitude == null) continue;
+        const officeRadius = Number(office.allowed_radius_meters ?? office.attendance_radius ?? 100);
+        const allowedRadius = Number.isFinite(officeRadius) && officeRadius > 0 ? officeRadius : 100;
 
         const cLat = a.checkin_location?.latitude;
         const cLon = a.checkin_location?.longitude;
-        const ping = pingMap[a.user_id];
 
         let reason: string | null = null;
         let distanceM = 0;
@@ -900,16 +971,7 @@ function InTransitScreenContent() {
           const dLon = ((cLon - office.longitude) * Math.PI) / 180;
           const aa = Math.sin(dLat / 2) ** 2 + Math.cos((office.latitude * Math.PI) / 180) * Math.cos((cLat * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
           const d = Math.round(R * 2 * Math.atan2(Math.sqrt(aa), Math.sqrt(1 - aa)));
-          if (d > FRAUD_RADIUS) { reason = `Check-in GPS ${d}m from ${office.name} (limit ${FRAUD_RADIUS}m)`; distanceM = d; }
-        }
-
-        if (!reason && a.status === "CHECKED_IN" && ping?.latitude != null) {
-          const R = 6371000;
-          const dLat = ((ping.latitude - office.latitude) * Math.PI) / 180;
-          const dLon = ((ping.longitude - office.longitude) * Math.PI) / 180;
-          const aa = Math.sin(dLat / 2) ** 2 + Math.cos((office.latitude * Math.PI) / 180) * Math.cos((ping.latitude * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
-          const d = Math.round(R * 2 * Math.atan2(Math.sqrt(aa), Math.sqrt(1 - aa)));
-          if (d > DRIFT_RADIUS) { reason = `Live ping ${d}m from ${office.name} while checked in (drifted)`; distanceM = d; }
+          if (d > allowedRadius) { reason = `Checked in ${d} m from ${office.name} (allowed ${allowedRadius} m)`; distanceM = d; }
         }
 
         if (!reason) continue;
@@ -969,8 +1031,10 @@ function InTransitScreenContent() {
           user_role: pm[w.user_id]?.role ?? "—",
         }))
       );
-    } catch (err) {
+      setLoadError(null);
+    } catch (err: any) {
       console.error("InTransit load error:", err);
+      setLoadError(err?.message || "In-transit data could not be loaded.");
     }
     setLoading(false);
   }, []);
@@ -1061,6 +1125,14 @@ function InTransitScreenContent() {
         </View>
       </View>
 
+      {loadError ? (
+        <View style={{ padding: 10, borderRadius: 8, backgroundColor: "#FEE2E2", marginBottom: 8 }}>
+          <ThemedText type="caption" style={{ color: "#991B1B", fontWeight: "700" }}>
+            In-transit data may be incomplete: {loadError}
+          </ThemedText>
+        </View>
+      ) : null}
+
       {/* Tabs */}
       <View style={styles.tabRow}>
         {TABS.map(t => (
@@ -1081,8 +1153,8 @@ function InTransitScreenContent() {
       ) : tab === "transit" ? (
         <>
           <ThemedText type="caption" style={{ color: theme.textSecondary, marginBottom: Spacing.sm }}>
-            Employees with PENDING field/site visits not checked in within estimated travel time + {GRACE_MINUTES}min grace.
-            Distance calculated from their last known GPS location to destination.
+            Every planned or travelling visit today. Expected arrival = trip start + driving time from the
+            latest reliable GPS position + {GRACE_MINUTES} min grace. Green: on time · Amber: at risk (under {AT_RISK_MINUTES} min left) · Red: overdue.
           </ThemedText>
           {activeTransit.length === 0 && dismissedTransit.length === 0 ? (
             <View style={[styles.emptyCard, { backgroundColor: "#DCFCE7" }]}>

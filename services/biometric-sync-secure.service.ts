@@ -10,6 +10,7 @@ import { secureStorage } from "@/utils/secureStorage";
 import { Platform } from "react-native";
 
 const PENDING_SYNC_KEY = "@hrms_pending_biometric_sync_v1";
+const STALE_PENDING_MS = 24 * 60 * 60_000;
 
 export type BiometricSyncStatus = {
   ok: boolean;
@@ -143,7 +144,14 @@ async function runRange(
     toDate,
     businessDate,
   });
-  const existing = await getPendingRequest();
+  let existing = await getPendingRequest();
+  // An unconfirmed request older than a day is no longer worth blocking on:
+  // the import is transactional and duplicate punches are skipped, so running
+  // a range again is safe.
+  if (existing && Date.now() - Date.parse(existing.createdAt) > STALE_PENDING_MS) {
+    await clearPendingValue();
+    existing = null;
+  }
   if (
     existing &&
     (existing.fromDate !== range.fromDate || existing.toDate !== range.toDate)
@@ -222,6 +230,15 @@ export const biometricSyncService = {
   runRange,
   getPendingRequest,
   recoverPendingRequest,
+  /**
+   * Forget an unconfirmed request on this device. Safe: each import is one
+   * database transaction (fully applied or rolled back) and re-importing the
+   * same dates only reports duplicates.
+   */
+  async discardPendingRequest() {
+    await clearPendingValue();
+    publish({ ok: true, message: "Pending sync cleared", lastAttempt: status.lastAttempt });
+  },
   getStatus: () => status,
   subscribe(listener: (value: BiometricSyncStatus) => void) {
     listeners.add(listener);

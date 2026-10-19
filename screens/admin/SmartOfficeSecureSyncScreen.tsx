@@ -4,11 +4,11 @@ import {
   Alert,
   Pressable,
   StyleSheet,
-  TextInput,
   View,
 } from "react-native";
 import Feather from "@expo/vector-icons/Feather";
 import { PageHeader } from "@/components/PageHeader";
+import { DateInput } from "@/components/DateInput";
 import { ScreenScrollView } from "@/components/ScreenScrollView";
 import { ThemedText } from "@/components/ThemedText";
 import { useTheme } from "@/hooks/useTheme";
@@ -38,21 +38,21 @@ export function SmartOfficeSecureSyncScreen() {
         setBusinessDate(date);
         setPendingRequest(recovered.pending);
         setResult(recovered.result);
-        setFromDate(recovered.pending?.fromDate || date);
-        setToDate(recovered.pending?.toDate || date);
+        setFromDate(date);
+        setToDate(date);
       })
       .catch((error) => {
         Alert.alert("Secure sync unavailable", error.message);
       });
   }, []);
 
-  const run = async () => {
+  const run = async (range?: { fromDate: string; toDate: string }) => {
     setRunning(true);
     setResult(null);
     try {
       const confirmed = await biometricSyncService.runRange(
-        fromDate,
-        toDate,
+        range?.fromDate ?? fromDate,
+        range?.toDate ?? toDate,
         businessDate,
       );
       setResult(confirmed);
@@ -65,10 +65,59 @@ export function SmartOfficeSecureSyncScreen() {
     }
   };
 
+  const discardPending = () => {
+    if (!pendingRequest) return;
+    Alert.alert(
+      "Clear the unfinished sync?",
+      `The sync for ${pendingRequest.fromDate} to ${pendingRequest.toDate} never reported a result. ` +
+        "Each sync is applied completely or not at all, and running the same dates again only skips punches already imported, so clearing it is safe.",
+      [
+        { text: "Keep", style: "cancel" },
+        {
+          text: "Clear",
+          style: "destructive",
+          onPress: async () => {
+            await biometricSyncService.discardPendingRequest();
+            setPendingRequest(null);
+          },
+        },
+      ],
+    );
+  };
+
   return (
     <View style={[styles.root, { backgroundColor: theme.backgroundRoot }]}>
       <PageHeader title="SmartOffice Biometric Sync" />
       <ScreenScrollView contentContainerStyle={styles.content}>
+        {pendingRequest ? (
+          <View style={[styles.card, styles.pending]}>
+            <View style={styles.titleRow}>
+              <Feather name="alert-triangle" size={18} color="#B45309" />
+              <ThemedText style={styles.pendingTitle}>Unfinished sync</ThemedText>
+            </View>
+            <ThemedText style={styles.pendingText}>
+              The sync for {pendingRequest.fromDate} to {pendingRequest.toDate} did not report a
+              result (usually a timeout). Retry it, or clear it to sync other dates.
+            </ThemedText>
+            <View style={styles.pendingActions}>
+              <Pressable
+                disabled={running}
+                onPress={() => void run({ fromDate: pendingRequest.fromDate, toDate: pendingRequest.toDate })}
+                style={[styles.smallButton, { backgroundColor: theme.primary, opacity: running ? 0.6 : 1 }]}
+              >
+                <ThemedText style={styles.buttonText}>Retry {pendingRequest.fromDate}</ThemedText>
+              </Pressable>
+              <Pressable
+                disabled={running}
+                onPress={discardPending}
+                style={[styles.smallButton, styles.outlineButton]}
+              >
+                <ThemedText style={{ color: "#B45309", fontWeight: "700" }}>Clear</ThemedText>
+              </Pressable>
+            </View>
+          </View>
+        ) : null}
+
         <View
           style={[styles.card, { backgroundColor: theme.backgroundDefault }]}
         >
@@ -81,11 +130,13 @@ export function SmartOfficeSecureSyncScreen() {
             is rolled back automatically and every successful batch retains a
             rollback identifier.
           </ThemedText>
-          <ThemedText type="small">From date (YYYY-MM-DD)</ThemedText>
-          <TextInput
+          <ThemedText type="small">From date</ThemedText>
+          <DateInput
             value={fromDate}
-            onChangeText={(value) => {
+            max={businessDate || undefined}
+            onChange={(value) => {
               setFromDate(value);
+              if (toDate && value > toDate) setToDate(value);
               setResult(null);
             }}
             style={[
@@ -94,9 +145,11 @@ export function SmartOfficeSecureSyncScreen() {
             ]}
           />
           <ThemedText type="small">To date (maximum 31 days)</ThemedText>
-          <TextInput
+          <DateInput
             value={toDate}
-            onChangeText={(value) => {
+            min={fromDate || undefined}
+            max={businessDate || undefined}
+            onChange={(value) => {
               setToDate(value);
               setResult(null);
             }}
@@ -106,7 +159,7 @@ export function SmartOfficeSecureSyncScreen() {
             ]}
           />
           <Pressable
-            onPress={run}
+            onPress={() => void run()}
             disabled={running || !fromDate || !toDate || !businessDate}
             style={[
               styles.button,
@@ -121,7 +174,7 @@ export function SmartOfficeSecureSyncScreen() {
               <ActivityIndicator color="#fff" />
             ) : (
               <ThemedText style={styles.buttonText}>
-                {pendingRequest ? "Retry protected sync" : "Run protected sync"}
+                Run protected sync
               </ThemedText>
             )}
           </Pressable>
@@ -188,4 +241,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   buttonText: { color: "#fff", fontWeight: "700" },
+  pending: { backgroundColor: "#FEF3C7", borderWidth: 1, borderColor: "#FCD34D" },
+  pendingTitle: { color: "#92400E", fontWeight: "800" },
+  pendingText: { color: "#78350F", lineHeight: 20 },
+  pendingActions: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  smallButton: { minHeight: 42, paddingHorizontal: 16, borderRadius: 10, alignItems: "center", justifyContent: "center" },
+  outlineButton: { borderWidth: 1, borderColor: "#B45309", backgroundColor: "transparent" },
 });

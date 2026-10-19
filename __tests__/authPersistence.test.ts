@@ -28,7 +28,14 @@ describe("persistent authentication lifecycle", () => {
     expect(clientSource).toContain("persistSession: true");
     expect(clientSource).toContain("autoRefreshToken: true");
     expect(clientSource).toContain("detectSessionInUrl: false");
-    expect(clientSource).toContain("storage: persistentAuthStorage");
+    // web inside the Android app reconciles with the shell; storage itself is
+    // still the persistent (SecureStore / localStorage) adapter
+    expect(clientSource).toContain("storage: createShellAwareAuthStorage(supabaseAuthStorageKey)");
+    const shellStorage = require("fs").readFileSync(
+      require("path").join(__dirname, "..", "lib", "shellAuthStorage.ts"),
+      "utf8",
+    );
+    expect(shellStorage).toContain("persistentAuthStorage.getItem(key)");
     expect(clientSource).toContain("storageKey: supabaseAuthStorageKey");
   });
 

@@ -2,27 +2,40 @@
  * OvertimeReportScreen
  * Read-only comp-off earnings report — who worked on weekends/holidays, earned units, expiry.
  */
-import React, { useCallback, useState } from "react";
-import {
-  ActivityIndicator, Alert, Pressable,
-  RefreshControl, ScrollView, StyleSheet, TextInput, View,
-} from "react-native";
+import React, { useCallback, useRef, useState } from "react";
+import { RefreshControl, ScrollView, StyleSheet, View } from "react-native";
 import Feather from "@expo/vector-icons/Feather";
 import { useFocusEffect } from "@react-navigation/native";
 import { ThemedText } from "@/components/ThemedText";
 import { useTheme } from "@/hooks/useTheme";
-import { BorderRadius, Colors, Spacing } from "@/constants/theme";
+import { BorderRadius, Spacing } from "@/constants/theme";
 import { supabase } from "@/lib/supabase";
-import { getBusinessDateIST } from "@/utils/businessDate";
+import { businessMonthRange, businessMonthStart, formatBusinessDate, getBusinessDateIST } from "@/utils/businessDate";
+import { fetchAllPages } from "@/utils/supabasePagination";
+import { exportSheets, formatIstDateTime } from "@/utils/exportWorkbook";
+import {
+  ReportChip,
+  ReportChipRow,
+  ReportDateRange,
+  ReportFilterBar,
+  ReportIconButton,
+  ReportMeta,
+  ReportNotice,
+  ReportSearch,
+  ReportState,
+  rangePresets,
+  reportErrorMessage,
+  type DateRange,
+} from "@/components/reports/ReportUI";
 
 type CompOffStatus = "PENDING" | "APPROVED" | "USED" | "EXPIRED" | "REJECTED";
 
-const STATUS_META: Record<CompOffStatus | string, { color: string; bg: string; label: string }> = {
-  PENDING:  { color: "#92400E", bg: "#FEF3C7", label: "Pending Approval" },
-  APPROVED: { color: "#065F46", bg: "#D1FAE5", label: "Approved" },
-  USED:     { color: "#1E40AF", bg: "#DBEAFE", label: "Used" },
-  EXPIRED:  { color: "#6B7280", bg: "#F3F4F6", label: "Expired" },
-  REJECTED: { color: "#991B1B", bg: "#FEE2E2", label: "Rejected" },
+const STATUS_LABEL: Record<CompOffStatus, string> = {
+  PENDING: "Pending approval",
+  APPROVED: "Approved",
+  USED: "Used",
+  EXPIRED: "Expired",
+  REJECTED: "Rejected",
 };
 
 interface CompOffRow {
@@ -36,16 +49,17 @@ interface CompOffRow {
   status: string;
   work_description: string | null;
   approved_by_name: string | null;
+  approved_at: string | null;
+  source_type: string | null;
   expires_at: string | null;
   created_at: string;
 }
 
-const toIso = (d: Date) => getBusinessDateIST(d);
 const ALL_STATUSES: CompOffStatus[] = ["PENDING", "APPROVED", "USED", "EXPIRED", "REJECTED"];
 
 function formatDate(d: string | null) {
   if (!d) return "—";
-  return new Date(d.includes("T") ? d : d + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+  return formatBusinessDate(d.slice(0, 10));
 }
 
 function daysUntilExpiry(expiresAt: string | null): number | null {
@@ -56,31 +70,51 @@ function daysUntilExpiry(expiresAt: string | null): number | null {
 
 export default function OvertimeReportScreen() {
   const { theme } = useTheme();
-  const now = new Date();
-  const [fromDate, setFromDate] = useState(toIso(new Date(now.getFullYear(), now.getMonth() - 2, 1)));
-  const [toDate, setToDate] = useState(toIso(new Date(now.getFullYear(), now.getMonth() + 1, 0)));
+  const todayIST = getBusinessDateIST();
+  const defaultRange: DateRange = { from: businessMonthStart(todayIST, -2), to: businessMonthRange(todayIST).end };
+  // The query runs for the applied range only, not on every keystroke.
+  const [range, setRange] = useState<DateRange>(defaultRange);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"ALL" | CompOffStatus>("ALL");
   const [rows, setRows] = useState<CompOffRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const requestId = useRef(0);
+
+  const statusMeta = (status: string) => {
+    switch (status) {
+      case "APPROVED": return { color: theme.successText, bg: theme.successBg, accent: theme.success };
+      case "USED": return { color: theme.infoText, bg: theme.infoBg, accent: theme.info };
+      case "EXPIRED": return { color: theme.textSecondary, bg: theme.backgroundSecondary, accent: theme.textSecondary };
+      case "REJECTED": return { color: theme.errorText, bg: theme.errorBg, accent: theme.error };
+      default: return { color: theme.warningText, bg: theme.warningBg, accent: theme.warning };
+    }
+  };
 
   const load = useCallback(async () => {
+    const id = ++requestId.current;
     setLoading(true);
     try {
-      const { data, error } = await supabase
+      setLoadError(null);
+      const { data, error } = await fetchAllPages<any>((from, to) => supabase
         .from("comp_off_earnings")
         .select(`
           id, user_id, eligible_work_date, units, remaining_units,
-          status, reason, expires_at, created_at,
-          employee:profiles!user_id ( name ),
+          status, reason, source_type, approved_at, expires_at, created_at,
+          employee:profiles!user_id ( name, employee_number ),
           approver:profiles!approved_by ( name )
         `)
-        .gte("eligible_work_date", fromDate)
-        .lte("eligible_work_date", toDate)
-        .order("eligible_work_date", { ascending: false });
+        .gte("eligible_work_date", range.from)
+        .lte("eligible_work_date", range.to)
+        .order("eligible_work_date", { ascending: false })
+        .order("id")
+        .range(from, to));
 
       if (error) throw error;
+      if (id !== requestId.current) return;
 
       setRows(
         (data || []).map((r: any) => ({
@@ -89,140 +123,190 @@ export default function OvertimeReportScreen() {
           employee_name: r.employee?.name || "Unknown",
           employee_number: r.employee?.employee_number || null,
           eligible_work_date: r.eligible_work_date,
-          units_earned: Number(r.units_earned) || 0,
+          units_earned: Number(r.units) || 0,
           remaining_units: Number(r.remaining_units) || 0,
           status: r.status || "PENDING",
-          work_description: r.work_description || null,
-          approved_by_name: r.approved_by?.name || null,
+          work_description: r.reason || null,
+          approved_by_name: r.approver?.name || null,
+          approved_at: r.approved_at || null,
+          source_type: r.source_type || null,
           expires_at: r.expires_at || null,
           created_at: r.created_at,
         }))
       );
     } catch (e: any) {
-      Alert.alert("Error", e.message);
+      if (id !== requestId.current) return;
+      setRows([]);
+      setLoadError(reportErrorMessage(e, "Could not load comp-off records."));
     } finally {
-      setLoading(false);
+      if (id === requestId.current) setLoading(false);
     }
-  }, [fromDate, toDate]);
+  }, [range]);
 
-  useFocusEffect(useCallback(() => { load(); }, [load]));
+  useFocusEffect(useCallback(() => { void load(); }, [load]));
 
-  const filtered = rows.filter(r => {
+  const q = search.trim().toLowerCase();
+  const filtered = rows.filter((r) => {
     if (statusFilter !== "ALL" && r.status !== statusFilter) return false;
-    if (search && !r.employee_name.toLowerCase().includes(search.toLowerCase())) return false;
+    if (q && !r.employee_name.toLowerCase().includes(q)) return false;
     return true;
   });
 
+  const exportExcel = async () => {
+    if (exporting) return;
+    setExporting(true);
+    setNotice(null);
+    try {
+      await exportSheets(`comp_off_${range.from}_to_${range.to}.xlsx`, [{
+        name: "Comp-off",
+        columns: ["Employee No", "Employee", "Work date", "Source", "Reason", "Days earned", "Days remaining", "Status", "Approved by", "Approved at", "Expires"],
+        widths: [12, 26, 12, 22, 36, 11, 13, 10, 22, 20, 12],
+        rows: filtered.map((r) => [
+          r.employee_number ?? "", r.employee_name, r.eligible_work_date,
+          (r.source_type ?? "").replace(/_/g, " "), r.work_description ?? "",
+          r.units_earned, r.remaining_units, r.status, r.approved_by_name ?? "",
+          formatIstDateTime(r.approved_at), r.expires_at ? r.expires_at.slice(0, 10) : "",
+        ]),
+      }]);
+    } catch (e: any) {
+      setNotice(`Export failed: ${e?.message || "please try again."}`);
+    } finally {
+      setExporting(false);
+    }
+  };
+
   // Aggregates
-  const totalEarned = rows.reduce((s, r) => s + r.units_earned, 0);
-  const pendingCount = rows.filter(r => r.status === "PENDING").length;
-  const expiringCount = rows.filter(r => {
+  const totalEarned = rows
+    .filter((r) => r.status !== "REJECTED")
+    .reduce((s, r) => s + r.units_earned, 0);
+  const pendingCount = rows.filter((r) => r.status === "PENDING").length;
+  const expiringCount = rows.filter((r) => {
     const days = daysUntilExpiry(r.expires_at);
     return r.status === "APPROVED" && days !== null && days <= 7 && days > 0;
   }).length;
 
-  const Chip = ({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) => (
-    <Pressable
-      onPress={onPress}
-      style={[styles.chip, { backgroundColor: active ? theme.primary : theme.backgroundSecondary, borderColor: active ? theme.primary : theme.border }]}
-    >
-      <ThemedText type="caption" style={{ color: active ? "#fff" : theme.text, fontWeight: "600" }}>{label}</ThemedText>
-    </Pressable>
-  );
+  const presets = [
+    { key: "last_3_months", label: "Last 3 months", range: defaultRange },
+    ...rangePresets(todayIST).filter((p) => p.key !== "last_30"),
+  ];
+
+  const stats = [
+    { label: "Days earned", value: totalEarned.toFixed(1), color: theme.primary, bg: theme.primary + "14" },
+    { label: "Pending", value: String(pendingCount), color: theme.warningText, bg: theme.warningBg },
+    { label: "Expiring in 7 days", value: String(expiringCount), color: theme.errorText, bg: theme.errorBg },
+  ];
 
   return (
-    <View style={[styles.root, { backgroundColor: theme.backgroundSecondary }]}>
-      <View style={[styles.header, { backgroundColor: theme.backgroundDefault, borderBottomColor: theme.border }]}>
-        <View style={styles.dateRow}>
-          <TextInput style={[styles.dateInput, { backgroundColor: theme.backgroundSecondary, color: theme.text, borderColor: theme.border }]} value={fromDate} onChangeText={setFromDate} placeholder="From YYYY-MM-DD" placeholderTextColor={theme.textSecondary} />
-          <TextInput style={[styles.dateInput, { backgroundColor: theme.backgroundSecondary, color: theme.text, borderColor: theme.border }]} value={toDate} onChangeText={setToDate} placeholder="To YYYY-MM-DD" placeholderTextColor={theme.textSecondary} />
-          <Pressable onPress={load} style={[styles.goBtn, { backgroundColor: theme.primary }]}><Feather name="search" size={16} color="#fff" /></Pressable>
-        </View>
-        <View style={[styles.searchBar, { backgroundColor: theme.backgroundSecondary, borderColor: theme.border, marginTop: 8 }]}>
-          <Feather name="search" size={14} color={theme.textSecondary} />
-          <TextInput style={{ flex: 1, color: theme.text, fontSize: 13, marginLeft: 6 }} placeholder="Search employee…" placeholderTextColor={theme.textSecondary} value={search} onChangeText={setSearch} />
-        </View>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 8 }}>
-          <View style={{ flexDirection: "row", gap: 6 }}>
-            <Chip label="All" active={statusFilter === "ALL"} onPress={() => setStatusFilter("ALL")} />
-            {ALL_STATUSES.map(s => <Chip key={s} label={STATUS_META[s].label} active={statusFilter === s} onPress={() => setStatusFilter(s)} />)}
-          </View>
-        </ScrollView>
-      </View>
+    <View style={[styles.root, { backgroundColor: theme.backgroundRoot }]}>
+      <ReportFilterBar>
+        <ReportDateRange
+          applied={range}
+          onApply={setRange}
+          presets={presets}
+          trailing={
+            <ReportIconButton
+              icon="download"
+              label="Excel"
+              tone="neutral"
+              onPress={exportExcel}
+              busy={exporting}
+              disabled={loading || filtered.length === 0}
+            />
+          }
+        />
+        <ReportSearch value={search} onChangeText={setSearch} />
+        <ReportChipRow>
+          <ReportChip label="All" active={statusFilter === "ALL"} onPress={() => setStatusFilter("ALL")} />
+          {ALL_STATUSES.map((s) => (
+            <ReportChip key={s} label={STATUS_LABEL[s]} active={statusFilter === s} onPress={() => setStatusFilter(s)} />
+          ))}
+        </ReportChipRow>
+        {notice ? <ReportNotice kind="error" text={notice} onDismiss={() => setNotice(null)} /> : null}
+      </ReportFilterBar>
 
-      {loading ? (
-        <View style={styles.center}><ActivityIndicator color={theme.primary} size="large" /></View>
+      {loading && !refreshing ? (
+        <ReportState kind="loading" title="Loading comp-off records…" />
       ) : (
         <ScrollView
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }} tintColor={theme.primary} />}
-          contentContainerStyle={{ padding: Spacing.md, gap: Spacing.sm }}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }}
+              tintColor={theme.primary}
+            />
+          }
+          contentContainerStyle={styles.body}
         >
-          {/* Summary cards */}
-          <View style={{ flexDirection: "row", gap: Spacing.sm }}>
-            <View style={[styles.sumCard, { backgroundColor: theme.primary + "18" }]}>
-              <ThemedText style={{ fontWeight: "800", fontSize: 20, color: theme.primary }}>{totalEarned.toFixed(1)}</ThemedText>
-              <ThemedText type="caption" style={{ color: theme.textSecondary }}>Days Earned</ThemedText>
-            </View>
-            {pendingCount > 0 && (
-              <View style={[styles.sumCard, { backgroundColor: "#FEF3C7" }]}>
-                <ThemedText style={{ fontWeight: "800", fontSize: 20, color: "#92400E" }}>{pendingCount}</ThemedText>
-                <ThemedText type="caption" style={{ color: "#92400E" }}>Pending</ThemedText>
-              </View>
-            )}
-            {expiringCount > 0 && (
-              <View style={[styles.sumCard, { backgroundColor: Colors.light.errorBg }]}>
-                <ThemedText style={{ fontWeight: "800", fontSize: 20, color: Colors.light.error }}>{expiringCount}</ThemedText>
-                <ThemedText type="caption" style={{ color: Colors.light.errorText }}>Expiring Soon</ThemedText>
-              </View>
-            )}
-          </View>
-
-          {filtered.length === 0 ? (
-            <View style={styles.center}>
-              <Feather name="inbox" size={32} color={theme.textSecondary} />
-              <ThemedText style={{ color: theme.textSecondary, marginTop: 12 }}>No comp-off records in this period</ThemedText>
-            </View>
-          ) : filtered.map(r => {
-            const meta = STATUS_META[r.status] || STATUS_META.PENDING;
-            const daysLeft = daysUntilExpiry(r.expires_at);
-            const isExpiringSoon = daysLeft !== null && daysLeft <= 7 && daysLeft > 0 && r.status === "APPROVED";
-            return (
-              <View key={r.id} style={[styles.card, { backgroundColor: theme.backgroundDefault, borderLeftColor: meta.color, borderLeftWidth: 3 }]}>
-                <View style={styles.cardRow}>
-                  <View style={{ flex: 1 }}>
-                    <ThemedText style={{ fontWeight: "700" }}>{r.employee_name}</ThemedText>
-                    <ThemedText type="caption" style={{ color: theme.textSecondary }}>
-                      Worked: {formatDate(r.eligible_work_date)}{r.employee_number ? ` · #${r.employee_number}` : ""}
-                    </ThemedText>
+          {loadError ? (
+            <ReportState kind="error" title="Could not load comp-off records" message={loadError} onRetry={() => void load()} />
+          ) : (
+            <>
+              <View style={styles.statRow}>
+                {stats.map((s) => (
+                  <View key={s.label} style={[styles.sumCard, { backgroundColor: s.bg }]}>
+                    <ThemedText style={[styles.sumValue, { color: s.color }]}>{s.value}</ThemedText>
+                    <ThemedText type="caption" style={{ color: s.color, textAlign: "center" }}>{s.label}</ThemedText>
                   </View>
-                  <View style={{ alignItems: "flex-end", gap: 4 }}>
-                    <View style={[styles.badge, { backgroundColor: meta.bg }]}>
-                      <ThemedText type="caption" style={{ color: meta.color, fontWeight: "700" }}>{meta.label}</ThemedText>
+                ))}
+              </View>
+              <ReportMeta>
+                {formatBusinessDate(range.from)} – {formatBusinessDate(range.to)} · {filtered.length} record{filtered.length === 1 ? "" : "s"}
+              </ReportMeta>
+
+              {filtered.length === 0 ? (
+                <ReportState
+                  kind="empty"
+                  icon="award"
+                  title={q || statusFilter !== "ALL" ? "No matching records" : "No comp-off in this period"}
+                  message={q || statusFilter !== "ALL" ? "Change the status or search filters." : "Nobody earned comp-off for work in these dates."}
+                />
+              ) : filtered.map((r) => {
+                const meta = statusMeta(r.status);
+                const label = STATUS_LABEL[r.status as CompOffStatus] ?? r.status;
+                const daysLeft = daysUntilExpiry(r.expires_at);
+                const isExpiringSoon = daysLeft !== null && daysLeft <= 7 && daysLeft > 0 && r.status === "APPROVED";
+                return (
+                  <View key={r.id} style={[styles.card, { backgroundColor: theme.backgroundDefault, borderColor: theme.border, borderLeftColor: meta.accent }]}>
+                    <View style={styles.cardRow}>
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <ThemedText style={{ fontWeight: "700" }} numberOfLines={1}>{r.employee_name}</ThemedText>
+                        <ThemedText type="caption" style={{ color: theme.textSecondary }}>
+                          Worked {formatDate(r.eligible_work_date)}{r.employee_number ? ` · #${r.employee_number}` : ""}
+                        </ThemedText>
+                      </View>
+                      <View style={{ alignItems: "flex-end", gap: 4 }}>
+                        <View style={[styles.badge, { backgroundColor: meta.bg }]}>
+                          <ThemedText type="caption" style={{ color: meta.color, fontWeight: "700" }}>{label}</ThemedText>
+                        </View>
+                        <ThemedText style={{ fontWeight: "800", color: theme.primary }}>{r.units_earned}d</ThemedText>
+                      </View>
                     </View>
-                    <ThemedText style={{ fontWeight: "800", color: theme.primary }}>{r.units_earned}d</ThemedText>
+
+                    {r.work_description ? (
+                      <ThemedText type="caption" style={{ color: theme.textSecondary, marginTop: 4 }} numberOfLines={2}>{r.work_description}</ThemedText>
+                    ) : null}
+
+                    <View style={styles.metaRow}>
+                      {r.expires_at ? (
+                        <View style={styles.inline}>
+                          {isExpiringSoon ? <Feather name="alert-triangle" size={12} color={theme.error} /> : null}
+                          <ThemedText type="caption" style={{ color: isExpiringSoon ? theme.error : theme.textSecondary }}>
+                            Expires {formatDate(r.expires_at)}{daysLeft !== null && daysLeft > 0 ? ` (${daysLeft}d)` : ""}
+                          </ThemedText>
+                        </View>
+                      ) : null}
+                      {r.remaining_units < r.units_earned && r.status === "APPROVED" ? (
+                        <ThemedText type="caption" style={{ color: theme.info }}>Remaining {r.remaining_units}d</ThemedText>
+                      ) : null}
+                      {r.approved_by_name ? (
+                        <ThemedText type="caption" style={{ color: theme.textSecondary }}>Approved by {r.approved_by_name}</ThemedText>
+                      ) : null}
+                    </View>
                   </View>
-                </View>
-
-                {r.work_description && (
-                  <ThemedText type="caption" style={{ color: theme.textSecondary, marginTop: 4 }} numberOfLines={2}>{r.work_description}</ThemedText>
-                )}
-
-                <View style={{ flexDirection: "row", gap: Spacing.lg, marginTop: 6, flexWrap: "wrap" }}>
-                  {r.expires_at && (
-                    <ThemedText type="caption" style={{ color: isExpiringSoon ? Colors.light.error : theme.textSecondary }}>
-                      {isExpiringSoon ? "⚠️ " : ""}Expires: {formatDate(r.expires_at)}{daysLeft !== null ? ` (${daysLeft}d)` : ""}
-                    </ThemedText>
-                  )}
-                  {r.remaining_units < r.units_earned && r.status === "APPROVED" && (
-                    <ThemedText type="caption" style={{ color: "#6366F1" }}>Remaining: {r.remaining_units}d</ThemedText>
-                  )}
-                  {r.approved_by_name && (
-                    <ThemedText type="caption" style={{ color: theme.textSecondary }}>Approved by: {r.approved_by_name}</ThemedText>
-                  )}
-                </View>
-              </View>
-            );
-          })}
+                );
+              })}
+            </>
+          )}
           <View style={{ height: 60 }} />
         </ScrollView>
       )}
@@ -231,17 +315,14 @@ export default function OvertimeReportScreen() {
 }
 
 const styles = StyleSheet.create({
-  root:      { flex: 1 },
-  header:    { padding: Spacing.md, borderBottomWidth: 1 },
-  dateRow:   { flexDirection: "row", gap: Spacing.sm, alignItems: "center" },
-  dateInput: { flex: 1, borderWidth: 1, borderRadius: BorderRadius.sm, paddingHorizontal: Spacing.sm, paddingVertical: 8, fontSize: 12 },
-  goBtn:     { width: 40, height: 40, borderRadius: BorderRadius.sm, alignItems: "center", justifyContent: "center" },
-  searchBar: { flexDirection: "row", alignItems: "center", borderWidth: 1, borderRadius: BorderRadius.full, paddingHorizontal: Spacing.md, paddingVertical: 6 },
-  chip:      { paddingHorizontal: Spacing.md, paddingVertical: 6, borderRadius: BorderRadius.full, borderWidth: 1 },
-  center:    { alignItems: "center", justifyContent: "center", padding: 40 },
-  sumCard:   { flex: 1, borderRadius: BorderRadius.lg, padding: Spacing.md, alignItems: "center" },
-  card:      { borderRadius: BorderRadius.lg, padding: Spacing.md },
-  cardRow:   { flexDirection: "row", alignItems: "flex-start" },
-  badge:     { paddingHorizontal: Spacing.sm, paddingVertical: 3, borderRadius: BorderRadius.full },
+  root: { flex: 1 },
+  body: { padding: Spacing.md, gap: Spacing.sm },
+  statRow: { flexDirection: "row", gap: Spacing.sm },
+  sumCard: { flex: 1, borderRadius: BorderRadius.md, paddingVertical: Spacing.md, paddingHorizontal: Spacing.sm, alignItems: "center", gap: 2 },
+  sumValue: { fontWeight: "800", fontSize: 20 },
+  card: { borderRadius: BorderRadius.md, padding: Spacing.md, borderWidth: 1, borderLeftWidth: 3 },
+  cardRow: { flexDirection: "row", alignItems: "flex-start", gap: Spacing.sm },
+  badge: { paddingHorizontal: Spacing.sm, paddingVertical: 3, borderRadius: BorderRadius.full },
+  metaRow: { flexDirection: "row", columnGap: Spacing.lg, rowGap: 2, marginTop: 6, flexWrap: "wrap" },
+  inline: { flexDirection: "row", alignItems: "center", gap: 4 },
 });
-

@@ -11,10 +11,10 @@ import { Spacing, BorderRadius, Colors } from "@/constants/theme";
 import Spacer from "@/components/Spacer";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/contexts/AuthContext";
+import { usePermissions } from "@/hooks/usePermissions";
 import { Alert as RNAlert } from "react-native";
 import * as Crypto from "expo-crypto";
 
-const ALLOWED_ROLES = ["SYSTEM_ADMIN", "ADMIN", "HR", "HRD"];
 
 interface EmployeeBalance {
   id: string;
@@ -33,6 +33,19 @@ interface EmployeeBalance {
 }
 
 const LEAVE_TYPES = ["sick", "casual", "earned", "comp_off"] as const;
+
+const FRIENDLY_ERRORS: Record<string, string> = {
+  INSUFFICIENT_LEAVE_BALANCE: "The employee does not have that many days to remove.",
+  INVALID_ADJUSTMENT_QUANTITY: "Enter between 0.5 and 31 days.",
+  ADJUSTMENT_REASON_REQUIRED: "Enter a reason of at least 3 characters.",
+  ADMIN_PERMISSION_REQUIRED: "Only HR or an administrator can change leave balances.",
+  PROFILE_ADMIN_REQUIRED: "Only HR or an administrator can change leave balances.",
+};
+const friendly = (message?: string) => {
+  const text = String(message || "");
+  const key = Object.keys(FRIENDLY_ERRORS).find((code) => text.includes(code));
+  return key ? FRIENDLY_ERRORS[key] : text || "Please try again.";
+};
 type LeaveType = (typeof LEAVE_TYPES)[number];
 
 const LEAVE_REASONS = [
@@ -50,15 +63,16 @@ export default function LeaveBalanceScreen() {
   const { user } = useAuth();
   const [employees, setEmployees] = useState<EmployeeBalance[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [multiSelect, setMultiSelect] = useState(false);
 
   // Check if current user has HRD role (or admin role)
-  const isHRDUser = useMemo(() => {
-    const userRole = user?.role?.toUpperCase();
-    return userRole ? ALLOWED_ROLES.includes(userRole) : false;
-  }, [user?.role]);
+  // Add / remove balance: admins, or leave.balance.manage for employees in
+  // scope (the server re-checks every employee). Reset All stays admin-only.
+  const { hasPermission, isDataAdmin } = usePermissions();
+  const isHRDUser = hasPermission("leave.balance.manage");
 
   // Modal state
   const [modal, setModal] = useState<{ visible: boolean; mode: "add" | "remove" }>({ visible: false, mode: "add" });
@@ -80,9 +94,10 @@ export default function LeaveBalanceScreen() {
     );
     if (error) {
       setLoading(false);
-      RNAlert.alert("Unable to load leave balances", error.message);
+      setLoadError(friendly(error.message));
       return;
     }
+    setLoadError(null);
 
     setEmployees(
       (summaries || []).map((p: any) => ({
@@ -144,12 +159,16 @@ export default function LeaveBalanceScreen() {
       return;
     }
 
-    const n = parseInt(amount, 10);
-    if (!n || n <= 0) { RNAlert.alert("Invalid", "Enter a valid number."); return; }
+    const n = Number(amount);
+    if (!Number.isFinite(n) || n <= 0 || n > 31 || Math.round(n * 2) !== n * 2) {
+      RNAlert.alert("Invalid days", "Enter whole or half days between 0.5 and 31.");
+      return;
+    }
     const reason = reasonOption === "Custom" ? customReason.trim() : reasonOption;
     if (!reason) { RNAlert.alert("Required", "Enter a reason."); return; }
 
     setActionLoading(true);
+    let done = 0;
     try {
       const targets = employees.filter(e => selected.has(e.id));
       for (const emp of targets) {
@@ -166,8 +185,12 @@ export default function LeaveBalanceScreen() {
         );
         const response = Array.isArray(data) ? data[0] : data;
         if (error || response?.success !== true) {
-          throw error ?? new Error(response?.message || response?.error || "Adjustment was not confirmed");
+          const reason = friendly(error?.message || response?.message || response?.error || "Adjustment was not confirmed");
+          const prefix = targets.length > 1 ? `${emp.name}: ` : "";
+          const suffix = done ? `\n\n${done} employee(s) before this were already updated.` : "";
+          throw new Error(prefix + reason + suffix);
         }
+        done += 1;
       }
       Alert.alert("Done", `${modal.mode === "add" ? "Added" : "Removed"} ${n} ${leaveType} day(s) for ${targets.length} employee(s).\nReason: ${reason}`);
       setModal({ visible: false, mode: "add" });
@@ -175,7 +198,8 @@ export default function LeaveBalanceScreen() {
       setMultiSelect(false);
       await loadData();
     } catch (e: any) {
-      RNAlert.alert("Error", e.message);
+      RNAlert.alert("Leave balance not updated", e.message);
+      if (done) await loadData();
     } finally {
       setActionLoading(false);
     }
@@ -183,7 +207,7 @@ export default function LeaveBalanceScreen() {
 
   
   const handleResetAll = async () => {
-    if (!isHRDUser) {
+    if (!isDataAdmin) {
       RNAlert.alert("Access Denied", "Only HRD users can modify leave balances.");
       return;
     }
@@ -202,8 +226,9 @@ export default function LeaveBalanceScreen() {
         p_male_days: mDays,
         p_reason: resetReason.trim(),
       });
-      if (error) throw error;
-      RNAlert.alert("Success", `Reset applied for ${data?.employees_updated || 0} employees.`);
+      if (error) throw new Error(friendly(error.message));
+      const result = Array.isArray(data) ? data[0] : data;
+      RNAlert.alert("Reset complete", `Balances updated for ${result?.employees_updated || 0} employee(s).`);
       setResetModal({ visible: false });
       await loadData();
     } catch (e: any) {
@@ -211,6 +236,19 @@ export default function LeaveBalanceScreen() {
     } finally {
       setActionLoading(false);
     }
+  };
+
+  const adjustSingle = (emp: EmployeeBalance, mode: "add" | "remove") => {
+    if (!isHRDUser) {
+      RNAlert.alert("Access Denied", "Only HR or an administrator can modify leave balances.");
+      return;
+    }
+    setSelected(new Set([emp.id]));
+    setLeaveType("casual");
+    setAmount("1");
+    setReasonOption(LEAVE_REASONS[0]);
+    setCustomReason("");
+    setModal({ visible: true, mode });
   };
 
   const removeSingle = (emp: EmployeeBalance) => {
@@ -233,7 +271,7 @@ export default function LeaveBalanceScreen() {
     return (
       <TouchableOpacity
         style={[styles.card, { backgroundColor: theme.backgroundDefault, borderColor: isSelected ? theme.primary : "transparent", borderWidth: 2 }]}
-        onPress={() => multiSelect ? toggleSelect(item.id) : null}
+        onPress={() => { if (!multiSelect) setMultiSelect(true); toggleSelect(item.id); }}
         onLongPress={() => { setMultiSelect(true); toggleSelect(item.id); }}
         activeOpacity={0.8}
       >
@@ -250,9 +288,14 @@ export default function LeaveBalanceScreen() {
             </View>
           </View>
           {!multiSelect && (
-            <TouchableOpacity onPress={() => removeSingle(item)} style={[styles.removeBtn, { backgroundColor: Colors.light.error + "18" }]}>
-              <Feather name="minus" size={14} color={Colors.light.error} />
-            </TouchableOpacity>
+            <View style={{ flexDirection: "row", gap: 6 }}>
+              <TouchableOpacity accessibilityLabel={`Add leave for ${item.name}`} onPress={() => adjustSingle(item, "add")} style={[styles.removeBtn, { backgroundColor: Colors.light.success + "18" }]}>
+                <Feather name="plus" size={14} color={Colors.light.success} />
+              </TouchableOpacity>
+              <TouchableOpacity accessibilityLabel={`Remove leave for ${item.name}`} onPress={() => removeSingle(item)} style={[styles.removeBtn, { backgroundColor: Colors.light.error + "18" }]}>
+                <Feather name="minus" size={14} color={Colors.light.error} />
+              </TouchableOpacity>
+            </View>
           )}
         </View>
         <View style={styles.balanceRow}>
@@ -317,7 +360,7 @@ export default function LeaveBalanceScreen() {
             <TouchableOpacity
               style={[styles.actionBtn, { backgroundColor: "#6366F1", marginLeft: 4 }]}
               onPress={() => {
-                if (!isHRDUser) { RNAlert.alert("Access Denied"); return; }
+                if (!isDataAdmin) { RNAlert.alert("Access Denied", "Only HR or an administrator can reset leave balances."); return; }
                 setResetModal({ visible: true });
               }}
             >
@@ -328,8 +371,25 @@ export default function LeaveBalanceScreen() {
         </View>
       </View>
 
+      {!multiSelect && !loading && !loadError ? (
+        <ThemedText type="caption" style={{ color: theme.textSecondary, paddingHorizontal: Spacing.md, marginBottom: Spacing.xs }}>
+          Tap employees to select them, or use + / - on a card.
+        </ThemedText>
+      ) : null}
       {loading ? (
         <View style={styles.centered}><ActivityIndicator color={theme.primary} /></View>
+      ) : loadError ? (
+        <View style={styles.centered}>
+          <Feather name="alert-circle" size={32} color={Colors.light.error} />
+          <Spacer height={Spacing.sm} />
+          <ThemedText style={{ color: theme.text, textAlign: "center" }}>Leave balances could not be loaded</ThemedText>
+          <ThemedText type="caption" style={{ color: theme.textSecondary, textAlign: "center", marginTop: 4 }}>{loadError}</ThemedText>
+          <Spacer height={Spacing.md} />
+          <TouchableOpacity style={[styles.actionBtn, { backgroundColor: theme.primary }]} onPress={() => void loadData()}>
+            <Feather name="refresh-cw" size={14} color="#fff" />
+            <ThemedText type="caption" style={{ color: "#fff", fontWeight: "700" }}>Retry</ThemedText>
+          </TouchableOpacity>
+        </View>
       ) : (
         <FlatList
           data={filtered}
@@ -384,8 +444,8 @@ export default function LeaveBalanceScreen() {
               style={[styles.input, { backgroundColor: theme.backgroundSecondary, color: theme.text, borderColor: theme.border }]}
               value={amount}
               onChangeText={setAmount}
-              keyboardType="numeric"
-              placeholder="1"
+              keyboardType="decimal-pad"
+              placeholder="1 or 0.5"
               placeholderTextColor={theme.textSecondary}
             />
 
@@ -436,7 +496,7 @@ export default function LeaveBalanceScreen() {
       </Modal>
 
       {/* Reset All Modal */}
-      <Modal visible={resetModal.visible} transparent animationType="slide">
+      <Modal visible={resetModal.visible} transparent animationType="slide" onRequestClose={() => setResetModal({ visible: false })}>
         <View style={styles.overlay}>
           <View style={[styles.modalBox, { backgroundColor: theme.backgroundDefault }]}>
             <View style={styles.modalHeader}>

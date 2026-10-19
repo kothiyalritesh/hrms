@@ -49,7 +49,8 @@ function AttendanceRegularizationScreenContent() {
             p_status: filter,
             p_offset: offset,
             p_limit: pageSize,
-              p_office_id: (getScopedPermission('attendance.approve')?.scope === 'GLOBAL' || hasPermission('SYSTEM_ADMIN')) ? null : getScopedPermission('attendance.approve')?.scope_id,
+            // scope is applied by the server (regularization.view / .approve)
+            p_office_id: null,
           },
         );
         if (error) throw error;

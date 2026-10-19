@@ -7,7 +7,7 @@ import { getCommonScreenOptions } from "@/navigation/screenOptions";
 
 export type ProfileStackParamList = {
   Profile: undefined;
-  LeaveScreen: undefined;
+  LeaveScreen: { openApply?: boolean } | undefined;
   Notifications: undefined;
   MyTeam: undefined;
   HelpSupport: undefined;

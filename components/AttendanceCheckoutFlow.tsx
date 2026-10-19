@@ -12,7 +12,7 @@ import Feather from "@expo/vector-icons/Feather";
 import * as Crypto from "expo-crypto";
 import { ThemedText } from "@/components/ThemedText";
 import { AttendanceService } from "@/services/attendance.service";
-import { stopAttendanceTracking } from "@/services/location/attendanceTrackingLifecycle";
+import { stopAttendanceTrackingAfterCheckout } from "@/services/location/attendanceTrackingLifecycle";
 import { getBestFreshGPS, type GPSCoords } from "@/utils/gps";
 
 export type AttendanceNextAction = "site" | "meeting" | "office";
@@ -112,10 +112,10 @@ export default function AttendanceCheckoutFlow({
         return;
       }
       if (current.data.checkout_time) {
-        await stopAttendanceTracking(
+        await stopAttendanceTrackingAfterCheckout(
           current.data.id,
           "AUTHORITATIVE_ATTENDANCE_CLOSED",
-        ).catch(() => undefined);
+        );
         await Promise.resolve(onCheckedOut()).catch(() => undefined);
         showMessage(
           "Already Checked Out",
@@ -181,9 +181,7 @@ export default function AttendanceCheckoutFlow({
 
       // The RPC stops the server tracking session transactionally. This local
       // cleanup stops the native task immediately and is safe to retry.
-      await stopAttendanceTracking(attendanceId, "GOING_HOME").catch(
-        () => undefined,
-      );
+      await stopAttendanceTrackingAfterCheckout(attendanceId, "GOING_HOME");
       await Promise.resolve(onCheckedOut()).catch(() => undefined);
       onCancel();
       showMessage(

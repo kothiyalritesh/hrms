@@ -1,6 +1,6 @@
 import * as SplashScreen from "expo-splash-screen";
 import React, { useEffect, useState } from "react";
-import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import { AppState, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import NetInfo from "@react-native-community/netinfo";
 import { NavigationContainer } from "@react-navigation/native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
@@ -21,9 +21,18 @@ import { AttendanceService } from "@/services/attendance.service";
 import { scheduleAttendanceReminders } from "@/services/location/notification.service";
 import { reportNonFatalError } from "@/utils/operationalErrors";
 import { webBasePath } from "@/utils/webRouting";
-import AndroidHrmsShell from "@/components/AndroidHrmsShell";
 import NativeShellConnector from "@/components/NativeShellConnector";
+import PushRegistration from "@/components/PushRegistration";
+import { BrowserNotificationWatcher } from "@/components/NotificationAlerts";
+import WebForegroundTracker from "@/components/WebForegroundTracker";
+import PingRequestResponder from "@/components/PingRequestResponder";
+import ReleaseUpdateNotice from "@/components/ReleaseUpdateNotice";
+import WebAlertHost from "@/components/WebAlertHost";
 import { nativeBridge } from "@/services/nativeBridge/client";
+import { supabase } from "@/lib/supabase";
+import { DurableWriteOutbox } from "@/services/outbox/DurableWriteOutbox";
+import { initializeOutboxHandlers } from "@/services/outbox/initOutbox";
+import OfflineAttendanceStatus from "@/components/OfflineAttendanceStatus";
 
 const WEB_BUILD_ID = String(Constants.expoConfig?.extra?.buildId ?? "current");
 
@@ -45,6 +54,36 @@ function OfflineEvidenceSync() {
   return null;
 }
 
+/**
+ * Sends actions saved while offline (attendance first). Retries on app start,
+ * reconnect, return to the app, sign-in / token refresh and every minute
+ * (failed items wait for their backoff time).
+ */
+function OutboxRuntime() {
+  useEffect(() => {
+    initializeOutboxHandlers();
+    const drain = () => void DurableWriteOutbox.drain().catch(() => undefined);
+    drain();
+    const unsubscribeNet = NetInfo.addEventListener((state) => {
+      if (state.isConnected && state.isInternetReachable !== false) drain();
+    });
+    const appState = AppState.addEventListener("change", (nextState) => {
+      if (nextState === "active") drain();
+    });
+    const { data: auth } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") drain();
+    });
+    const timer = setInterval(drain, 60_000);
+    return () => {
+      unsubscribeNet();
+      appState.remove();
+      auth.subscription.unsubscribe();
+      clearInterval(timer);
+    };
+  }, []);
+  return null;
+}
+
 function OfflineBanner() {
   const [offline, setOffline] = useState(false);
   useEffect(
@@ -61,7 +100,7 @@ function OfflineBanner() {
     <View style={styles.offlineBanner}>
       <Feather name="wifi-off" size={14} color="#FFFFFF" />
       <Text style={styles.offlineBannerText}>
-        Offline · Attendance actions require server confirmation
+        Offline · Check-in/out is saved on this phone and synced later
       </Text>
     </View>
   );
@@ -193,25 +232,16 @@ function WebAppShell() {
           if (!registration) return;
           // A worker that was already waiting when the application opened is
           // safe to activate immediately: the user has not started editing a
-          // form in this new page lifecycle. Updates discovered later still
-          // use the visible confirmation banner below.
+          // form in this new page lifecycle. Releases published while the app
+          // is open are announced once by ReleaseUpdateNotice.
           if (registration.waiting) {
             registration.waiting.postMessage({ type: "SKIP_WAITING" });
           }
           void registration.update().catch((error) => {
             console.warn("[PWA] Service worker update check failed", error);
           });
-          registration.addEventListener("updatefound", () => {
-            const installing = registration.installing;
-            installing?.addEventListener("statechange", () => {
-              if (
-                installing.state === "installed" &&
-                navigator.serviceWorker.controller
-              ) {
-                setWaitingRegistration(registration);
-              }
-            });
-          });
+          // A new worker installs silently and takes over on the next start.
+          // The single per-release prompt is ReleaseUpdateNotice (version.json).
         })
         .catch((error) => {
           console.error("[PWA] Service worker registration failed", error);
@@ -277,6 +307,9 @@ const linking = {
       Main: {
         screens: {
           HomeTab: {
+            // Screens opened from a link or a notification sit on top of the
+            // tab's first screen, so Back and the tab button always work.
+            initialRouteName: "Dashboard",
             screens: {
               Dashboard: "",
               LeaveScreen: "leave",
@@ -293,21 +326,25 @@ const linking = {
           },
           TasksTab: {
             path: "tasks",
+            initialRouteName: "Tasks",
             screens: {
               Tasks: ":eventId?",
             },
           },
           ProfileTab: {
             path: "account",
+            initialRouteName: "Profile",
             screens: {
               Profile: "profile",
               LeaveScreen: "leave",
               Notifications: "notifications",
               MyTeam: "team",
+              HelpSupport: "help",
             },
           },
           AdminTab: {
             path: "admin",
+            initialRouteName: "AdminDashboard",
             screens: {
               AdminDashboard: "",
               UserManagement: "employees",
@@ -335,11 +372,19 @@ const linking = {
               SuspiciousAttendance: "suspicious-attendance",
               AttendanceCalendar: "attendance-calendar",
               AttendanceRegularization: "regularization",
+              BackdatedAttendance: "backdated-attendance",
               AdvancedAttendanceReport: "attendance-report",
+              SiteVisitObserver: "site-visit-observer",
+              ComplianceScores: "compliance-scores",
+              PermissionsManager: "permissions",
+              EmployeeBirthdayManagement: "birthdays",
+              InTransit: "in-transit",
+              AnonymousFeedback: "feedback",
             },
           },
           ReportsTab: {
             path: "reports",
+            initialRouteName: "ReportsHub",
             screens: {
               ReportsHub: "",
               ReportsAttendance: "attendance",
@@ -374,11 +419,18 @@ function FullHrmsApp() {
             <GestureHandlerRootView style={styles.root}>
               <KeyboardProvider>
                 <AutomaticUpdates />
+                <OutboxRuntime />
+                <PushRegistration />
                 <OfflineBanner />
+                <OfflineAttendanceStatus />
                 <OfflineEvidenceSync />
                 <AttendanceReminderScheduler />
                 <NativeShellConnector />
+                <BrowserNotificationWatcher />
+                <WebForegroundTracker />
+                <PingRequestResponder />
                 <WebAppShell />
+                <ReleaseUpdateNotice />
                 <NavigationContainer
                   linking={linking as any}
                   documentTitle={{
@@ -389,6 +441,7 @@ function FullHrmsApp() {
                   <RootNavigator />
                 </NavigationContainer>
                 <StatusBar style="auto" />
+                <WebAlertHost />
               </KeyboardProvider>
             </GestureHandlerRootView>
           </SafeAreaProvider>
@@ -400,24 +453,9 @@ function FullHrmsApp() {
 
 export default function App() {
   useEffect(() => { SplashScreen.hideAsync().catch(() => {}); }, []);
-  const [useBundledAndroidApp, setUseBundledAndroidApp] = useState(false);
-  // Android is intentionally a small native capability host. The browser and
-  // iOS builds retain the full bundled application. Android follows the
-  // independently deployed HRMS root, but falls back to the bundled HRMS if a
-  // carrier, DNS resolver, firewall, or hosting outage prevents WebView access.
-  if (Platform.OS === "android" && !useBundledAndroidApp) {
-    return (
-      <AndroidHrmsShell
-        onUseBundledApp={(reason) => {
-          void reportNonFatalError(
-            "android_shell.hosted_hrms_unreachable",
-            new Error(reason),
-          );
-          setUseBundledAndroidApp(true);
-        }}
-      />
-    );
-  }
+  // Every platform runs the HRMS built into the app. Android no longer loads
+  // the hosted site in a WebView first, so a slow or blocked connection can't
+  // leave employees on a "could not be loaded / Retry" page.
   return <FullHrmsApp />;
 }
 

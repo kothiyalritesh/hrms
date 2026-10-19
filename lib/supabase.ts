@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { persistentAuthStorage } from "@/utils/secureStorage";
+import { createShellAwareAuthStorage } from "@/lib/shellAuthStorage";
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
@@ -38,7 +38,9 @@ export const supabaseAuthStorageKey = `sb-${new URL(supabaseUrl).hostname.split(
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
-    storage: persistentAuthStorage,
+    // Plain persistent storage, except inside the Android app where it also
+    // reconciles with the native shell's session (see shellAuthStorage).
+    storage: createShellAwareAuthStorage(supabaseAuthStorageKey),
     storageKey: supabaseAuthStorageKey,
     autoRefreshToken: true,
     persistSession: true,

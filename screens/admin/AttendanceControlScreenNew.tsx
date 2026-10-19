@@ -14,6 +14,7 @@ import { supabase } from "@/lib/supabase";
 import LocationTimelineModal, {
   PingPoint,
 } from "@/components/LocationTimelineModal";
+import type { LocationStory } from "@/components/LocationDayStory";
 import { biometricSyncService } from "@/services/biometric-sync-secure.service";
 import { useNavigation } from "@react-navigation/native";
 import { AttendanceService } from "@/services/attendance.service";
@@ -24,6 +25,8 @@ import {
   addBusinessDays,
   businessMonthRange,
   parseDatabaseTimestamp,
+  formatIstDateTimeInput,
+  parseIstDateTimeInput,
 } from "@/utils/businessDate";
 import { fetchAllPages } from "@/utils/supabasePagination";
 import { CanonicalAttendanceService } from "@/services/canonical-attendance.service";
@@ -40,6 +43,7 @@ import {
 
 interface AttendanceRecord {
   id: string;
+  attendance_log_id?: string | null;
   user_id: string;
   employee_name: string;
   employee_number?: string;
@@ -141,6 +145,8 @@ export default function AttendanceControlScreenNew() {
   const { user } = useAuth();
   const { theme, isDark } = useTheme();
   const navigation = useNavigation<any>();
+  const { canOpenScreen } = usePermissions();
+  const canRecordMissedDay = canOpenScreen("BackdatedAttendance");
   const textColor = isDark ? "#FFFFFF" : theme.text;
   const [today, setToday] = useState("");
   const [records, setRecords] = useState<AttendanceRecord[]>([]);
@@ -153,10 +159,11 @@ export default function AttendanceControlScreenNew() {
   const [activePreset, setActivePreset] = useState("Today");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
-  const { getScopedPermission, hasPermission } = usePermissions();
-  const perm = getScopedPermission('attendance.view');
-  const isGlobal = perm?.scope === 'GLOBAL' || hasPermission('SYSTEM_ADMIN');
-  const forcedOfficeId = isGlobal ? null : perm?.scope_id || "NOT_ALLOWED";
+  // The server limits every attendance query to the caller's permission scope
+  // (office, team, reporting line, department...). The client must not guess
+  // an office from the grant: that broke team / reporting-line scopes and
+  // showed nothing to HR without an explicit grant.
+  const forcedOfficeId: string | null = null;
   const [officeFilter, setOfficeFilter] = useState(forcedOfficeId || "");
   const [employeeFilter, setEmployeeFilter] = useState("");
   const [expandedDates, setExpandedDates] = useState<Set<string>>(new Set());
@@ -186,11 +193,12 @@ export default function AttendanceControlScreenNew() {
   });
   const [correctionSaving, setCorrectionSaving] = useState(false);
 
+  // The form works in IST ("HH:MM" or "YYYY-MM-DD HH:MM"); the server stores instants.
   const correctAttendance = (record: AttendanceRecord) => {
     setCorrectionRecord(record);
     setCorrectionForm({
-      checkin: record.checkin_time ?? "",
-      checkout: record.checkout_time ?? "",
+      checkin: formatIstDateTimeInput(record.checkin_time),
+      checkout: formatIstDateTimeInput(record.checkout_time),
       reason: "",
     });
   };
@@ -202,19 +210,29 @@ export default function AttendanceControlScreenNew() {
       return;
     }
     try {
+      if (!correctionRecord.attendance_log_id) {
+        throw new Error(
+          "There is no app attendance record for this day (only biometric/field data). Ask the employee to submit a regularization.",
+        );
+      }
+      const businessDate = String(correctionRecord.date);
+      const checkin = parseIstDateTimeInput(correctionForm.checkin, businessDate);
+      const checkout = parseIstDateTimeInput(correctionForm.checkout, businessDate);
+      if (!checkin) throw new Error("Enter the check-in time (IST), e.g. 10:20.");
+      if (checkout && checkout.getTime() <= checkin.getTime()) {
+        throw new Error("Checkout must be after check-in.");
+      }
       setCorrectionSaving(true);
-      const parseInput = (value: string) => {
-        if (!value.trim()) return undefined;
-        return parseDatabaseTimestamp(value.trim()).toISOString();
-      };
-      const newCheckin =
-        correctionForm.checkin.trim() !== (correctionRecord.checkin_time ?? "")
-          ? parseInput(correctionForm.checkin)
+      // Only send fields the admin actually changed (compared to the minute).
+      const changed = (value: Date | null, original?: string | null) =>
+        value && formatIstDateTimeInput(value.toISOString()) !== formatIstDateTimeInput(original ?? null)
+          ? value.toISOString()
           : undefined;
-      const newCheckout =
-        correctionForm.checkout.trim() !== (correctionRecord.checkout_time ?? "")
-          ? parseInput(correctionForm.checkout)
-          : undefined;
+      const newCheckin = changed(checkin, correctionRecord.checkin_time);
+      const newCheckout = changed(checkout, correctionRecord.checkout_time);
+      if (!newCheckin && !newCheckout) {
+        throw new Error("Nothing changed. Edit the check-in or checkout time.");
+      }
       const result = await AttendanceService.adminCorrectAttendance({
         adminId: user.id,
         attendanceId: correctionRecord.id,
@@ -228,11 +246,15 @@ export default function AttendanceControlScreenNew() {
       }
       setCorrectionRecord(null);
       await loadData();
-      Alert.alert("Correction saved", "Attendance was corrected and added to the audit log.");
+      Alert.alert(
+        "Correction saved",
+        `Check-in ${result.checkin_ist ?? "-"}${result.checkout_ist ? `, checkout ${result.checkout_ist}` : ""} IST` +
+          `${result.is_late === true ? " (late)" : result.is_late === false ? " (on time)" : ""}. Added to the audit log.`,
+      );
     } catch (error: any) {
       Alert.alert(
         "Correction failed",
-        error?.message || "Enter valid timestamps with a timezone, for example 2026-07-30T10:00:00+05:30.",
+        error?.message || "Enter times in IST as HH:MM, for example 10:20.",
       );
     } finally {
       setCorrectionSaving(false);
@@ -275,15 +297,35 @@ export default function AttendanceControlScreenNew() {
 
   const [timelineEmployee, setTimelineEmployee] = useState<{ id: string; name: string; date: string } | null>(null);
   const [timelinePings, setTimelinePings] = useState<PingPoint[]>([]);
+  const [timelineStory, setTimelineStory] = useState<LocationStory | null>(null);
   const [timelineLoading, setTimelineLoading] = useState(false);
 
   const openTimeline = useCallback(async (userId: string, name: string, date: string) => {
     setTimelineEmployee({ id: userId, name, date });
     setTimelineLoading(true);
+    setTimelineStory(null);
 
-    const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
-    const dayStartUTC = new Date(new Date(`${date}T00:00:00Z`).getTime() - IST_OFFSET_MS);
-    const dayEndUTC   = new Date(dayStartUTC.getTime() + 24 * 60 * 60 * 1000 - 1);
+    // The day as stays / trips / gaps with real timestamps; check-in and
+    // check-out are events there, never GPS points.
+    const storyRes: any = await supabase.rpc("rpc_location_timeline", { p_user_id: userId, p_date: date });
+    if (!storyRes.error && storyRes.data) {
+      const story = storyRes.data as LocationStory;
+      setTimelineStory(story);
+      setTimelinePings(
+        (story.points ?? []).map((p) => ({
+          latitude: p.latitude,
+          longitude: p.longitude,
+          recorded_at: p.recorded_at,
+          gps_available: true,
+          status: p.quality === "RELIABLE" || p.quality === "STALE" ? "GREEN" : "RED_RANGE",
+          source: "app",
+          quality: p.quality,
+          accuracy: p.accuracy,
+        })),
+      );
+      setTimelineLoading(false);
+      return;
+    }
 
     // Official database timestamps must include an explicit timezone.
     function parseISO(s: string | null): Date | null {
@@ -300,8 +342,9 @@ export default function AttendanceControlScreenNew() {
         .from("location_tracking")
         .select("latitude, longitude, recorded_at, gps_available, status, source")
         .eq("user_id", userId)
-        .gte("recorded_at", dayStartUTC.toISOString())
-        .lte("recorded_at", dayEndUTC.toISOString())
+        // recorded_at is IST wall clock without a zone: compare with IST bounds.
+        .gte("recorded_at", `${date}T00:00:00`)
+        .lte("recorded_at", `${date}T23:59:59.999`)
         .order("recorded_at", { ascending: true }),
       supabase
         .from("attendance_logs")
@@ -314,7 +357,7 @@ export default function AttendanceControlScreenNew() {
     const pings: { latitude: number | null; longitude: number | null; recorded_at: string; gps_available: boolean; status: string; source?: string }[] = (trackingRes.data ?? []).map((p: any) => ({
       latitude: p.latitude ?? null,
       longitude: p.longitude ?? null,
-      recorded_at: p.recorded_at,
+      recorded_at: /(?:Z|[+-]\d{2}:?\d{2})$/i.test(String(p.recorded_at)) ? p.recorded_at : `${p.recorded_at}+05:30`,
       gps_available: p.gps_available ?? true,
       status: p.status ?? "GREEN",
       source: p.source ?? "web",
@@ -2719,7 +2762,7 @@ export default function AttendanceControlScreenNew() {
                           <ThemedText style={[s.statusText, { color: Colors.light.warning }]}>Late</ThemedText>
                         </View>
                       )}
-                      {item.warning && <Feather name="alert-triangle" size={14} color={Colors.light.warning} />}
+                      {(item.warning === true || String(item.warning).toLowerCase() === 'true') && <Feather name="alert-triangle" size={14} color={Colors.light.warning} />}
                       {!isBio && (
                         <TouchableOpacity style={s.timelineBtn} onPress={() => openTimeline(item.user_id, item.employee_name, item.date)}>
                           <Feather name="map-pin" size={11} color="#3B82F6" />
@@ -3023,10 +3066,18 @@ export default function AttendanceControlScreenNew() {
                                   {item.first_in_source || item.attendance_type || 'Verified'} · {fmt(item.checkin_time)}
                                 </ThemedText>
                               </View>
-                              
+                              <View style={{ alignItems: 'flex-end', gap: 4 }}>
                                 <View style={[s.statusBadge, { backgroundColor: '#2563EB20' }]}>
                                   <ThemedText style={[s.statusText, { color: '#2563EB' }]}>{attendanceStatusLabel(item, today)}</ThemedText>
                                 </View>
+                                {/* Field-visit and other non-biometric days have a location story too. */}
+                                {item.user_id ? (
+                                  <TouchableOpacity style={s.timelineBtn} onPress={() => openTimeline(item.user_id, item.employee_name, item.date)}>
+                                    <Feather name="map-pin" size={10} color="#3B82F6" />
+                                    <ThemedText style={s.timelineBtnText}>Timeline</ThemedText>
+                                  </TouchableOpacity>
+                                ) : null}
+                              </View>
                               </View>
                               {((item as any).active_site_name || (item as any).active_field_visit_name) && (
                                 <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}>
@@ -3058,6 +3109,15 @@ export default function AttendanceControlScreenNew() {
                                   <ThemedText style={[s.empName, { color: textColor }]}>{item.employee_name}</ThemedText>
                                   <ThemedText style={[s.meta, { color: theme.textSecondary }]}>{(item as any).check_in_office_name ?? (item.office_name || 'Office not assigned')}</ThemedText>
                                   <ThemedText style={{ fontSize: 11, color: theme.textSecondary, marginTop: 5 }}>{emptyState.detail}</ThemedText>
+                                  {canRecordMissedDay && item.user_id && item.user_id !== user?.id && ["ABSENT", "NO_DATA"].includes(String(item.status).toUpperCase()) ? (
+                                    <TouchableOpacity
+                                      style={[s.timelineBtn, { marginTop: 8, alignSelf: "flex-start", borderColor: theme.primary }]}
+                                      onPress={() => navigation.navigate("BackdatedAttendance", { userId: item.user_id, userName: item.employee_name, date: item.date })}
+                                    >
+                                      <Feather name="edit-3" size={10} color={theme.primary} />
+                                      <ThemedText style={[s.timelineBtnText, { color: theme.primary }]}>Record attendance</ThemedText>
+                                    </TouchableOpacity>
+                                  ) : null}
                                 </View>
                                 <View style={[s.statusBadge, { backgroundColor: `${accent}20` }]}>
                                   <ThemedText style={[s.statusText, { color: accent }]}>{emptyState.label}</ThemedText>
@@ -3112,20 +3172,32 @@ export default function AttendanceControlScreenNew() {
             <ThemedText type="caption" style={{ color: theme.textSecondary }}>
               {correctionRecord?.employee_name} | {correctionRecord?.date}
             </ThemedText>
-            <ThemedText type="caption">Check-in timestamp</ThemedText>
+            <ThemedText type="caption" style={{ color: theme.textSecondary }}>
+              All times are IST. Type HH:MM (e.g. 10:20) or YYYY-MM-DD HH:MM. Late from 10:33.
+            </ThemedText>
+            {(correctionRecord?.app_checkin_time || correctionRecord?.biometric_first_in) ? (
+              <ThemedText type="caption" style={{ color: theme.textSecondary }}>
+                Evidence: app check-in {formatIstDateTimeInput(correctionRecord?.app_checkin_time).slice(11) || "-"}
+                {" | "}biometric {(correctionRecord?.biometric_punches ?? [])
+                  .map((punch: any) => formatIstDateTimeInput(typeof punch === "string" ? punch : punch?.in).slice(11))
+                  .filter(Boolean)
+                  .join(", ") || "-"}
+              </ThemedText>
+            ) : null}
+            <ThemedText type="caption">Check-in (IST)</ThemedText>
             <TextInput
               style={[s.input, { backgroundColor: theme.backgroundRoot, color: theme.text }]}
               value={correctionForm.checkin}
               onChangeText={(checkin) => setCorrectionForm((current) => ({ ...current, checkin }))}
-              placeholder="2026-07-30T10:00:00+05:30"
+              placeholder="10:20"
               placeholderTextColor={theme.textSecondary}
             />
-            <ThemedText type="caption">Checkout timestamp (blank means no checkout)</ThemedText>
+            <ThemedText type="caption">Checkout (IST, leave blank if none)</ThemedText>
             <TextInput
               style={[s.input, { backgroundColor: theme.backgroundRoot, color: theme.text }]}
               value={correctionForm.checkout}
               onChangeText={(checkout) => setCorrectionForm((current) => ({ ...current, checkout }))}
-              placeholder="2026-07-30T18:30:00+05:30"
+              placeholder="18:30"
               placeholderTextColor={theme.textSecondary}
             />
             <ThemedText type="caption">Correction reason *</ThemedText>
@@ -3164,6 +3236,7 @@ export default function AttendanceControlScreenNew() {
         employeeName={timelineEmployee?.name ?? ""}
         date={timelineEmployee?.date ?? ""}
         pings={timelinePings}
+        story={timelineStory}
         loading={timelineLoading}
         onClose={() => setTimelineEmployee(null)}
       />

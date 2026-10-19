@@ -1,14 +1,22 @@
 /**
- * Returns the current business date in IST (Asia/Kolkata) as "YYYY-MM-DD".
+ * Returns the IST (Asia/Kolkata) business date of an instant (default: now) as "YYYY-MM-DD".
  * Never uses the device's local timezone — safe on UTC servers and non-IST devices.
  */
-export function getBusinessDateIST(): string {
+export function getBusinessDateIST(value: Date = new Date()): string {
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Kolkata",
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
-  }).format(new Date());
+  }).format(value);
+}
+
+/** First day ("YYYY-MM-01") of the business month `months` away from `date`. */
+export function businessMonthStart(date: string, months = 0): string {
+  const value = new Date(
+    Date.UTC(Number(date.slice(0, 4)), Number(date.slice(5, 7)) - 1 + months, 1),
+  );
+  return value.toISOString().slice(0, 10);
 }
 
 export function addBusinessDays(date: string, days: number): string {
@@ -142,4 +150,52 @@ export function isTimestampAtOrAfterBusinessCutoff(
     parts.hour * 60 * 60 + parts.minute * 60 + parts.second;
   const cutoffSeconds = (cutoffHour * 60 + cutoffMinute) * 60;
   return timestampSeconds >= cutoffSeconds;
+}
+
+/** "YYYY-MM-DD HH:MM" in IST for an instant (blank for null) — for editable time fields. */
+export function formatIstDateTimeInput(value: string | null | undefined): string {
+  if (!value) return "";
+  const date = parseDatabaseTimestamp(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+  const hour = get("hour") === "24" ? "00" : get("hour");
+  return `${get("year")}-${get("month")}-${get("day")} ${hour}:${get("minute")}`;
+}
+
+/**
+ * Parses an IST time typed by an admin. Accepts "HH:MM" (on `businessDate`),
+ * "YYYY-MM-DD HH:MM", or a full ISO timestamp with an offset.
+ * Returns null for blank input and throws for anything else.
+ */
+export function parseIstDateTimeInput(value: string, businessDate: string): Date | null {
+  const text = value.trim();
+  if (!text) return null;
+  const timeOnly = /^(\d{1,2}):(\d{2})$/.exec(text);
+  const dateTime = /^(\d{4}-\d{2}-\d{2})[ T](\d{1,2}):(\d{2})$/.exec(text);
+  let iso: string;
+  if (timeOnly) {
+    iso = `${businessDate}T${timeOnly[1].padStart(2, "0")}:${timeOnly[2]}:00+05:30`;
+  } else if (dateTime) {
+    iso = `${dateTime[1]}T${dateTime[2].padStart(2, "0")}:${dateTime[3]}:00+05:30`;
+  } else {
+    iso = text;
+  }
+  const parsed = new Date(iso);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error(`"${text}" is not a valid time. Use HH:MM (IST), e.g. 10:20.`);
+  }
+  const hours = Number((timeOnly ?? dateTime)?.[timeOnly ? 1 : 2] ?? 0);
+  if (hours > 23) {
+    throw new Error(`"${text}" is not a valid time. Use 24-hour HH:MM (IST).`);
+  }
+  return parsed;
 }

@@ -43,23 +43,38 @@ export default function ObserverFilterBar({
     <View style={[s.container, { backgroundColor: theme.backgroundDefault, borderBottomColor: theme.border }]}>
       {/* Search Row */}
       <View style={[s.searchBox, { backgroundColor: theme.backgroundRoot, borderColor: theme.border }]}>
-        <Feather name="search" size={14} color={theme.textSecondary} />
+        <Feather name="search" size={16} color={theme.textSecondary} />
         <TextInput
           style={[s.input, { color: theme.text }]}
           placeholder="Search employee, ID, project..."
           placeholderTextColor={theme.textSecondary}
           value={searchText}
           onChangeText={onSearchChange}
+          autoCorrect={false}
+          autoCapitalize="none"
+          returnKeyType="search"
+          accessibilityLabel="Search employees"
         />
         {searchText.length > 0 && (
-          <TouchableOpacity onPress={() => onSearchChange("")}>
-            <Feather name="x" size={14} color={theme.textSecondary} />
+          <TouchableOpacity
+            onPress={() => onSearchChange("")}
+            style={s.clearBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Clear search"
+          >
+            <Feather name="x" size={16} color={theme.textSecondary} />
           </TouchableOpacity>
         )}
       </View>
 
       {/* Quick Filter Chips */}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.chipsRow}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={s.chipsRow}
+        contentContainerStyle={s.chipsContent}
+        keyboardShouldPersistTaps="handled"
+      >
         {QUICK_FILTERS.map((f) => {
           const isSelected = statusFilter === f.id;
           return (
@@ -71,6 +86,9 @@ export default function ObserverFilterBar({
                 isSelected && { backgroundColor: "#7C3AED", borderColor: "#7C3AED" },
               ]}
               onPress={() => onStatusFilterChange(f.id)}
+              hitSlop={{ top: 2, bottom: 2 }}
+              accessibilityRole="button"
+              accessibilityState={{ selected: isSelected }}
             >
               <ThemedText
                 style={[
@@ -96,6 +114,9 @@ export default function ObserverFilterBar({
                 isSelected && { backgroundColor: "#0284C7", borderColor: "#0284C7" },
               ]}
               onPress={() => onDepartmentChange(isSelected ? "" : dept)}
+              hitSlop={{ top: 2, bottom: 2 }}
+              accessibilityRole="button"
+              accessibilityState={{ selected: isSelected }}
             >
               <ThemedText
                 style={[
@@ -103,7 +124,7 @@ export default function ObserverFilterBar({
                   { color: isSelected ? "#fff" : theme.textSecondary },
                 ]}
               >
-                Dept: {dept}
+                Dept: {dept.length > 24 ? `${dept.slice(0, 23)}…` : dept}
               </ThemedText>
             </TouchableOpacity>
           );
@@ -125,28 +146,41 @@ const s = StyleSheet.create({
     alignItems: "center",
     borderWidth: 1,
     borderRadius: BorderRadius.md,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingLeft: 12,
+    minHeight: 44,
     gap: 8,
   },
   input: {
     flex: 1,
-    fontSize: 13,
-    padding: 0,
+    minWidth: 0,
+    fontSize: 14,
+    paddingVertical: 8,
+    paddingHorizontal: 0,
+  },
+  clearBtn: {
+    width: 44,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center",
   },
   chipsRow: {
-    flexDirection: "row",
     flexGrow: 0,
   },
+  chipsContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 2,
+  },
   chip: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
+    paddingHorizontal: 12,
+    minHeight: 40,
+    justifyContent: "center",
     borderRadius: BorderRadius.full,
     borderWidth: 1,
-    marginRight: 6,
+    marginRight: 8,
   },
   chipText: {
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: "700",
   },
 });

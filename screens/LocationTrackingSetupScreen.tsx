@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useState } from "react";
 import {
   ActivityIndicator,
   Linking,
@@ -9,42 +9,51 @@ import {
   View,
 } from "react-native";
 import Feather from "@expo/vector-icons/Feather";
+import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { ScreenScrollView } from "@/components/ScreenScrollView";
 import { ThemedText } from "@/components/ThemedText";
 import { useLocationTracking } from "@/contexts/LocationTrackingContext";
 import { useTheme } from "@/hooks/useTheme";
 import { nativeBridge } from "@/services/nativeBridge/client";
 
+type RowState = "ok" | "problem" | "neutral";
+
 function StatusRow({
   label,
   allowed,
   allowedLabel = "Allowed",
   deniedLabel = "Not allowed",
+  state,
+  stateLabel,
 }: {
   label: string;
   allowed: boolean;
   allowedLabel?: string;
   deniedLabel?: string;
+  /** Overrides `allowed` (e.g. neutral "Not needed"). */
+  state?: RowState;
+  stateLabel?: string;
 }) {
+  const { theme } = useTheme();
+  const resolved: RowState = state ?? (allowed ? "ok" : "problem");
+  const palette =
+    resolved === "ok"
+      ? { bg: theme.successBg, fg: theme.successText, icon: "check" as const }
+      : resolved === "problem"
+        ? { bg: theme.errorBg, fg: theme.errorText, icon: "x" as const }
+        : {
+            bg: theme.backgroundSecondary,
+            fg: theme.textSecondary,
+            icon: "minus" as const,
+          };
   return (
-    <View style={styles.statusRow}>
-      <View
-        style={[
-          styles.statusIcon,
-          { backgroundColor: allowed ? "#D1FAE5" : "#FEE2E2" },
-        ]}
-      >
-        <Feather
-          name={allowed ? "check" : "x"}
-          size={15}
-          color={allowed ? "#047857" : "#B91C1C"}
-        />
+    <View style={[styles.statusRow, { borderBottomColor: theme.border }]}>
+      <View style={[styles.statusIcon, { backgroundColor: palette.bg }]}>
+        <Feather name={palette.icon} size={15} color={palette.fg} />
       </View>
       <ThemedText style={styles.statusLabel}>{label}</ThemedText>
-      <ThemedText
-        style={[styles.statusValue, { color: allowed ? "#047857" : "#B91C1C" }]}
-      >
-        {allowed ? allowedLabel : deniedLabel}
+      <ThemedText style={[styles.statusValue, { color: palette.fg }]}>
+        {stateLabel ?? (resolved === "ok" ? allowedLabel : deniedLabel)}
       </ThemedText>
     </View>
   );
@@ -52,18 +61,24 @@ function StatusRow({
 
 export default function LocationTrackingSetupScreen() {
   const { theme } = useTheme();
+  const navigation = useNavigation<any>();
   const {
     health,
     refresh,
+    recheck,
     requestRequiredPermissions,
     requiresBackgroundPermissionEducation,
   } = useLocationTracking();
   const [loading, setLoading] = useState(false);
   const [showEducation, setShowEducation] = useState(false);
 
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
+  // Re-check on every focus: returning from the Settings app (or a
+  // notification) must show the current state, not the one from before.
+  useFocusEffect(
+    useCallback(() => {
+      void refresh().catch(() => undefined);
+    }, [refresh]),
+  );
 
   const requestAccess = async () => {
     setLoading(true);
@@ -94,7 +109,8 @@ export default function LocationTrackingSetupScreen() {
   const retry = async () => {
     setLoading(true);
     try {
-      await refresh();
+      // Also restarts the tracking service when it should be running.
+      await recheck();
     } finally {
       setLoading(false);
     }
@@ -119,7 +135,7 @@ export default function LocationTrackingSetupScreen() {
             <ThemedText style={styles.title}>
               Attendance location permissions
             </ThemedText>
-            <ThemedText style={styles.description}>
+            <ThemedText style={[styles.description, { color: theme.textSecondary }]}>
               {Platform.OS === "web"
                 ? "The web panel reads tracking produced by the installed Android application. Browser location is used only for an explicit check-in or checkout action."
                 : "BOP HRMS shares location only while an HRMS attendance record is checked in. Confirmed checkout stops the native service."}
@@ -128,11 +144,16 @@ export default function LocationTrackingSetupScreen() {
         </View>
 
         {Platform.OS === "web" ? (
-          <View style={styles.webNotice}>
-            <ThemedText style={styles.webNoticeTitle}>
+          <View
+            style={[
+              styles.webNotice,
+              { backgroundColor: theme.infoBg, borderColor: theme.info },
+            ]}
+          >
+            <ThemedText style={[styles.webNoticeTitle, { color: theme.infoText }]}>
               Install the Android application for live tracking
             </ThemedText>
-            <ThemedText style={styles.webNoticeText}>
+            <ThemedText style={[styles.webNoticeText, { color: theme.infoText }]}>
               A browser or PWA cannot provide reliable continuous background
               tracking. The installed Android app runs the attendance-bound
               foreground service, queues offline pings and retries on reconnect.
@@ -141,7 +162,10 @@ export default function LocationTrackingSetupScreen() {
         ) : null}
 
         <View
-          style={[styles.card, { backgroundColor: theme.backgroundDefault }]}
+          style={[
+            styles.card,
+            { backgroundColor: theme.backgroundDefault, borderColor: theme.border },
+          ]}
         >
           {Platform.OS === "web" ? (
             <>
@@ -170,10 +194,6 @@ export default function LocationTrackingSetupScreen() {
           ) : (
             <>
               <StatusRow
-                label="Notifications"
-                allowed={health.notificationsGranted}
-              />
-              <StatusRow
                 label="Precise location"
                 allowed={health.preciseLocationGranted}
               />
@@ -192,30 +212,78 @@ export default function LocationTrackingSetupScreen() {
                 allowed={health.nativeTaskActive}
                 allowedLabel="Active"
                 deniedLabel="Inactive"
+                {...(!health.trackingExpected && !health.nativeTaskActive
+                  ? {
+                      state: "neutral" as const,
+                      stateLabel: "Not needed (not checked in)",
+                    }
+                  : {})}
               />
             </>
           )}
         </View>
 
+        {Platform.OS !== "web" ? (
+          <>
+            <ThemedText
+              style={[styles.sectionLabel, { color: theme.textSecondary }]}
+            >
+              Optional: alerts
+            </ThemedText>
+            <View
+              style={[
+                styles.card,
+                {
+                  backgroundColor: theme.backgroundDefault,
+                  borderColor: theme.border,
+                },
+              ]}
+            >
+              <StatusRow
+                label="Notifications"
+                allowed={health.notificationsGranted}
+                {...(health.notificationsGranted
+                  ? {}
+                  : { state: "neutral" as const, stateLabel: "Off" })}
+              />
+              {!health.notificationsGranted ? (
+                <ThemedText
+                  style={[styles.optionalHint, { color: theme.textSecondary }]}
+                >
+                  Not required for location tracking. Turn on to get
+                  attendance and visit alerts.
+                </ThemedText>
+              ) : null}
+            </View>
+          </>
+        ) : null}
+
         <View
-          style={[styles.card, { backgroundColor: theme.backgroundDefault }]}
+          style={[
+            styles.card,
+            { backgroundColor: theme.backgroundDefault, borderColor: theme.border },
+          ]}
         >
-          <ThemedText style={styles.detailLabel}>Active attendance</ThemedText>
+          <ThemedText style={[styles.detailLabel, { color: theme.textSecondary }]}>
+            Active attendance
+          </ThemedText>
           <ThemedText style={styles.detailValue}>
             {health.activeAttendanceId ?? "No open attendance"}
           </ThemedText>
-          <ThemedText style={styles.detailLabel}>
+          <ThemedText style={[styles.detailLabel, { color: theme.textSecondary }]}>
             Current destination
           </ThemedText>
           <ThemedText style={styles.detailValue}>
             {health.activeDestinationName ?? "No active destination"}
           </ThemedText>
-          <ThemedText style={styles.detailLabel}>Journey status</ThemedText>
+          <ThemedText style={[styles.detailLabel, { color: theme.textSecondary }]}>
+            Journey status
+          </ThemedText>
           <ThemedText style={styles.detailValue}>
             {health.journeyStatus.replaceAll("_", " ")}
           </ThemedText>
-          <ThemedText style={styles.detailLabel}>
-            Last successful update
+          <ThemedText style={[styles.detailLabel, { color: theme.textSecondary }]}>
+            Last location update
           </ThemedText>
           <ThemedText style={styles.detailValue}>
             {health.lastLocationAt
@@ -224,7 +292,9 @@ export default function LocationTrackingSetupScreen() {
                 ? "No browser location received yet"
                 : "No native update received yet"}
           </ThemedText>
-          <ThemedText style={styles.detailLabel}>Last accuracy</ThemedText>
+          <ThemedText style={[styles.detailLabel, { color: theme.textSecondary }]}>
+            Last precise-fix accuracy
+          </ThemedText>
           <ThemedText style={styles.detailValue}>
             {health.lastAccuracyM == null
               ? "—"
@@ -233,9 +303,16 @@ export default function LocationTrackingSetupScreen() {
         </View>
 
         {health.warning ? (
-          <View style={styles.warning}>
-            <Feather name="alert-triangle" size={18} color="#92400E" />
-            <ThemedText style={styles.warningText}>{health.warning}</ThemedText>
+          <View
+            style={[
+              styles.warning,
+              { backgroundColor: theme.warningBg, borderColor: theme.warning },
+            ]}
+          >
+            <Feather name="alert-triangle" size={18} color={theme.warningText} />
+            <ThemedText style={[styles.warningText, { color: theme.warningText }]}>
+              {health.warning}
+            </ThemedText>
           </View>
         ) : null}
 
@@ -262,18 +339,18 @@ export default function LocationTrackingSetupScreen() {
           )}
         </Pressable>
         <Pressable
-          style={styles.secondaryButton}
+          style={[styles.secondaryButton, { borderColor: theme.primary }]}
           onPress={retry}
           disabled={loading}
         >
-          <Feather name="refresh-cw" size={17} color="#6D1B6D" />
-          <ThemedText style={styles.secondaryButtonText}>
+          <Feather name="refresh-cw" size={17} color={theme.primary} />
+          <ThemedText style={[styles.secondaryButtonText, { color: theme.primary }]}>
             Retry Permission Check
           </ThemedText>
         </Pressable>
         {Platform.OS !== "web" ? (
           <Pressable
-            style={styles.secondaryButton}
+            style={[styles.secondaryButton, { borderColor: theme.primary }]}
             onPress={() => {
               if (nativeBridge.isAvailable()) {
                 void nativeBridge.request("app.openSettings");
@@ -282,12 +359,25 @@ export default function LocationTrackingSetupScreen() {
               }
             }}
           >
-            <Feather name="settings" size={17} color="#6D1B6D" />
-            <ThemedText style={styles.secondaryButtonText}>
+            <Feather name="settings" size={17} color={theme.primary} />
+            <ThemedText style={[styles.secondaryButtonText, { color: theme.primary }]}>
               Open App Settings
             </ThemedText>
           </Pressable>
         ) : null}
+        <Pressable
+          style={styles.homeButton}
+          accessibilityRole="button"
+          onPress={() => {
+            if (navigation.canGoBack()) navigation.goBack();
+            else navigation.navigate("Dashboard");
+          }}
+        >
+          <Feather name="arrow-left" size={17} color={theme.textSecondary} />
+          <ThemedText style={[styles.homeButtonText, { color: theme.textSecondary }]}>
+            {navigation.canGoBack() ? "Back" : "Back to Home"}
+          </ThemedText>
+        </Pressable>
       </ScreenScrollView>
 
       <Modal visible={showEducation} transparent animationType="fade">
@@ -309,20 +399,25 @@ export default function LocationTrackingSetupScreen() {
             <ThemedText style={styles.modalTitle}>
               Allow background location
             </ThemedText>
-            <ThemedText style={styles.modalText}>
+            <ThemedText style={[styles.modalText, { color: theme.textSecondary }]}>
               Android requires this setting so attendance tracking and
               destination arrival checks can continue while the app is minimized
               or the screen is locked.
             </ThemedText>
-            <View style={styles.optionCallout}>
-              <ThemedText style={styles.optionCaption}>
+            <View
+              style={[
+                styles.optionCallout,
+                { backgroundColor: theme.primary + "18" },
+              ]}
+            >
+              <ThemedText style={[styles.optionCaption, { color: theme.textSecondary }]}>
                 On the next Settings page, choose:
               </ThemedText>
-              <ThemedText style={styles.optionLabel}>
+              <ThemedText style={[styles.optionLabel, { color: theme.primary }]}>
                 “Allow all the time”
               </ThemedText>
             </View>
-            <ThemedText style={styles.modalFinePrint}>
+            <ThemedText style={[styles.modalFinePrint, { color: theme.textSecondary }]}>
               You may decline and continue using HRMS. Tracking will remain
               inactive and the app will show a warning; office attendance will
               not be silently altered.
@@ -339,7 +434,9 @@ export default function LocationTrackingSetupScreen() {
               style={styles.declineButton}
               onPress={() => setShowEducation(false)}
             >
-              <ThemedText style={styles.declineText}>Not Now</ThemedText>
+              <ThemedText style={[styles.declineText, { color: theme.textSecondary }]}>
+                Not Now
+              </ThemedText>
             </Pressable>
           </View>
         </View>
@@ -366,20 +463,26 @@ const styles = StyleSheet.create({
   },
   heroCopy: { flex: 1 },
   title: { fontSize: 20, fontWeight: "800", marginBottom: 5 },
-  description: { fontSize: 13, lineHeight: 19, color: "#6B7280" },
+  description: { fontSize: 13, lineHeight: 19 },
+  sectionLabel: {
+    fontSize: 12,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    marginBottom: -6,
+    marginLeft: 4,
+  },
+  optionalHint: { fontSize: 12, lineHeight: 17, paddingVertical: 9 },
   card: {
     borderRadius: 14,
     paddingHorizontal: 15,
     paddingVertical: 5,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "#D1D5DB",
   },
   statusRow: {
     flexDirection: "row",
     alignItems: "center",
     minHeight: 48,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "#E5E7EB",
   },
   statusIcon: {
     width: 26,
@@ -392,7 +495,6 @@ const styles = StyleSheet.create({
   statusLabel: { flex: 1, fontSize: 14, fontWeight: "600" },
   statusValue: { fontSize: 12, fontWeight: "800" },
   detailLabel: {
-    color: "#6B7280",
     fontSize: 11,
     fontWeight: "700",
     marginTop: 11,
@@ -404,11 +506,9 @@ const styles = StyleSheet.create({
     gap: 10,
     borderRadius: 12,
     padding: 13,
-    backgroundColor: "#FEF3C7",
     borderWidth: 1,
-    borderColor: "#FCD34D",
   },
-  warningText: { flex: 1, color: "#92400E", fontSize: 13, lineHeight: 18 },
+  warningText: { flex: 1, fontSize: 13, lineHeight: 18 },
   primaryButton: {
     minHeight: 50,
     borderRadius: 12,
@@ -423,22 +523,19 @@ const styles = StyleSheet.create({
     minHeight: 48,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: "#6D1B6D",
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 9,
   },
-  secondaryButtonText: { color: "#6D1B6D", fontWeight: "700" },
+  secondaryButtonText: { fontWeight: "700" },
   webNotice: {
     padding: 14,
     borderRadius: 12,
-    backgroundColor: "#EFF6FF",
-    borderColor: "#93C5FD",
     borderWidth: 1,
   },
-  webNoticeTitle: { color: "#1D4ED8", fontWeight: "800", marginBottom: 4 },
-  webNoticeText: { color: "#1E40AF", fontSize: 13, lineHeight: 18 },
+  webNoticeTitle: { fontWeight: "800", marginBottom: 4 },
+  webNoticeText: { fontSize: 13, lineHeight: 18 },
   modalBackdrop: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.55)",
@@ -461,17 +558,15 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginBottom: 9,
   },
-  modalText: { fontSize: 14, lineHeight: 20, color: "#4B5563" },
+  modalText: { fontSize: 14, lineHeight: 20 },
   optionCallout: {
-    backgroundColor: "#F5EEF5",
     padding: 13,
     borderRadius: 11,
     marginVertical: 14,
     alignItems: "center",
   },
-  optionCaption: { fontSize: 12, color: "#6B7280" },
+  optionCaption: { fontSize: 12 },
   optionLabel: {
-    color: "#6D1B6D",
     fontSize: 17,
     fontWeight: "900",
     marginTop: 3,
@@ -479,9 +574,16 @@ const styles = StyleSheet.create({
   modalFinePrint: {
     fontSize: 12,
     lineHeight: 17,
-    color: "#6B7280",
     marginBottom: 15,
   },
+  homeButton: {
+    minHeight: 46,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  homeButtonText: { fontWeight: "700" },
   declineButton: { alignItems: "center", paddingTop: 15 },
-  declineText: { color: "#6B7280", fontWeight: "700" },
+  declineText: { fontWeight: "700" },
 });

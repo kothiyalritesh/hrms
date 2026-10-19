@@ -1,7 +1,7 @@
 import { supabase } from "@/lib/supabase";
 import { DurableWriteOutbox, OutboxItem } from "@/services/outbox/DurableWriteOutbox";
 import { AttendanceFraudService } from "@/services/attendance-fraud.service";
-import { AttendanceService } from "@/services/attendance.service";
+import { OfflineAttendanceService } from "@/services/offline-attendance.service";
 
 let initialized = false;
 
@@ -9,13 +9,13 @@ export function initializeOutboxHandlers() {
   if (initialized) return;
   initialized = true;
 
-  // P1: Critical Attendance Check-in
-  DurableWriteOutbox.registerHandler("ATTENDANCE_CHECKIN", async (item: OutboxItem) => {
-    return AttendanceService.officeCheckIn({
-      ...item.payload,
-      idempotencyKey: item.idempotencyKey,
-    });
-  });
+  // P1: attendance saved while offline (original GPS time, idempotent per key)
+  DurableWriteOutbox.registerHandler("ATTENDANCE_CHECKIN", (item: OutboxItem) =>
+    OfflineAttendanceService.sendCheckIn(item),
+  );
+  DurableWriteOutbox.registerHandler("ATTENDANCE_CHECKOUT", (item: OutboxItem) =>
+    OfflineAttendanceService.sendCheckOut(item),
+  );
 
   // P2: Important Audit Log
   DurableWriteOutbox.registerHandler("AUDIT_LOG", async (item: OutboxItem) => {

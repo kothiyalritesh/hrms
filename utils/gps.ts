@@ -112,10 +112,7 @@ export async function getBestFreshGPS(options: {
         ),
       ]);
       if (!reading) {
-        lastError = new GPSValidationError(
-          "GPS_UNAVAILABLE",
-          "A fresh GPS reading could not be obtained. Check location permission and try again.",
-        );
+        lastError = new GPSValidationError("GPS_UNAVAILABLE", gpsFailureMessage());
       } else {
         const reportedAccuracy = Number(reading.accuracy);
         if (!Number.isFinite(reportedAccuracy) || reportedAccuracy < 0) {
@@ -157,6 +154,52 @@ export async function getBestFreshGPS(options: {
   });
 }
 
+/** Why the most recent getCurrentGPS() call returned no location. */
+export type GpsFailureCode =
+  | "PERMISSION_DENIED"
+  | "SERVICES_OFF"
+  | "POSITION_UNAVAILABLE"
+  | "TIMEOUT"
+  | "OUT_OF_REGION"
+  | "INSECURE_CONTEXT"
+  | "UNSUPPORTED"
+  | "UNKNOWN";
+
+let lastGpsFailure: { code: GpsFailureCode; at: number } | null = null;
+function failed(code: GpsFailureCode): null {
+  lastGpsFailure = { code, at: Date.now() };
+  return null;
+}
+
+/** Reason for the last failed getCurrentGPS() call (null if it succeeded or is old). */
+export function getLastGpsFailure(): GpsFailureCode | null {
+  return lastGpsFailure && Date.now() - lastGpsFailure.at < 60_000 ? lastGpsFailure.code : null;
+}
+
+const GPS_FAILURE_MESSAGES: Record<GpsFailureCode, string> = {
+  PERMISSION_DENIED:
+    "Location permission is off for HRMS. Allow location (precise) for HRMS in your phone or browser settings, then try again.",
+  SERVICES_OFF:
+    "Your phone's location (GPS) is turned off. Turn on Location in the quick settings and try again.",
+  POSITION_UNAVAILABLE:
+    "Your device could not find a GPS signal. Move near a window or outdoors and try again.",
+  TIMEOUT:
+    "Getting your location took too long (weak GPS signal). Move outdoors or near a window and try again.",
+  OUT_OF_REGION:
+    "Your location reading looks wrong (outside India). Turn off any fake-GPS or VPN app and try again.",
+  INSECURE_CONTEXT:
+    "Location only works on the secure HRMS address (https://). Open HRMS from the official link.",
+  UNSUPPORTED:
+    "This browser cannot share location. Use the HRMS app or a current version of Chrome.",
+  UNKNOWN:
+    "Your location could not be read. Check that location is on and allowed for HRMS, then try again.",
+};
+
+/** A specific, user-facing reason for the last failed location attempt. */
+export function gpsFailureMessage(code: GpsFailureCode | null = getLastGpsFailure()): string {
+  return GPS_FAILURE_MESSAGES[code ?? "UNKNOWN"];
+}
+
 const INDIA = { latMin: 6.5, latMax: 37.6, lonMin: 68.0, lonMax: 97.5 };
 function inIndia(lat: number, lon: number) {
   return (
@@ -176,6 +219,7 @@ function inIndia(lat: number, lon: number) {
  *   which resolves to the ISP datacenter — easily 500–2000m from actual location.
  */
 export async function getCurrentGPS(): Promise<GPSCoords | null> {
+  lastGpsFailure = null;
   // ── Native: Median APK bridge ──────────────────────────────────────────────
   if (
     typeof window !== "undefined" &&
@@ -184,6 +228,7 @@ export async function getCurrentGPS(): Promise<GPSCoords | null> {
   ) {
     const { medianRequestLocation } = await import("@/utils/medianBridge");
     const pos = await medianRequestLocation();
+    if (!pos) failed("TIMEOUT");
     if (pos && Number.isFinite(Number(pos.accuracy)))
       return {
         ...pos,
@@ -197,7 +242,10 @@ export async function getCurrentGPS(): Promise<GPSCoords | null> {
   if (Platform.OS !== "web") {
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status === "granted") {
+      if (status !== "granted") return failed("PERMISSION_DENIED");
+      const servicesOn = await Location.hasServicesEnabledAsync().catch(() => true);
+      if (!servicesOn) return failed("SERVICES_OFF");
+      {
         // A current, highest-accuracy fix is required for field-visit evidence.
         // getCurrentPositionAsync does not use Expo's last-known cached position API.
         const loc = await Location.getCurrentPositionAsync({
@@ -215,9 +263,14 @@ export async function getCurrentGPS(): Promise<GPSCoords | null> {
             capturedAt: new Date(loc.timestamp).toISOString(),
           };
         }
+        return failed("OUT_OF_REGION");
       }
-    } catch {
-      /* fall through */
+    } catch (error: any) {
+      const text = `${error?.code ?? ""} ${error?.message ?? ""}`;
+      if (/services|disabled|provider/i.test(text)) return failed("SERVICES_OFF");
+      if (/timeout|timed out/i.test(text)) return failed("TIMEOUT");
+      if (/permission|denied|unauthori/i.test(text)) return failed("PERMISSION_DENIED");
+      return failed("POSITION_UNAVAILABLE");
     }
   }
 
@@ -228,7 +281,16 @@ export async function getCurrentGPS(): Promise<GPSCoords | null> {
   // navigator.geolocation with enableHighAccuracy uses the device GPS chip on
   // mobile browsers, and WiFi triangulation on desktops — both far more accurate.
   if (Platform.OS === "web") {
+    if (typeof window !== "undefined" && window.isSecureContext === false) {
+      return failed("INSECURE_CONTEXT");
+    }
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      return failed("UNSUPPORTED");
+    }
     if (typeof navigator !== "undefined" && navigator.geolocation) {
+      let reason: GpsFailureCode = "TIMEOUT";
+      const fromError = (err: GeolocationPositionError | null | undefined): GpsFailureCode =>
+        err?.code === 1 ? "PERMISSION_DENIED" : err?.code === 2 ? "POSITION_UNAVAILABLE" : "TIMEOUT";
       const pos = await new Promise<GPSCoords | null>((resolve) => {
         let done = false;
         const finish = (result: GPSCoords | null) => {
@@ -247,7 +309,13 @@ export async function getCurrentGPS(): Promise<GPSCoords | null> {
               provider: "browser-geolocation",
               capturedAt: new Date(p.timestamp).toISOString(),
             }),
-          () => {
+          (firstError) => {
+            reason = fromError(firstError);
+            // Denied: retrying cannot succeed, so tell the user right away.
+            if (reason === "PERMISSION_DENIED") {
+              finish(null);
+              return;
+            }
             // Safari sometimes needs watchPosition — getCurrentPosition silently times out
             const wid = navigator.geolocation.watchPosition(
               (p) => {
@@ -261,7 +329,8 @@ export async function getCurrentGPS(): Promise<GPSCoords | null> {
                   capturedAt: new Date(p.timestamp).toISOString(),
                 });
               },
-              () => {
+              (watchError) => {
+                reason = fromError(watchError);
                 navigator.geolocation.clearWatch(wid);
                 finish(null);
               },
@@ -278,8 +347,9 @@ export async function getCurrentGPS(): Promise<GPSCoords | null> {
       });
       if (pos && inIndia(pos.latitude, pos.longitude)) return pos;
       if (pos) return pos; // outside India bounds but still valid (return it, let caller decide)
+      return failed(reason);
     }
   }
 
-  return null;
+  return failed(getLastGpsFailure() ?? "UNKNOWN");
 }

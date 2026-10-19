@@ -1,4 +1,4 @@
-﻿import re
+import re
 with open(r'd:\download\RealtyHRM-fixed\RealtyHRM-fixed\screens\admin\LiveTrackingScreen.tsx', 'r', encoding='utf-8') as f:
     content = f.read()
 

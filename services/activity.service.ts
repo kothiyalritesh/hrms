@@ -1,6 +1,6 @@
 import { supabase } from "@/lib/supabase";
 import { BusinessClockService } from "@/services/business-clock.service";
-import { CanonicalAttendanceService } from "@/services/canonical-attendance.service";
+import { CanonicalAttendanceService, mapRow as mapCanonicalRow } from "@/services/canonical-attendance.service";
 import {
   ActivityLog,
   ActivityAnalysis,
@@ -188,20 +188,33 @@ export const ActivityService = {
       options?.date || (await BusinessClockService.getDate(true));
 
     try {
-      // 1. Get all active employees
-      const attendanceDays = await CanonicalAttendanceService.listDay(targetDate);
-      if (attendanceDays.length === 0) return { data: [], error: null };
-
-      // 2. Get attendance for the date — fetch ALL, filter in JS to avoid .in() URL limits
-
-      // 3. Get activity logs for the date — fetch ALL, filter in JS
-      const { data: allActivities, error: activityError } = await supabase
-        .from("activity_logs")
-        .select("*")
-        .gte("timestamp", `${targetDate}T00:00:00+05:30`)
-        .lte("timestamp", `${targetDate}T23:59:59+05:30`)
-        .order("timestamp", { ascending: true });
-      if (activityError) return { data: null, error: activityError };
+      // 1. Employees + attendance, limited by the Activity Analysis permission
+      //    scope on the server (rpc_activity_analysis_day).
+      let attendanceDays: any[];
+      let allActivities: any[] | null;
+      const scoped = await supabase.rpc("rpc_activity_analysis_day", { p_date: targetDate });
+      const rpcMissing = scoped.error && (scoped.error.code === "PGRST202" || scoped.error.code === "42883");
+      if (!rpcMissing) {
+        if (scoped.error) return { data: null, error: scoped.error };
+        attendanceDays = ((scoped.data as any[]) ?? []).map(mapCanonicalRow);
+        if (attendanceDays.length === 0) return { data: [], error: null };
+        // 2. Activity logs for the same employees and IST day.
+        const logs = await supabase.rpc("rpc_activity_logs_day", { p_date: targetDate });
+        if (logs.error) return { data: null, error: logs.error };
+        allActivities = (logs.data as any[]) ?? [];
+      } else {
+        // Fallback until migration 20261009120000 is applied.
+        attendanceDays = await CanonicalAttendanceService.listDay(targetDate);
+        if (attendanceDays.length === 0) return { data: [], error: null };
+        const { data, error: activityError } = await supabase
+          .from("activity_logs")
+          .select("*")
+          .gte("timestamp", `${targetDate}T00:00:00+05:30`)
+          .lte("timestamp", `${targetDate}T23:59:59+05:30`)
+          .order("timestamp", { ascending: true });
+        if (activityError) return { data: null, error: activityError };
+        allActivities = data;
+      }
 
       const actMap: Record<string, any[]> = {};
       (allActivities || []).forEach((a: any) => {

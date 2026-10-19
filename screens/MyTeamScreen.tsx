@@ -17,6 +17,7 @@ import { AttendanceService, effectiveOfficeRadius } from "@/services/attendance.
 import { fetchAllPages } from "@/utils/supabasePagination";
 import { isDueDateOverdue, parseDatabaseTimestamp } from "@/utils/businessDate";
 
+import { FRESHNESS_UI, STALE_AFTER_MINUTES, describeAge, fmtDistance, freshnessOfTimestamp, minutesAgo } from "@/utils/locationFreshness";
 // ── 5-colour status system (per UI audit, 12 Jun 2026) ───────────────────────
 type StatusKey = "present" | "field" | "leave" | "notyet" | "absent";
 type StatusDef = { key: StatusKey; label: string; color: string; bg: string };
@@ -28,7 +29,8 @@ const STATUS: Record<StatusKey, StatusDef> = {
   absent:  { key: "absent",  label: "Absent",     color: "#C8252D", bg: "#FDEAEB" }, // red
 };
 
-const FRESH_MS = 15 * 60 * 1000;
+// Shared rule with Live Tracking / Site Visit Observer (utils/locationFreshness).
+const FRESH_MS = STALE_AFTER_MINUTES * 60 * 1000;
 
 // ── geo + time helpers ───────────────────────────────────────────────────────
 function haversineM(lat1: number, lon1: number, lat2: number, lon2: number) {
@@ -44,7 +46,10 @@ function toUTC(iso: string | null): Date | null {
 }
 function isFresh(iso: string | null, nowMs: number) {
   if (!iso) return false;
-  const age = nowMs - toUTC(iso)!.getTime();
+  let at: Date | null = null;
+  try { at = toUTC(iso); } catch { return false; }
+  if (!at) return false;
+  const age = nowMs - at.getTime();
   return age >= -10_000 && age < FRESH_MS;
 }
 function isAfterCutoff(d: Date, cutoffMinutes: number) {
@@ -70,6 +75,8 @@ interface Member {
   id: string; name: string; role: string; team: string | null; employee_number: string | null;
   status: StatusKey; checkin_time: string | null; checkout_time: string | null;
   office_name: string | null; last_ping: string | null; mismatch_m: number | null;
+  /** How far from the office the check-in itself was (an event, not a live position). */
+  checkin_distance_m: number | null;
   late: boolean; open_tasks: number; overdue_tasks: number;
   ping_lat: number | null; ping_lon: number | null; ping_fresh: boolean;
 }
@@ -137,6 +144,7 @@ function computeMember(
 ): Member {
   let status: StatusKey;
   let mismatch_m: number | null = null;
+  let checkin_distance_m: number | null = null;
   const checkin = att?.checkin_time ?? null;
   const checkout = att?.checkout_time ?? null;
   // No office means the distance rule is unavailable. Never invent a 100 m
@@ -149,14 +157,16 @@ function computeMember(
     office?.latitude != null &&
     office?.longitude != null
   ) {
+    // A check-in far away is shown on the check-in row; only a CURRENT
+    // position far from the office is a live mismatch.
     const cl = att?.checkin_location;
     if (cl?.latitude != null) {
       const d = Math.round(haversineM(office.latitude, office.longitude, cl.latitude, cl.longitude));
-      if (d > officeRadius) mismatch_m = d;
+      if (d > officeRadius) checkin_distance_m = d;
     }
     if (ping?.latitude != null && isFresh(ping.recorded_at, nowMs) && ping.source !== "web") {
       const d = Math.round(haversineM(office.latitude, office.longitude, ping.latitude, ping.longitude));
-      if (d > officeRadius && (mismatch_m == null || d > mismatch_m)) mismatch_m = d;
+      if (d > officeRadius) mismatch_m = d;
     }
   }
 
@@ -179,7 +189,7 @@ function computeMember(
     employee_number: profile.employee_number ?? null,
     status, checkin_time: checkin, checkout_time: checkout,
     office_name: office?.name ?? null, last_ping: ping?.recorded_at ?? null,
-    mismatch_m, late, open_tasks: tasks.open, overdue_tasks: tasks.overdue,
+    mismatch_m, checkin_distance_m, late, open_tasks: tasks.open, overdue_tasks: tasks.overdue,
     ping_lat: ping?.latitude ?? null, ping_lon: ping?.longitude ?? null,
     ping_fresh: isFresh(ping?.recorded_at ?? null, nowMs),
   };
@@ -187,6 +197,10 @@ function computeMember(
 
 // ── Member last-ping map (Google Maps via WebView) ────────────────────────────
 const GMAPS_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
+const GMAPS_MAP_ID = process.env.EXPO_PUBLIC_GOOGLE_MAPS_MAP_ID || "DEMO_MAP_ID";
+// Inline-HTML WebViews have a null origin unless given a baseUrl; the browser
+// Maps key is referrer-restricted to https://bop.in/*, so anchor it there.
+const MAPS_WEBVIEW_BASE_URL = "https://bop.in/HRMS/";
 
 function buildPingMapHtml(lat: number, lon: number, name: string): string {
   const safe = name.replace(/'/g, "\\'").replace(/"/g, "&quot;");
@@ -196,7 +210,7 @@ function buildPingMapHtml(lat: number, lon: number, name: string): string {
 <style>*{margin:0;padding:0}html,body,#map{width:100%;height:100%}</style>
 </head><body><div id="map"></div>
 <script>
-  var map=new google.maps.Map(document.getElementById('map'),{center:{lat:${lat},lng:${lon}},zoom:16,mapTypeControl:false,streetViewControl:false,fullscreenControl:false,gestureHandling:'greedy',mapId:'DEMO_MAP_ID'});
+  var map=new google.maps.Map(document.getElementById('map'),{center:{lat:${lat},lng:${lon}},zoom:16,mapTypeControl:false,streetViewControl:false,fullscreenControl:false,gestureHandling:'greedy',mapId:'${GMAPS_MAP_ID}'});
   new google.maps.marker.AdvancedMarkerElement({position:{lat:${lat},lng:${lon}},map:map,title:'${safe}'});
 <\/script></body></html>`;
 }
@@ -224,7 +238,9 @@ function MemberLocationModal({ member, onClose }: { member: Member; onClose: () 
           <View style={{ flex: 1 }}>
             <ThemedText type="h4" numberOfLines={1}>{toTitleCase(member.name)}</ThemedText>
             <ThemedText type="caption" style={{ color: theme.textSecondary }}>
-              {member.last_ping ? `Last ping · ${formatTime(member.last_ping)}` : "Last known location"}
+              {member.last_ping
+                ? `${FRESHNESS_UI[freshnessOfTimestamp(member.last_ping)].label} · ${describeAge(minutesAgo(member.last_ping))} (${formatTime(member.last_ping)})`
+                : "No location today"}
             </ThemedText>
           </View>
           <Pressable onPress={openInGoogleMaps} style={locStyles.gmapsBtn}>
@@ -252,7 +268,7 @@ function MemberLocationModal({ member, onClose }: { member: Member; onClose: () 
                 </View>
               )}
               <WebView
-                source={{ html: buildPingMapHtml(lat, lon, member.name) }}
+                source={{ html: buildPingMapHtml(lat, lon, member.name), baseUrl: MAPS_WEBVIEW_BASE_URL }}
                 style={{ flex: 1 }}
                 onLoadEnd={() => setReady(true)}
                 javaScriptEnabled
@@ -324,12 +340,15 @@ function MemberDrawer({ member, onClose }: { member: Member | null; onClose: () 
           <ThemedText type="caption" style={{ color: theme.textSecondary, letterSpacing: 1, fontWeight: "700", marginBottom: 6 }}>TODAY</ThemedText>
           <View style={[styles.timelineCard, { borderColor: theme.border }]}>
             <TimelineRow icon="log-in" color={STATUS.present.color}
-              label="Check-in" value={member.checkin_time ? `${formatTime(member.checkin_time)}${member.late ? "  · late" : ""}` : "No check-in recorded"} />
+              label="Check-in" value={member.checkin_time ? `${formatTime(member.checkin_time)}${member.late ? "  · late" : ""}` : "No check-in recorded"}
+              extra={member.checkin_distance_m != null ? `checked in ${fmtDistance(member.checkin_distance_m)} from office` : undefined} />
             <TimelineRow icon="map-pin" color={s.color}
               label="Location" value={member.office_name ?? (member.status === "field" ? "On field" : "—")}
               extra={member.mismatch_m != null ? `${member.mismatch_m >= 1000 ? (member.mismatch_m / 1000).toFixed(1) + " km" : member.mismatch_m + "m"} from office` : undefined} />
             <TimelineRow icon="radio" color={member.ping_fresh ? STATUS.present.color : STATUS.leave.color}
-              label="Last ping" value={member.last_ping ? formatTime(member.last_ping) : "No ping yet"} />
+              label="GPS" value={member.last_ping
+                ? `${FRESHNESS_UI[freshnessOfTimestamp(member.last_ping)].label} · ${describeAge(minutesAgo(member.last_ping))} (${formatTime(member.last_ping)})`
+                : "No location today"} />
             <TimelineRow icon="log-out" color={STATUS.absent.color}
               label="Check-out" value={member.checkout_time ? formatTime(member.checkout_time) : "—"} last />
           </View>
@@ -494,8 +513,6 @@ export default function MyTeamScreen({ navigation }: { navigation?: any }) {
     ]);
     const today = clock.date;
     const todayIST = clock.date;
-    const todayStart = new Date(`${today}T00:00:00+05:30`).toISOString();
-    const todayEnd = new Date(`${today}T23:59:59.999+05:30`).toISOString();
     const [cutoffHour, cutoffMinute] = policy.late_checkin_time
       .split(":")
       .map(Number);
@@ -533,7 +550,23 @@ export default function MyTeamScreen({ navigation }: { navigation?: any }) {
       fetchAllPages<any>((from, to) => supabase.from("attendance_logs").select("id,user_id,status,checkin_time,checkout_time,office_id,checkin_location").eq("date", today).in("user_id", subtreeIds).order("user_id").order("id").range(from, to)),
       fetchAllPages<any>((from, to) => supabase.from("field_visits").select("id,user_id,visit_type,checkin_time,checkout_time,status").eq("date", todayIST).in("user_id", subtreeIds).order("user_id").order("id").range(from, to)),
       fetchAllPages<any>((from, to) => supabase.from("leave_requests").select("id,user_id").eq("status", "approved").lte("start_date", today).gte("end_date", today).in("user_id", subtreeIds).order("user_id").order("id").range(from, to)),
-      fetchAllPages<any>((from, to) => supabase.from("location_tracking").select("id,user_id,latitude,longitude,recorded_at,source").gte("recorded_at", todayStart).lte("recorded_at", todayEnd).in("user_id", subtreeIds).order("recorded_at", { ascending: false }).order("id").range(from, to)),
+      // One newest good position per person (server-side, real timestamps).
+      // recorded_at is stored as IST wall clock without a zone, so the old
+      // client query with UTC bounds missed the evening and could not be parsed.
+      Promise.resolve(supabase.rpc("rpc_latest_locations_for_users", { p_user_ids: subtreeIds })).then((res: any) => {
+        if (!res.error || !["PGRST202", "42883"].includes(String(res.error.code))) return res;
+        return fetchAllPages<any>((from, to) => supabase.from("location_tracking")
+          .select("id,user_id,latitude,longitude,recorded_at,source")
+          .gte("recorded_at", `${today}T00:00:00`).lte("recorded_at", `${today}T23:59:59.999`)
+          .in("user_id", subtreeIds).order("recorded_at", { ascending: false }).order("id").range(from, to))
+          .then((raw: any) => ({
+            ...raw,
+            data: (raw?.data ?? []).map((p: any) => ({
+              ...p,
+              recorded_at: /(?:Z|[+-]\d{2}:?\d{2})$/i.test(String(p.recorded_at)) ? p.recorded_at : `${p.recorded_at}+05:30`,
+            })),
+          }));
+      }),
       fetchAllPages<any>((from, to) =>
         supabase.from("offices")
           .select("id,name,latitude,longitude,attendance_radius,allowed_radius_meters")

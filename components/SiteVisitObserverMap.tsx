@@ -8,6 +8,7 @@
 import React, { useRef, useEffect } from "react";
 import { View, StyleSheet, TouchableOpacity } from "react-native";
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from "react-native-maps";
+import SafeMapView from "@/components/SafeMapView";
 import Feather from "@expo/vector-icons/Feather";
 import { ThemedText } from "@/components/ThemedText";
 import { useTheme } from "@/hooks/useTheme";
@@ -100,7 +101,7 @@ export default function SiteVisitObserverMap({
 
   return (
     <View style={s.container}>
-      <MapView
+      <SafeMapView
         ref={mapRef}
         provider={PROVIDER_GOOGLE}
         style={StyleSheet.absoluteFill}
@@ -178,7 +179,7 @@ export default function SiteVisitObserverMap({
             </View>
           </Marker>
         )}
-      </MapView>
+      </SafeMapView>
 
       {/* Route Playback Controller */}
       {breadcrumbs.length > 0 && (
@@ -265,12 +266,14 @@ const s = StyleSheet.create({
   },
   playbackBar: {
     position: "absolute",
-    top: 12,
-    left: 12,
-    right: 12,
+    top: 8,
+    left: 8,
+    right: 8,
     flexDirection: "row",
+    flexWrap: "wrap",
     alignItems: "center",
-    padding: 10,
+    rowGap: 6,
+    padding: 8,
     borderRadius: BorderRadius.lg,
     elevation: 4,
     shadowColor: "#000",
@@ -280,31 +283,34 @@ const s = StyleSheet.create({
     gap: 10,
   },
   playBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: "#7C3AED",
     alignItems: "center",
     justifyContent: "center",
   },
   restartBtn: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: "#F3E8FF",
     alignItems: "center",
     justifyContent: "center",
   },
-  playbackInfo: { flex: 1, gap: 2 },
-  playbackText: { fontSize: 11, fontWeight: "700" },
+  playbackInfo: { flex: 1, minWidth: 140, gap: 2 },
+  playbackText: { fontSize: 12, fontWeight: "700" },
   speedSelector: { flexDirection: "row", gap: 4 },
   speedBtn: {
+    minWidth: 36,
+    minHeight: 32,
     paddingHorizontal: 6,
-    paddingVertical: 4,
+    alignItems: "center",
+    justifyContent: "center",
     borderRadius: 6,
     backgroundColor: "#F3F4F6",
   },
   activeSpeedBtn: { backgroundColor: "#7C3AED" },
-  speedText: { fontSize: 11, fontWeight: "600", color: "#4B5563" },
+  speedText: { fontSize: 12, fontWeight: "600", color: "#4B5563" },
   activeSpeedText: { color: "#fff" },
 });

@@ -337,8 +337,8 @@ export const PayrollStorage = {
   async getCurrentMonth(): Promise<PayrollRecord | null> {
     const records = await this.getAll();
     const now = new Date();
-    const currentMonth = now.toLocaleString("default", { month: "long" });
-    const currentYear = now.getFullYear();
+    const currentMonth = now.toLocaleString("default", { month: "long", timeZone: "Asia/Kolkata" });
+    const currentYear = Number(getBusinessDateIST(now).slice(0, 4));
     return (
       records.find((r) => r.month === currentMonth && r.year === currentYear) ||
       null

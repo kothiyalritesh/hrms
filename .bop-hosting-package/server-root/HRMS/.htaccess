@@ -5,7 +5,7 @@ Options -MultiViews
 </IfModule>
 
 <IfModule mod_headers.c>
-  <FilesMatch "^(index\.html|sw\.js|manifest\.webmanifest)$">
+  <FilesMatch "^(index\.html|sw\.js|manifest\.webmanifest|version\.json)$">
     Header always set Cache-Control "no-cache, no-store, must-revalidate"
     Header always set CDN-Cache-Control "no-cache, no-store, must-revalidate"
     Header always set Surrogate-Control "no-store"

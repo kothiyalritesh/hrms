@@ -1,10 +1,12 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   Modal, View, StyleSheet, TouchableOpacity, ScrollView,
   TextInput, ActivityIndicator, KeyboardAvoidingView, Platform, Alert,
 } from "react-native";
 import Feather from "@expo/vector-icons/Feather";
 import { ThemedText } from "@/components/ThemedText";
+import { useTheme } from "@/hooks/useTheme";
+import { Colors } from "@/constants/theme";
 import { PredefinedSite, PredefinedSiteService } from "@/services/predefined-site.service";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import LocationSearchInput, { PlaceResult } from "@/components/LocationSearchInput";
@@ -31,6 +33,10 @@ interface Props {
 
 export default function SitePickerModal({ visible, visitType, visitTypeLabel, onConfirm, onCancel }: Props) {
   const insets = useSafeAreaInsets();
+  const { theme, isDark } = useTheme();
+  const st = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
+  const accent = isDark ? "#E2A6E2" : "#60045d";
+  const faint = isDark ? theme.textSecondary : "#9CA3AF";
   const [sites, setSites] = useState<PredefinedSite[]>([]);
   const [loading, setLoading] = useState(false);
   const [savedOpen, setSavedOpen] = useState(false);
@@ -117,7 +123,7 @@ export default function SitePickerModal({ visible, visitType, visitTypeLabel, on
               <View style={{ width: 60 }} />
               <ThemedText style={st.title}>{typeIcon} {typeLabel}</ThemedText>
               <TouchableOpacity onPress={onCancel} style={st.closeBtn}>
-                <Feather name="x" size={20} color="#6B7280" />
+                <Feather name="x" size={20} color={isDark ? theme.textSecondary : "#6B7280"} />
               </TouchableOpacity>
             </View>
           </View>
@@ -166,7 +172,7 @@ export default function SitePickerModal({ visible, visitType, visitTypeLabel, on
                   value={manualProject}
                   onChangeText={setManualProject}
                   placeholder="Which project is this for?"
-                  placeholderTextColor="#9CA3AF"
+                  placeholderTextColor={faint}
                   maxLength={255}
                 />
               </View>
@@ -178,7 +184,7 @@ export default function SitePickerModal({ visible, visitType, visitTypeLabel, on
                   value={manualNotes}
                   onChangeText={setManualNotes}
                   placeholder="Purpose, what to discuss..."
-                  placeholderTextColor="#9CA3AF"
+                  placeholderTextColor={faint}
                   multiline
                   maxLength={500}
                 />
@@ -201,7 +207,7 @@ export default function SitePickerModal({ visible, visitType, visitTypeLabel, on
               activeOpacity={0.8}
             >
               <View style={st.savedBarLeft}>
-                <Feather name="bookmark" size={15} color={savedOpen ? "#fff" : "#60045d"} />
+                <Feather name="bookmark" size={15} color={savedOpen ? "#fff" : accent} />
                 <ThemedText style={[st.savedBarText, savedOpen && { color: "#fff" }]}>
                   Saved Sites
                 </ThemedText>
@@ -216,16 +222,16 @@ export default function SitePickerModal({ visible, visitType, visitTypeLabel, on
               <Feather
                 name={savedOpen ? "chevron-up" : "chevron-down"}
                 size={16}
-                color={savedOpen ? "#fff" : "#60045d"}
+                color={savedOpen ? "#fff" : accent}
               />
             </TouchableOpacity>
 
             {savedOpen && (
               <View style={st.savedContent}>
                 {loading ? (
-                  <ActivityIndicator color="#60045d" style={{ marginVertical: 20 }} />
+                  <ActivityIndicator color={accent} style={{ marginVertical: 20 }} />
                 ) : sites.length === 0 ? (
-                  <ThemedText style={{ color: "#9CA3AF", fontSize: 13, textAlign: "center", marginVertical: 16 }}>
+                  <ThemedText style={{ color: faint, fontSize: 13, textAlign: "center", marginVertical: 16 }}>
                     No saved sites configured
                   </ThemedText>
                 ) : (
@@ -250,7 +256,7 @@ export default function SitePickerModal({ visible, visitType, visitTypeLabel, on
                               <ThemedText style={st.siteAddr} numberOfLines={1}>{site.address}</ThemedText>
                             ) : null}
                           </View>
-                          <Feather name="chevron-right" size={16} color="#9CA3AF" />
+                          <Feather name="chevron-right" size={16} color={faint} />
                         </TouchableOpacity>
                       ))}
                     </View>
@@ -282,26 +288,30 @@ export default function SitePickerModal({ visible, visitType, visitTypeLabel, on
   );
 }
 
-const st = StyleSheet.create({
+type ThemeColors = typeof Colors.light;
+
+/** Light values are the original design; dark values come from the theme. */
+function createStyles(t: ThemeColors, dark: boolean) {
+  return StyleSheet.create({
   overlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.55)", justifyContent: "flex-end" },
-  sheet: { backgroundColor: "#FFFFFF", borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: "92%" },
-  header: { padding: 20, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: "#F3F4F6" },
-  handle: { width: 40, height: 4, borderRadius: 2, backgroundColor: "#E5E7EB", alignSelf: "center", marginBottom: 14 },
+  sheet: { backgroundColor: dark ? t.backgroundDefault : "#FFFFFF", borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: "92%" },
+  header: { padding: 20, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: dark ? t.border : "#F3F4F6" },
+  handle: { width: 40, height: 4, borderRadius: 2, backgroundColor: dark ? t.border : "#E5E7EB", alignSelf: "center", marginBottom: 14 },
   headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  title: { flex: 1, fontSize: 17, fontWeight: "800", color: "#111827", textAlign: "center" },
+  title: { flex: 1, fontSize: 17, fontWeight: "800", color: dark ? t.text : "#111827", textAlign: "center" },
   closeBtn: { padding: 4, width: 60, alignItems: "flex-end" },
   body: { paddingHorizontal: 20 },
-  sectionHint: { fontSize: 13, color: "#6B7280", marginBottom: 14, lineHeight: 19 },
-  destinationCard: { marginBottom: 14, padding: 12, borderRadius: 10, borderWidth: 1, borderColor: "#A7F3D0", backgroundColor: "#ECFDF5" },
-  destinationTitle: { fontSize: 14, fontWeight: "800", color: "#047857", marginBottom: 5 },
-  destinationText: { fontSize: 12, color: "#065F46", marginTop: 2 },
+  sectionHint: { fontSize: 13, color: dark ? t.textSecondary : "#6B7280", marginBottom: 14, lineHeight: 19 },
+  destinationCard: { marginBottom: 14, padding: 12, borderRadius: 10, borderWidth: 1, borderColor: dark ? "#1F5F4A" : "#A7F3D0", backgroundColor: dark ? t.successBg : "#ECFDF5" },
+  destinationTitle: { fontSize: 14, fontWeight: "800", color: dark ? t.successText : "#047857", marginBottom: 5 },
+  destinationText: { fontSize: 12, color: dark ? t.successText : "#065F46", marginTop: 2 },
 
   // Manual form
   fieldWrap: { marginBottom: 14 },
-  fieldLabel: { fontSize: 13, fontWeight: "600", color: "#374151", marginBottom: 6 },
+  fieldLabel: { fontSize: 13, fontWeight: "600", color: dark ? t.text : "#374151", marginBottom: 6 },
   fieldInput: {
-    borderWidth: 1.5, borderColor: "#E5E7EB", borderRadius: 8,
-    padding: 11, fontSize: 14, color: "#111827", backgroundColor: "#F9FAFB",
+    borderWidth: 1.5, borderColor: dark ? t.border : "#E5E7EB", borderRadius: 8,
+    padding: 11, fontSize: 14, color: dark ? t.text : "#111827", backgroundColor: dark ? t.backgroundSecondary : "#F9FAFB",
   },
 
   // Confirm button
@@ -315,12 +325,12 @@ const st = StyleSheet.create({
   savedBar: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
     paddingVertical: 13, paddingHorizontal: 16,
-    borderWidth: 1.5, borderColor: "#60045d", borderRadius: 12,
-    backgroundColor: "#F5EEF5", marginBottom: 4,
+    borderWidth: 1.5, borderColor: dark ? "#A838A8" : "#60045d", borderRadius: 12,
+    backgroundColor: dark ? t.backgroundSecondary : "#F5EEF5", marginBottom: 4,
   },
-  savedBarOpen: { backgroundColor: "#60045d", borderColor: "#60045d" },
+  savedBarOpen: { backgroundColor: "#60045d", borderColor: dark ? "#A838A8" : "#60045d" },
   savedBarLeft: { flexDirection: "row", alignItems: "center", gap: 8 },
-  savedBarText: { fontSize: 14, fontWeight: "700", color: "#60045d" },
+  savedBarText: { fontSize: 14, fontWeight: "700", color: dark ? "#E2A6E2" : "#60045d" },
   savedCount: {
     backgroundColor: "#60045d", borderRadius: 10,
     paddingHorizontal: 7, paddingVertical: 1,
@@ -329,26 +339,27 @@ const st = StyleSheet.create({
 
   // Saved sites content
   savedContent: {
-    borderWidth: 1, borderColor: "#E5E7EB", borderRadius: 12,
+    borderWidth: 1, borderColor: dark ? t.border : "#E5E7EB", borderRadius: 12,
     paddingHorizontal: 12, paddingTop: 8, paddingBottom: 4,
-    marginBottom: 8, backgroundColor: "#FAFAFA",
+    marginBottom: 8, backgroundColor: dark ? t.backgroundRoot : "#FAFAFA",
   },
   projectGroup: { marginBottom: 12 },
   projectLabel: {
-    fontSize: 11, fontWeight: "800", color: "#60045d",
+    fontSize: 11, fontWeight: "800", color: dark ? "#E2A6E2" : "#60045d",
     textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 6,
   },
   siteRow: {
     flexDirection: "row", alignItems: "center", gap: 10,
     padding: 11, borderRadius: 10,
-    borderWidth: 1, borderColor: "#E5E7EB", backgroundColor: "#fff",
+    borderWidth: 1, borderColor: dark ? t.border : "#E5E7EB", backgroundColor: dark ? t.backgroundDefault : "#fff",
     marginBottom: 6,
   },
   siteIcon: {
     width: 36, height: 36, borderRadius: 8,
     alignItems: "center", justifyContent: "center",
-    backgroundColor: "#F3F4F6",
+    backgroundColor: dark ? t.backgroundSecondary : "#F3F4F6",
   },
-  siteName: { fontSize: 13, fontWeight: "700", color: "#111827" },
-  siteAddr: { fontSize: 11, color: "#6B7280", marginTop: 1 },
-});
+  siteName: { fontSize: 13, fontWeight: "700", color: dark ? t.text : "#111827" },
+  siteAddr: { fontSize: 11, color: dark ? t.textSecondary : "#6B7280", marginTop: 1 },
+  });
+}

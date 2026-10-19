@@ -1,7 +1,8 @@
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { Platform } from "react-native";
 import { useAuth } from "@/contexts/AuthContext";
-import { supabase } from "@/lib/supabase";
+import { supabase, supabaseAuthStorageKey } from "@/lib/supabase";
+import { adoptNativeSession } from "@/lib/shellAuthStorage";
 import { nativeBridge } from "@/services/nativeBridge/client";
 
 function openNotificationTarget(payload: unknown) {
@@ -31,12 +32,17 @@ function openNotificationTarget(payload: unknown) {
  */
 export default function NativeShellConnector() {
   const { user } = useAuth();
+  // refresh token last handed to (or received from) the shell: avoids echoing
+  // the same session back and forth
+  const lastSynced = useRef<string | null>(null);
 
-  const sync = useCallback(async () => {
+  const sync = useCallback(async (force = false) => {
     if (Platform.OS !== "web" || !user?.id || !nativeBridge.isAvailable()) return;
     const { data } = await supabase.auth.getSession();
     const session = data.session;
     if (!session) return;
+    if (!force && lastSynced.current === session.refresh_token) return;
+    lastSynced.current = session.refresh_token;
     await nativeBridge.request("auth.syncSession", {
       accessToken: session.access_token,
       refreshToken: session.refresh_token,
@@ -51,8 +57,20 @@ export default function NativeShellConnector() {
 
   useEffect(() => {
     if (Platform.OS !== "web") return;
-    void sync();
-    const removeReady = nativeBridge.on("bridge.ready", () => void sync());
+    void sync(true);
+    const removeReady = nativeBridge.on("bridge.ready", () => void sync(true));
+    // The shell refreshed the shared session (e.g. during background tracking):
+    // adopt it so the page never refreshes with an already-used token.
+    const removeSessionChanged = nativeBridge.on("auth.sessionChanged", (payload) => {
+      const pushed = (payload as { session?: any } | null)?.session;
+      void adoptNativeSession(supabaseAuthStorageKey, pushed).then(async (adopted) => {
+        if (!adopted || !pushed?.access_token || !pushed?.refresh_token) return;
+        lastSynced.current = pushed.refresh_token;
+        await supabase.auth
+          .setSession({ access_token: pushed.access_token, refresh_token: pushed.refresh_token })
+          .catch(() => undefined);
+      });
+    });
     const removeNotification = nativeBridge.on(
       "notification.opened",
       openNotificationTarget,
@@ -67,6 +85,7 @@ export default function NativeShellConnector() {
     });
     return () => {
       removeReady();
+      removeSessionChanged();
       removeNotification();
       data.subscription.unsubscribe();
     };

@@ -8,6 +8,7 @@ import { fetchAllPages } from "@/utils/supabasePagination";
 import { attendanceTimestampParts } from "@/utils/attendanceTimestamp";
 import { AttendanceFact, AttendanceStatus, RawSourceRecord, SourceName, FactEngineConfig } from "./types";
 import { EmployeeMasterService } from "./employeeMaster.service";
+import { DEFAULT_LATE_CHECKIN_TIME } from "@/constants/attendancePolicy";
 import {
   generateDateRange,
   calculateWorkDuration,
@@ -194,7 +195,7 @@ export class AttendanceFactEngine {
       const empId = emp.employee_id;
       const rawId = emp.raw_employee_id || empId;
 
-      const effectiveShiftStart = globalShiftStart || emp.shift_start || "10:32:00";
+      const effectiveShiftStart = globalShiftStart || emp.shift_start || DEFAULT_LATE_CHECKIN_TIME;
       const effectiveGraceMins = globalGraceMins !== undefined ? globalGraceMins : emp.grace_minutes ?? 0;
 
       for (const d of dateList) {

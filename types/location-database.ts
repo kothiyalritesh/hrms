@@ -99,6 +99,18 @@ export interface SiteVisitObserverVisit {
   destination_lon: number | null;
   client_name: string | null;
   client_phone: string | null;
+  radius_m?: number | null;
+  verification_status?: "PENDING" | "APPROVED" | "REJECTED" | "NEEDS_INFORMATION" | "FLAGGED" | null;
+  risk_flags?: string[];
+  reviewer_notes?: string | null;
+  reviewed_at?: string | null;
+  evidence_photo_path?: string | null;
+  checkout_notes?: string | null;
+  checkout_distance_m?: number | null;
+  arrived_at?: string | null;
+  departed_at?: string | null;
+  auto_closed?: boolean;
+  last_ping_at?: string | null;
 }
 
 export interface SiteVisitObserverEmployee {
@@ -125,6 +137,7 @@ export interface SiteVisitObserverEmployee {
     updated_at: string | null;
   };
   visits: SiteVisitObserverVisit[];
+  flagged_count?: number;
   latest_lat: number | null;
   latest_lon: number | null;
   tracking_status: string;
@@ -137,6 +150,9 @@ export interface SiteVisitObserverSummary {
   at_site: number;
   completed: number;
   signal_lost: number;
+  missed?: number;
+  flagged?: number;
+  to_review?: number;
 }
 
 export interface SiteVisitObserverData {

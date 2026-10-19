@@ -21,6 +21,7 @@ import Spacer from "@/components/Spacer";
 import { supabase } from "@/lib/supabase";
 import { firstRpcRow } from "@/utils/supabaseRpc";
 import { useAuth } from "@/contexts/AuthContext";
+import { usePermissions } from "@/hooks/usePermissions";
 import { LeaveService } from "@/services/leave.service";
 import { BusinessClockService } from "@/services/business-clock.service";
 
@@ -51,9 +52,10 @@ const STATUS_COLORS: Record<string, string> = {
 export default function LeaveManagementScreen() {
   const { theme } = useTheme();
   const { user } = useAuth();
-  const isHRD = ["HRD", "HR", "HR_MANAGER", "SYSTEM_ADMIN", "ADMIN"].includes(
-    String(user?.role).toUpperCase(),
-  );
+  const { hasPermission } = usePermissions();
+  // Approve / reject / comp-off: admins, or leave.approve for employees in scope
+  // (the server re-checks the scope for every request).
+  const isHRD = hasPermission("leave.approve");
 
   const [leaves, setLeaves] = useState<LeaveRequest[]>([]);
   const [loading, setLoading] = useState(true);

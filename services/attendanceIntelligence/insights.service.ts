@@ -60,7 +60,7 @@ export class AttendanceInsightEngine {
         summary: `${topLateTeam.team_head}'s team logged ${topLateTeam.late_marks} late arrivals, representing ${latePercentage}% of all delays company-wide.`,
         evidence: `Team punctuality rate is ${topLateTeam.punctuality_rate}% compared to company average of ${kpis.punctuality_rate}%.`,
         impact: "Client morning meetings and daily standup alignments are disproportionately delayed in this division.",
-        recommended_action: `Implement a 10:32 AM shift alignment review with Team Head ${topLateTeam.team_head}.`,
+        recommended_action: `Review late arrivals (from 10:33 AM) with Team Head ${topLateTeam.team_head}.`,
         confidence: 0.96,
         severity: latePercentage >= 25 ? "CRITICAL" : "WARNING",
         created_at: new Date().toISOString(),

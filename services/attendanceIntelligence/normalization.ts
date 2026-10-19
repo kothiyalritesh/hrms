@@ -1,4 +1,5 @@
 import { getBusinessDateIST } from "@/utils/businessDate";
+import { DEFAULT_LATE_CHECKIN_TIME } from "@/constants/attendancePolicy";
 ﻿/**
  * ATTENDANCE INTELLIGENCE PLATFORM — DATA CLEANING & NORMALIZATION ENGINE
  * Preserves raw input values while computing deterministic canonical representations.
@@ -159,7 +160,7 @@ export function calculateWorkDuration(
 
 export function evaluateLateArrival(
   inTime: string | null | undefined,
-  shiftStart = "10:32:00",
+  shiftStart = DEFAULT_LATE_CHECKIN_TIME,
   graceMinutes = 0,
 ): { is_late: boolean; late_minutes: number } {
   if (!inTime) return { is_late: false, late_minutes: 0 };

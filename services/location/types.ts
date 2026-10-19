@@ -85,7 +85,8 @@ export interface JourneyTransitionResult {
 export interface ActiveTrackingConfig {
   userId: string;
   userName: string;
-  attendanceId: string;
+  /** null while travelling to a field visit before any check-in. */
+  attendanceId: string | null;
   trackingSessionId: string | null;
   baseLatitude: number | null;
   baseLongitude: number | null;
@@ -93,12 +94,24 @@ export interface ActiveTrackingConfig {
   destination: Destination | null;
   journeyState: JourneyRuntimeState | null;
   routeProgress: RouteProgress | null;
+  /** Last RELIABLE fix (accuracy ≤ 100 m, fresh). */
   lastSuccessfulLocationAt: string | null;
+  /**
+   * Last fix of any accuracy with valid coordinates (e.g. LOW_ACCURACY
+   * indoors). Proves the native service is delivering fixes.
+   */
+  lastFixAt?: string | null;
   lastAccuracyM: number | null;
   trackingStartedAt: string;
   /** Difference between the server clock and device Date.now(). */
   serverClockOffsetMs?: number;
   trackingMode: "ATTENDANCE" | "DISTANT" | "FAR" | "NEAR" | "ARRIVED";
+  /** Options the running native service was started with (see trackingOptionsKey). */
+  appliedOptionsKey?: string;
+  /** Last fix actually sent to the server (stationary throttle). */
+  lastSentAt?: string | null;
+  lastSentLatitude?: number | null;
+  lastSentLongitude?: number | null;
 }
 
 export interface TrackingHealth {
@@ -119,8 +132,22 @@ export interface TrackingHealth {
   routeUpdatedAt: string | null;
   lastLocationAt: string | null;
   lastAccuracyM: number | null;
+  /** A location-tracking problem only (never notification permission). */
   warning: string | null;
+  warningCode: TrackingWarningCode | null;
+  /** Notification permission advice; not a tracking problem. */
+  notificationHint: string | null;
+  /** The employee is checked in or travelling to a visit, so tracking should run. */
+  trackingExpected: boolean;
 }
+
+export type TrackingWarningCode =
+  | "LOCATION_DENIED"
+  | "APPROXIMATE"
+  | "BACKGROUND_DENIED"
+  | "GPS_OFF"
+  | "TASK_NOT_RUNNING"
+  | "STALE";
 
 export interface OfflineLocationPing {
   config: Pick<ActiveTrackingConfig, "attendanceId" | "trackingSessionId"> & {

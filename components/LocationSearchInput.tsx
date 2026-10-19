@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, useEffect } from "react";
+import React, { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import {
   View,
   TextInput,
@@ -11,6 +11,8 @@ import {
 } from "react-native";
 import Feather from "@expo/vector-icons/Feather";
 import { ThemedText } from "@/components/ThemedText";
+import { useTheme } from "@/hooks/useTheme";
+import { Colors } from "@/constants/theme";
 import MapPickerModal from "@/components/MapPickerModal";
 import { loadGoogleMaps } from "@/utils/googleMapsLoader";
 import { reverseGeocode } from "@/utils/reverseGeocode";
@@ -195,6 +197,11 @@ export default function LocationSearchInput({
   placeholder,
   required,
 }: Props) {
+  const { theme, isDark } = useTheme();
+  const s = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
+  const accent = isDark ? "#E2A6E2" : "#60045d";
+  const faint = isDark ? theme.textSecondary : "#9CA3AF";
+  const okColor = isDark ? "#34D399" : "#10B981";
   const [query, setQuery] = useState(value || "");
   const [results, setResults] = useState<PlaceResult[]>([]);
   const [loading, setLoading] = useState(false);
@@ -499,7 +506,7 @@ export default function LocationSearchInput({
         <Feather
           name="map-pin"
           size={15}
-          color={selected ? "#10B981" : "#9CA3AF"}
+          color={selected ? okColor : faint}
           style={{ marginRight: 8 }}
         />
         <TextInput
@@ -507,7 +514,7 @@ export default function LocationSearchInput({
           value={query}
           onChangeText={handleChange}
           placeholder={placeholder || `Search ${label.toLowerCase()}...`}
-          placeholderTextColor="#9CA3AF"
+          placeholderTextColor={faint}
           onFocus={() => {
             if (results.length > 0) setShowResults(true);
           }}
@@ -516,7 +523,7 @@ export default function LocationSearchInput({
         {loading && (
           <ActivityIndicator
             size="small"
-            color="#60045d"
+            color={accent}
             style={{ marginLeft: 6 }}
           />
         )}
@@ -524,7 +531,7 @@ export default function LocationSearchInput({
           <Feather
             name="check-circle"
             size={16}
-            color="#10B981"
+            color={okColor}
             style={{ marginLeft: 6 }}
           />
         )}
@@ -545,7 +552,7 @@ export default function LocationSearchInput({
             <Feather
               name="x"
               size={15}
-              color="#9CA3AF"
+              color={faint}
               style={{ marginLeft: 6 }}
             />
           </TouchableOpacity>
@@ -558,7 +565,7 @@ export default function LocationSearchInput({
           onPress={handleOpenMap}
           disabled={loading || locating}
         >
-          <Feather name="map" size={13} color="#60045d" />
+          <Feather name="map" size={13} color={accent} />
           <ThemedText style={s.mapBtnText}>
             {selected ? "Adjust on Map" : "Pin on Map"}
           </ThemedText>
@@ -581,7 +588,7 @@ export default function LocationSearchInput({
 
       {!!searchError && (
         <View style={s.searchError}>
-          <Feather name="alert-circle" size={13} color="#B91C1C" />
+          <Feather name="alert-circle" size={13} color={isDark ? theme.errorText : "#B91C1C"} />
           <ThemedText style={s.searchErrorText}>{searchError}</ThemedText>
           <TouchableOpacity onPress={() => void search(query)} disabled={loading}>
             <ThemedText style={s.retryText}>Retry</ThemedText>
@@ -607,7 +614,7 @@ export default function LocationSearchInput({
                 onPress={() => handleSelect(place)}
               >
                 <View style={s.resultIcon}>
-                  <Feather name="map-pin" size={14} color="#60045d" />
+                  <Feather name="map-pin" size={14} color={accent} />
                 </View>
                 <View style={{ flex: 1 }}>
                   <ThemedText style={s.resultName} numberOfLines={1}>
@@ -638,22 +645,26 @@ export default function LocationSearchInput({
   );
 }
 
-const s = StyleSheet.create({
+type ThemeColors = typeof Colors.light;
+
+/** Light values are the original design; dark values come from the theme. */
+function createStyles(t: ThemeColors, dark: boolean) {
+  return StyleSheet.create({
   wrap: { marginBottom: 14, position: "relative", zIndex: 100 },
-  label: { fontSize: 13, fontWeight: "600", color: "#374151", marginBottom: 6 },
+  label: { fontSize: 13, fontWeight: "600", color: dark ? t.text : "#374151", marginBottom: 6 },
   inputRow: {
     flexDirection: "row",
     alignItems: "center",
     borderWidth: 1.5,
-    borderColor: "#E5E7EB",
+    borderColor: dark ? t.border : "#E5E7EB",
     borderRadius: 8,
     paddingHorizontal: 11,
     paddingVertical: 10,
-    backgroundColor: "#F9FAFB",
+    backgroundColor: dark ? t.backgroundSecondary : "#F9FAFB",
   },
-  inputRowSelected: { borderColor: "#10B981", backgroundColor: "#F0FDF4" },
-  input: { flex: 1, fontSize: 14, color: "#111827" },
-  coordHint: { fontSize: 11, color: "#10B981", marginTop: 4, marginLeft: 2 },
+  inputRowSelected: { borderColor: dark ? "#34D399" : "#10B981", backgroundColor: dark ? t.successBg : "#F0FDF4" },
+  input: { flex: 1, fontSize: 14, color: dark ? t.text : "#111827" },
+  coordHint: { fontSize: 11, color: dark ? "#34D399" : "#10B981", marginTop: 4, marginLeft: 2 },
   actionRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -668,12 +679,12 @@ const s = StyleSheet.create({
     alignSelf: "flex-start",
     paddingHorizontal: 10,
     paddingVertical: 5,
-    backgroundColor: "#F5EEF5",
+    backgroundColor: dark ? t.backgroundSecondary : "#F5EEF5",
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: "#60045d30",
+    borderColor: dark ? "#A838A880" : "#60045d30",
   },
-  mapBtnText: { fontSize: 12, color: "#60045d", fontWeight: "600" },
+  mapBtnText: { fontSize: 12, color: dark ? "#E2A6E2" : "#60045d", fontWeight: "600" },
   liveBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -692,20 +703,20 @@ const s = StyleSheet.create({
     padding: 9,
     marginTop: 6,
     borderRadius: 7,
-    backgroundColor: "#FEF2F2",
+    backgroundColor: dark ? t.errorBg : "#FEF2F2",
   },
-  searchErrorText: { flex: 1, fontSize: 11, color: "#B91C1C" },
-  retryText: { fontSize: 12, fontWeight: "800", color: "#991B1B" },
+  searchErrorText: { flex: 1, fontSize: 11, color: dark ? t.errorText : "#B91C1C" },
+  retryText: { fontSize: 12, fontWeight: "800", color: dark ? t.errorText : "#991B1B" },
   dropdown: {
     position: "absolute",
     top: "100%",
     left: 0,
     right: 0,
-    backgroundColor: "#fff",
+    backgroundColor: dark ? t.backgroundDefault : "#fff",
     borderRadius: 10,
     zIndex: 9999,
     borderWidth: 1,
-    borderColor: "#E5E7EB",
+    borderColor: dark ? t.border : "#E5E7EB",
     maxHeight: 300,
     ...(Platform.OS === "web"
       ? { boxShadow: "0 4px 16px rgba(0,0,0,0.12)" }
@@ -723,22 +734,23 @@ const s = StyleSheet.create({
     padding: 12,
     gap: 10,
   },
-  resultBorder: { borderBottomWidth: 1, borderBottomColor: "#F3F4F6" },
+  resultBorder: { borderBottomWidth: 1, borderBottomColor: dark ? t.border : "#F3F4F6" },
   resultIcon: {
     width: 28,
     height: 28,
     borderRadius: 14,
-    backgroundColor: "#F5EEF5",
+    backgroundColor: dark ? t.backgroundSecondary : "#F5EEF5",
     alignItems: "center",
     justifyContent: "center",
   },
-  resultName: { fontSize: 13, fontWeight: "600", color: "#111827" },
-  resultAddr: { fontSize: 11, color: "#6B7280", marginTop: 1 },
+  resultName: { fontSize: 13, fontWeight: "600", color: dark ? t.text : "#111827" },
+  resultAddr: { fontSize: 11, color: dark ? t.textSecondary : "#6B7280", marginTop: 1 },
   noResults: {
     padding: 12,
-    backgroundColor: "#F9FAFB",
+    backgroundColor: dark ? t.backgroundSecondary : "#F9FAFB",
     borderRadius: 8,
     marginTop: 4,
   },
-  noResultsTxt: { fontSize: 12, color: "#9CA3AF", textAlign: "center" },
-});
+  noResultsTxt: { fontSize: 12, color: dark ? t.textSecondary : "#9CA3AF", textAlign: "center" },
+  });
+}

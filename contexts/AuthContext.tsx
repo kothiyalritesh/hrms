@@ -87,7 +87,7 @@ interface AuthContextType {
     otp: string,
   ) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
-  updateUser: (data: Partial<User>) => Promise<void>;
+  updateUser: (data: Partial<User>, extra?: { home_address?: string }) => Promise<void>;
   isDevMode: boolean;
   isAdmin: boolean;
   isHR: boolean;
@@ -543,7 +543,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (cleanupError) throw cleanupError;
   };
 
-  const updateUser = async (data: Partial<User>) => {
+  const updateUser = async (
+    data: Partial<User>,
+    extra?: { home_address?: string },
+  ) => {
     if (!user) throw new Error("An authenticated profile is required.");
     const previous = user;
     const updated = { ...previous, ...data };
@@ -553,6 +556,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         p_values: {
           name: updated.name,
           ...(updated.avatar ? { avatar: updated.avatar } : {}),
+          ...(extra?.home_address ? { home_address: extra.home_address } : {}),
         },
       },
     );

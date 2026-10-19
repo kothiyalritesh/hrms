@@ -37,7 +37,7 @@ describe("Sales Manager position release contract", () => {
   test("hierarchy UI identifies the position and valid direct reports", () => {
     const hierarchy = read("screens/admin/TeamHierarchyScreen.tsx");
 
-    expect(hierarchy).toContain("Sales Manager Positions");
+    expect(hierarchy).toContain("role not allowed under Sales Manager");
     expect(hierarchy).toContain("canAssignReportingManager");
     expect(hierarchy).toContain("canReportToSalesManager");
   });

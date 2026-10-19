@@ -1,86 +1,184 @@
-import React, { useState, useEffect } from "react";
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator } from "react-native";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { View, StyleSheet, FlatList } from "react-native";
 import { supabase } from "@/lib/supabase";
-import { MaterialIcons } from "@expo/vector-icons";
-import { Colors } from "@/constants/theme";
-import { getBusinessDateIST } from "@/utils/businessDate";
+import { ThemedText } from "@/components/ThemedText";
+import { useTheme } from "@/hooks/useTheme";
+import { BorderRadius, Spacing } from "@/constants/theme";
+import { addBusinessDays, formatBusinessDate, getBusinessDateIST } from "@/utils/businessDate";
+import { exportSheets, formatIstDateTime } from "@/utils/exportWorkbook";
+import {
+  ReportChip,
+  ReportChipRow,
+  ReportFilterBar,
+  ReportIconButton,
+  ReportMeta,
+  ReportNotice,
+  ReportSearch,
+  ReportState,
+} from "@/components/reports/ReportUI";
+
+const PRESETS = [
+  { label: "Last 7 days", days: 7 },
+  { label: "Last 30 days", days: 30 },
+  { label: "Last 90 days", days: 90 },
+];
+
+function distanceOf(item: any): number | null {
+  const v = item.distance_from_reference ?? item.calculated_distance_m;
+  return v == null ? null : Math.round(Number(v));
+}
 
 export default function GeofenceEventsReportScreen() {
-  const [data, setData] = useState([]);
+  const { theme } = useTheme();
+  const today = getBusinessDateIST();
+  const [days, setDays] = useState(30);
+  const [data, setData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [exporting, setExporting] = useState(false);
+  const startDate = addBusinessDays(today, -(days - 1));
+  const requestId = useRef(0);
 
-  useEffect(() => {
-    fetchData();
-  }, []);
-
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
+    const id = ++requestId.current;
     setLoading(true);
-    const endDate = new Date();
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - 30); // Default last 30 days
-
-    const { data: reportData, error } = await supabase.rpc("rpc_geofence_report", {
-      p_start_date: getBusinessDateIST(startDate),
-      p_end_date: getBusinessDateIST(endDate),
+    setError(null);
+    const { data: reportData, error: rpcError } = await supabase.rpc("rpc_geofence_report", {
+      p_start_date: startDate,
+      p_end_date: today,
       p_user_id: null,
       p_status: null,
       p_review_status: null,
     });
-
-    if (error) {
-      console.error("Geofence report fetch error:", error);
+    if (id !== requestId.current) return;
+    if (rpcError) {
+      setData([]);
+      setError(/PERMISSION_REQUIRED|42501/i.test(rpcError.message)
+        ? "You do not have permission to view geofence events."
+        : rpcError.message);
     } else {
-      setData(reportData || []);
+      setData(Array.isArray(reportData) ? reportData : []);
     }
     setLoading(false);
+  }, [startDate, today]);
+
+  useEffect(() => { void fetchData(); }, [fetchData]);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return data;
+    return data.filter((r) =>
+      String(r.employee_name ?? "").toLowerCase().includes(q)
+      || String(r.office_name ?? "").toLowerCase().includes(q)
+      || String(r.event_type ?? "").toLowerCase().includes(q));
+  }, [data, search]);
+
+  const exportExcel = async () => {
+    if (exporting || filtered.length === 0) return;
+    setExporting(true);
+    setNotice(null);
+    try {
+      await exportSheets(`geofence_events_${startDate}_to_${today}.xlsx`, [{
+        name: "Geofence events",
+        columns: ["Detected at", "Employee No", "Employee", "Event", "Office", "Distance (m)", "Latitude", "Longitude", "Status", "Reason given", "Review", "Reviewed by"],
+        widths: [20, 12, 24, 16, 20, 11, 11, 11, 12, 36, 12, 22],
+        rows: filtered.map((r) => [
+          formatIstDateTime(r.detected_at), r.employee_id ?? "", r.employee_name ?? "",
+          String(r.event_type ?? "").replace(/_/g, " "), r.office_name ?? "", distanceOf(r) ?? "",
+          r.latitude ?? "", r.longitude ?? "", r.status ?? "",
+          r.submitted_reason ?? "", r.review_status ?? "", r.reviewed_by_name ?? "",
+        ]),
+      }]);
+    } catch (e: any) {
+      // Shown as a notice so a failed export never hides the loaded events.
+      setNotice(`Export failed: ${e?.message || "please try again."}`);
+    } finally {
+      setExporting(false);
+    }
   };
 
-  const renderItem = ({ item }: { item: any }) => (
-    <View style={styles.card}>
-      <View style={styles.cardHeader}>
-        <Text style={styles.name}>{item.employee_name}</Text>
-        <Text style={styles.statusBadge}>{item.status}</Text>
-      </View>
-      <Text style={styles.detailText}>
-        <Text style={{ fontWeight: "600" }}>Type:</Text> {item.event_type} | <Text style={{ fontWeight: "600" }}>Distance:</Text> {Math.round(item.calculated_distance_m || 0)}m
-      </Text>
-      <Text style={styles.detailText}>
-        <Text style={{ fontWeight: "600" }}>Detected:</Text> {new Date(item.detected_at).toLocaleString()}
-      </Text>
-      {item.submitted_reason && (
-        <View style={styles.reasonBox}>
-          <Text style={styles.reasonLabel}>Employee Reason:</Text>
-          <Text style={styles.reasonText}>{item.submitted_reason}</Text>
-          {item.review_status && (
-            <Text style={styles.reviewText}>
-              Review: {item.review_status} {item.reviewed_by_name ? "by " + item.reviewed_by_name : ""}
-            </Text>
-          )}
+  const renderItem = ({ item }: { item: any }) => {
+    const distance = distanceOf(item);
+    return (
+      <View style={[styles.card, { backgroundColor: theme.backgroundDefault, borderColor: theme.border }]}>
+        <View style={styles.cardHeader}>
+          <ThemedText style={styles.name} numberOfLines={1}>{item.employee_name || "Unknown employee"}</ThemedText>
+          {item.status ? (
+            <View style={[styles.badge, { backgroundColor: theme.warningBg }]}>
+              <ThemedText type="caption" style={{ color: theme.warningText, fontWeight: "700" }}>
+                {String(item.status).replace(/_/g, " ")}
+              </ThemedText>
+            </View>
+          ) : null}
         </View>
-      )}
-    </View>
-  );
+        <ThemedText type="caption" style={{ color: theme.textSecondary }}>
+          {String(item.event_type ?? "").replace(/_/g, " ")}
+          {item.office_name ? ` · ${item.office_name}` : ""}
+          {distance != null ? ` · ${distance} m from boundary point` : ""}
+        </ThemedText>
+        <ThemedText type="caption" style={{ color: theme.textSecondary, marginTop: 2 }}>
+          {formatIstDateTime(item.detected_at)} IST
+        </ThemedText>
+        {item.submitted_reason ? (
+          <View style={[styles.reasonBox, { backgroundColor: theme.backgroundSecondary, borderLeftColor: theme.primary }]}>
+            <ThemedText type="caption" style={{ color: theme.textSecondary, fontWeight: "600" }}>Employee reason</ThemedText>
+            <ThemedText type="small">{item.submitted_reason}</ThemedText>
+            {item.review_status ? (
+              <ThemedText type="caption" style={{ color: theme.success, fontWeight: "600", marginTop: 4 }}>
+                Review: {item.review_status}{item.reviewed_by_name ? ` by ${item.reviewed_by_name}` : ""}
+              </ThemedText>
+            ) : null}
+          </View>
+        ) : null}
+      </View>
+    );
+  };
 
   return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Geofence Violations & Audit Trail</Text>
-        <TouchableOpacity style={styles.exportBtn} onPress={() => { /* TODO: Export CSV */ }}>
-          <MaterialIcons name="file-download" size={20} color="#fff" />
-          <Text style={styles.exportBtnText}>Export CSV</Text>
-        </TouchableOpacity>
-      </View>
-      
-      {loading ? (
-        <ActivityIndicator size="large" color={Colors.light.primary} style={{ marginTop: 20 }} />
-      ) : data.length === 0 ? (
-        <View style={styles.emptyContainer}>
-          <Text style={styles.emptyText}>No geofence events found for this period.</Text>
+    <View style={[styles.container, { backgroundColor: theme.backgroundRoot }]}>
+      <ReportFilterBar>
+        <ReportChipRow>
+          {PRESETS.map((p) => (
+            <ReportChip key={p.days} label={p.label} active={days === p.days} onPress={() => setDays(p.days)} />
+          ))}
+        </ReportChipRow>
+        <ReportSearch value={search} onChangeText={setSearch} placeholder="Search employee, office or event" />
+        <View style={styles.actionRow}>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <ReportMeta>
+              {formatBusinessDate(startDate)} – {formatBusinessDate(today)}
+              {!loading && !error ? ` · ${filtered.length} event${filtered.length === 1 ? "" : "s"}` : ""}
+            </ReportMeta>
+          </View>
+          <ReportIconButton icon="refresh-cw" label="Refresh" tone="neutral" onPress={() => void fetchData()} disabled={loading} />
+          <ReportIconButton
+            icon="download"
+            label="Excel"
+            onPress={exportExcel}
+            busy={exporting}
+            disabled={filtered.length === 0}
+          />
         </View>
+        {notice ? <ReportNotice kind="error" text={notice} onDismiss={() => setNotice(null)} /> : null}
+      </ReportFilterBar>
+
+      {loading ? (
+        <ReportState kind="loading" title="Loading geofence events…" />
+      ) : error ? (
+        <ReportState kind="error" title="Could not load geofence events" message={error} onRetry={() => void fetchData()} />
+      ) : filtered.length === 0 ? (
+        <ReportState
+          kind="empty"
+          icon="map"
+          title={search.trim() ? "No matching events" : "No geofence events"}
+          message={search.trim() ? "Try a different search." : "No geofence events were recorded in this period."}
+        />
       ) : (
         <FlatList
-          data={data}
-          keyExtractor={(item) => item.event_id}
+          data={filtered}
+          keyExtractor={(item, index) => String(item.event_id ?? index) + (item.reason_id ?? "")}
           renderItem={renderItem}
           contentContainerStyle={styles.listContent}
         />
@@ -90,21 +188,12 @@ export default function GeofenceEventsReportScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: Colors.light.backgroundDefault },
-  header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: 16, backgroundColor: "#fff", borderBottomWidth: 1, borderColor: "#e0e0e0" },
-  title: { fontSize: 18, fontWeight: "600", color: Colors.light.text },
-  exportBtn: { flexDirection: "row", backgroundColor: Colors.light.primary, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 6, alignItems: "center" },
-  exportBtnText: { color: "#fff", marginLeft: 4, fontWeight: "500" },
-  listContent: { padding: 16 },
-  card: { backgroundColor: "#fff", borderRadius: 8, padding: 16, marginBottom: 12, shadowColor: "#000", shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 2, elevation: 2 },
-  cardHeader: { flexDirection: "row", justifyContent: "space-between", marginBottom: 8 },
-  name: { fontSize: 16, fontWeight: "700" },
-  statusBadge: { backgroundColor: "#ffeb3b", color: "#f57f17", paddingHorizontal: 8, paddingVertical: 2, borderRadius: 12, fontSize: 12, fontWeight: "600", overflow: "hidden" },
-  detailText: { fontSize: 14, color: "#555", marginBottom: 4 },
-  reasonBox: { marginTop: 12, backgroundColor: "#f9f9f9", padding: 10, borderRadius: 6, borderLeftWidth: 3, borderLeftColor: Colors.light.primary },
-  reasonLabel: { fontSize: 12, fontWeight: "600", color: "#777", marginBottom: 2 },
-  reasonText: { fontSize: 14, fontStyle: "italic", color: "#333" },
-  reviewText: { fontSize: 12, fontWeight: "600", color: Colors.light.success, marginTop: 6 },
-  emptyContainer: { flex: 1, justifyContent: "center", alignItems: "center" },
-  emptyText: { color: "#888", fontSize: 16 }
+  container: { flex: 1 },
+  actionRow: { flexDirection: "row", alignItems: "center", gap: Spacing.sm },
+  listContent: { padding: Spacing.md, paddingBottom: 80 },
+  card: { borderRadius: BorderRadius.md, borderWidth: 1, padding: Spacing.md, marginBottom: Spacing.sm },
+  cardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: Spacing.sm, marginBottom: 4 },
+  name: { fontWeight: "700", flex: 1 },
+  badge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 12 },
+  reasonBox: { marginTop: Spacing.sm, padding: 10, borderRadius: 6, borderLeftWidth: 3 },
 });

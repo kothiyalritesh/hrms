@@ -53,18 +53,24 @@ export const SupportTicketService = {
     });
 
     if (!result.error) {
-      // Fire-and-forget: notify all admins & HR with raiser's name
-      const { data: raiserProfile } = await supabase
-        .from("profiles")
-        .select("name")
-        .eq("id", data.userId)
-        .single();
-      const raiserName: string = (raiserProfile as any)?.name ?? "Unknown";
-      getAdminHRRecipients().then((recipients) => {
-        Promise.all(recipients.map((r) =>
-          WhatsAppService.sendTicketOpen(r.phone, r.name, `${raiserName} - ${data.category}`)
-        ));
-      });
+      // Fire-and-forget: notify all admins & HR with raiser's name. Not awaited,
+      // so the submit button is released as soon as the ticket is saved.
+      void (async () => {
+        try {
+          const { data: raiserProfile } = await supabase
+            .from("profiles")
+            .select("name")
+            .eq("id", data.userId)
+            .maybeSingle();
+          const raiserName: string = (raiserProfile as any)?.name ?? "Unknown";
+          const recipients = await getAdminHRRecipients();
+          await Promise.allSettled(recipients.map((r) =>
+            WhatsAppService.sendTicketOpen(r.phone, r.name, `${raiserName} - ${data.category}`)
+          ));
+        } catch {
+          // Notification failures must never affect the saved ticket.
+        }
+      })();
     }
 
     return result;

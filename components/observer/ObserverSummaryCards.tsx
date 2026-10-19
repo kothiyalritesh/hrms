@@ -9,7 +9,7 @@
  */
 
 import React from "react";
-import { View, StyleSheet, TouchableOpacity } from "react-native";
+import { ScrollView, View, StyleSheet, TouchableOpacity } from "react-native";
 import Feather from "@expo/vector-icons/Feather";
 import { ThemedText } from "@/components/ThemedText";
 import { useTheme } from "@/hooks/useTheme";
@@ -63,17 +63,25 @@ export default function ObserverSummaryCards({
       bg: "#F3F4F6",
     },
     {
+      id: "FLAGGED",
+      label: "Flagged",
+      count: summary.flagged ?? 0,
+      icon: "alert-octagon",
+      color: "#D97706",
+      bg: "#FFFBEB",
+    },
+    {
       id: "SIGNAL_LOST",
-      label: "Signal Lost",
+      label: "No signal",
       count: summary.signal_lost,
-      icon: "alert-triangle",
+      icon: "wifi-off",
       color: "#EF4444",
       bg: "#FEF2F2",
     },
   ];
 
   return (
-    <View style={s.container}>
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0 }} contentContainerStyle={s.container}>
       {cards.map((c) => {
         const isSelected = selectedFilter === c.id;
         return (
@@ -81,20 +89,22 @@ export default function ObserverSummaryCards({
             key={c.id}
             style={[
               s.card,
-              { backgroundColor: c.bg, borderColor: isSelected ? c.color : theme.border },
+              { backgroundColor: c.color + "12", borderColor: isSelected ? c.color : theme.border },
               isSelected && { borderWidth: 2 },
             ]}
             onPress={() => onSelectFilter(c.id)}
+            accessibilityRole="button"
+            accessibilityState={{ selected: isSelected }}
           >
             <View style={s.cardHeader}>
               <Feather name={c.icon as any} size={14} color={c.color} />
               <ThemedText style={[s.count, { color: c.color }]}>{c.count}</ThemedText>
             </View>
-            <ThemedText style={s.label}>{c.label}</ThemedText>
+            <ThemedText style={[s.label, { color: theme.textSecondary }]}>{c.label}</ThemedText>
           </TouchableOpacity>
         );
       })}
-    </View>
+    </ScrollView>
   );
 }
 
@@ -106,12 +116,15 @@ const s = StyleSheet.create({
     paddingVertical: 6,
   },
   card: {
-    flex: 1,
+    minWidth: 84,
+    minHeight: 48,
+    flexGrow: 1,
     paddingVertical: 6,
-    paddingHorizontal: 8,
+    paddingHorizontal: 10,
     borderRadius: BorderRadius.md,
     borderWidth: 1,
     alignItems: "center",
+    justifyContent: "center",
   },
   cardHeader: {
     flexDirection: "row",
@@ -119,12 +132,11 @@ const s = StyleSheet.create({
     gap: 4,
   },
   count: {
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: "800",
   },
   label: {
-    fontSize: 10,
-    color: "#4B5563",
+    fontSize: 12,
     fontWeight: "600",
     marginTop: 2,
   },

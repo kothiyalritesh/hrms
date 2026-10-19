@@ -1,4 +1,6 @@
-﻿import { supabase } from "@/lib/supabase";
+import { supabase } from "@/lib/supabase";
+import { addBusinessDays } from "@/utils/businessDate";
+import { DEFAULT_LATE_CHECKIN_TIME } from "@/constants/attendancePolicy";
 
 export type AttendanceSource =
   | "APP"
@@ -59,63 +61,170 @@ export interface CanonicalAttendanceDay {
   distance_from_office_m?: number | null;
 }
 
+// One request is capped by PostgREST "max rows" (Supabase default 1000), so a
+// month for ~250 employees used to come back as only the newest ~4 days
+// (the RPC orders work_date DESC). We fetch the range in small date windows and
+// page inside each window until a short page arrives. PAGE_SIZE must stay at or
+// below the project's max-rows setting.
 const PAGE_SIZE = 500;
+// One day per request. The server builds the WHOLE window for every page it
+// returns (LIMIT/OFFSET are applied after the function), so a 3-day window
+// that needed 2 pages was computed twice. One-day windows fit in one page.
+const WINDOW_DAYS = 1;
+const WINDOW_CONCURRENCY = 4;
+// Same day requested by several screens / every live refresh: reuse it briefly.
+const DAY_CACHE_MS = 30_000;
+const dayCache = new Map<string, { at: number; rows: Promise<CanonicalAttendanceDay[]> }>();
+
+class CanonicalRpcMissingError extends Error {}
+
+function dateWindows(start: string, end: string): Array<[string, string]> {
+  // Newest window first, matching the RPC's work_date DESC order.
+  const windows: Array<[string, string]> = [];
+  let windowEnd = end;
+  while (windowEnd >= start) {
+    const candidate = addBusinessDays(windowEnd, -(WINDOW_DAYS - 1));
+    const windowStart = candidate < start ? start : candidate;
+    windows.push([windowStart, windowEnd]);
+    windowEnd = addBusinessDays(windowStart, -1);
+  }
+  return windows;
+}
+
+const istClock = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Asia/Kolkata",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hourCycle: "h23",
+});
+
+/**
+ * Late = first check-in (IST) at or after the office policy time
+ * (late_checkin_time from the server, 10:33:00 if no policy). The canonical
+ * RPC has no is_late column, so this is the single place it is derived.
+ */
+export function isLateCheckin(firstIn: string | null | undefined, lateTime: string | null | undefined): boolean {
+  if (!firstIn) return false;
+  const instant = new Date(firstIn);
+  if (Number.isNaN(instant.getTime())) return false;
+  const threshold = String(lateTime || DEFAULT_LATE_CHECKIN_TIME);
+  const normalized = threshold.length === 5 ? `${threshold}:00` : threshold.slice(0, 8);
+  return istClock.format(instant) >= normalized;
+}
+
+export function mapRow(c: any): CanonicalAttendanceDay {
+  return {
+    ...c,
+    official_first_in: c.effective_checkin,
+    official_last_out: c.effective_checkout,
+    attendance_status: c.effective_status,
+    is_late: c.is_late ?? isLateCheckin(c.effective_checkin ?? c.official_first_in, c.late_checkin_time),
+    check_in_office_id: c.check_in_office_id ?? c.office_id,
+    check_in_office_name: c.check_in_office_name ?? c.office_name,
+    attendance_source:
+      c.attendance_source ?? (c.biometric_first_in ? "BIOMETRIC" : "APP"),
+    first_in_source:
+      c.app_first_in && c.biometric_first_in
+        ? "COMBINED"
+        : c.biometric_first_in
+          ? "BIOMETRIC"
+          : c.app_first_in
+            ? "APP"
+            : c.field_visit_first_in
+              ? "FIELD_VISIT"
+              : "NONE",
+  } as CanonicalAttendanceDay;
+}
 
 export const CanonicalAttendanceService = {
-  async list(start: string, end: string, maximum = 20_000, scopeFilters?: any) {
-    // Attempt high-performance bounded RPC first (avoids Cartesian 6-year series and 500 timeout)
+  /**
+   * Fetch every row for the date range. Never returns a silently truncated
+   * result: throws if more than `maximum` rows would be loaded.
+   * Authorization is enforced by the RPC; scopeFilters can only narrow it.
+   */
+  async list(
+    start: string,
+    end: string,
+    maximum = 20_000,
+    scopeFilters?: any,
+  ): Promise<CanonicalAttendanceDay[]> {
+    if (end < start) return [];
+    const windows = dateWindows(start, end);
+    const results: CanonicalAttendanceDay[][] = new Array(windows.length);
+    let loaded = 0;
+
     try {
-      const officeId = scopeFilters?.office_id ?? null;
-      const teamId = scopeFilters?.team_id ?? null;
-      const userId = scopeFilters?.user_id ?? null;
-
-      const { data: rpcData, error: rpcError } = await supabase.rpc(
-        "rpc_attendance_canonical_range",
-        {
-          p_start_date: start,
-          p_end_date: end,
-          p_office_id: officeId,
-          p_team_id: teamId,
-          p_user_id: userId,
-        },
-      );
-
-      if (rpcError) {
-        if (rpcError.code === '57014' || rpcError.message.includes('timeout')) {
-          throw new Error("The date range is too large. Please select a shorter date range to prevent timeouts.");
+      for (let i = 0; i < windows.length; i += WINDOW_CONCURRENCY) {
+        const batch = windows.slice(i, i + WINDOW_CONCURRENCY);
+        const pages = await Promise.all(
+          batch.map(([ws, we]) => this._listWindow(ws, we, scopeFilters)),
+        );
+        pages.forEach((rows, j) => {
+          results[i + j] = rows;
+          loaded += rows.length;
+        });
+        if (loaded > maximum) {
+          throw new Error(
+            "Range too large: narrow the date range or office filter to load attendance data.",
+          );
         }
-        console.warn("[canonical-attendance] RPC fallback:", rpcError.message);
       }
-      if (!rpcError && Array.isArray(rpcData) && (rpcData.length > 0 || rpcData.length === 0)) {
-        return rpcData.map((c: any) => ({
-          ...c,
-          official_first_in: c.effective_checkin,
-          official_last_out: c.effective_checkout,
-          attendance_status: c.effective_status,
-          is_late: c.is_late ?? false,
-          check_in_office_id: c.check_in_office_id ?? c.office_id,
-          check_in_office_name: c.check_in_office_name ?? c.office_name,
-          attendance_source:
-            c.attendance_source ?? (c.biometric_first_in ? "BIOMETRIC" : "APP"),
-          first_in_source:
-            c.app_first_in && c.biometric_first_in
-              ? "COMBINED"
-              : c.biometric_first_in
-                ? "BIOMETRIC"
-                : c.app_first_in
-                  ? "APP"
-                  : c.field_visit_first_in
-                    ? "FIELD_VISIT"
-                    : "NONE",
-        })) as CanonicalAttendanceDay[];
+    } catch (error) {
+      if (error instanceof CanonicalRpcMissingError) {
+        return this._listFromView(start, end, maximum, scopeFilters);
       }
-    } catch {
-      // Fall through to paginated view query on older schema or fallback
+      throw error;
     }
 
+    return results.flat();
+  },
+
+  /** One date window from the RPC, paged until a short page. */
+  async _listWindow(
+    start: string,
+    end: string,
+    scopeFilters?: any,
+  ): Promise<CanonicalAttendanceDay[]> {
     const rows: CanonicalAttendanceDay[] = [];
-    for (let offset = 0; offset < maximum; offset += PAGE_SIZE) {
-      // Direct query fallback for environments without range RPC
+    for (let offset = 0; ; offset += PAGE_SIZE) {
+      const { data, error } = await supabase
+        .rpc("rpc_attendance_canonical_range", {
+          p_start_date: start,
+          p_end_date: end,
+          p_office_id: scopeFilters?.office_id ?? null,
+          p_team_id: scopeFilters?.team_id ?? null,
+          p_user_id: scopeFilters?.user_id ?? null,
+        })
+        .range(offset, offset + PAGE_SIZE - 1);
+
+      if (error) {
+        if (error.code === "PGRST202" || error.code === "42883") {
+          throw new CanonicalRpcMissingError(error.message);
+        }
+        if (error.code === "57014" || error.message?.includes("timeout")) {
+          throw new Error(
+            "The date range is too large. Please select a shorter date range to prevent timeouts.",
+          );
+        }
+        throw new Error(error.message);
+      }
+
+      const page = (data ?? []).map(mapRow);
+      rows.push(...page);
+      if (page.length < PAGE_SIZE) return rows;
+    }
+  },
+
+  /** Fallback: paginate directly against the canonical view. */
+  async _listFromView(
+    start: string,
+    end: string,
+    maximum: number,
+    scopeFilters?: any,
+  ): Promise<CanonicalAttendanceDay[]> {
+    const rows: CanonicalAttendanceDay[] = [];
+    for (let offset = 0; offset <= maximum; offset += PAGE_SIZE) {
       const { data, error } = await supabase
         .from("v_attendance_daily_canonical")
         .select("*")
@@ -124,34 +233,48 @@ export const CanonicalAttendanceService = {
         .match(scopeFilters || {})
         .order("work_date", { ascending: false })
         .order("employee_name", { ascending: true })
+        .order("user_id", { ascending: true })
         .range(offset, offset + PAGE_SIZE - 1);
 
       if (error) {
-        if (error.code === '57014' || error.message.includes('timeout')) {
-          throw new Error("The date range is too large. Please select a shorter date range.");
+        if (error.code === "57014" || error.message?.includes("timeout")) {
+          throw new Error(
+            "The date range is too large. Please select a shorter date range.",
+          );
         }
         throw new Error(error.message);
       }
-      const page = (data ?? []).map((c: any) => ({
-        ...c,
-        official_first_in: c.effective_checkin,
-        official_last_out: c.effective_checkout,
-        attendance_status: c.effective_status,
-        is_late: c.is_late ?? false,
-        check_in_office_id: c.check_in_office_id ?? c.office_id,
-        check_in_office_name: c.check_in_office_name ?? c.office_name,
-        attendance_source: c.attendance_source ?? (c.biometric_first_in ? 'BIOMETRIC' : 'APP'),
-        first_in_source: c.app_first_in && c.biometric_first_in ? 'COMBINED' : (c.biometric_first_in ? 'BIOMETRIC' : (c.app_first_in ? 'APP' : (c.field_visit_first_in ? 'FIELD_VISIT' : 'NONE')))
-      })) as CanonicalAttendanceDay[];
 
+      const page = (data ?? []).map(mapRow);
       rows.push(...page);
       if (page.length < PAGE_SIZE) return rows;
     }
+    throw new Error(
+      "Range too large: narrow the date range or office filter to load attendance data.",
+    );
+  },
+
+  /**
+   * One business day. Calls made within 30 s of each other (Live Tracking
+   * refreshes, dashboards) share one server request instead of each running
+   * the expensive attendance calculation again.
+   */
+  async listDay(workDate: string, options?: { fresh?: boolean }) {
+    const cached = dayCache.get(workDate);
+    if (!options?.fresh && cached && Date.now() - cached.at < DAY_CACHE_MS) {
+      return cached.rows;
+    }
+    const rows = this.list(workDate, workDate, 5_000);
+    dayCache.set(workDate, { at: Date.now(), rows });
+    rows.catch(() => {
+      if (dayCache.get(workDate)?.rows === rows) dayCache.delete(workDate);
+    });
     return rows;
   },
 
-  async listDay(workDate: string) {
-    return this.list(workDate, workDate, 5_000);
+  /** Forget cached days (after an attendance correction or a manual refresh). */
+  invalidateDayCache() {
+    dayCache.clear();
   },
 };
 

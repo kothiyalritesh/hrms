@@ -1,42 +1,56 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useRef } from "react";
 import {
-  View, StyleSheet, ScrollView, TouchableOpacity,
+  View, StyleSheet, ScrollView, Pressable,
   RefreshControl, ActivityIndicator,
 } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { supabase } from "@/lib/supabase";
 import Feather from "@expo/vector-icons/Feather";
 import { ThemedText } from "@/components/ThemedText";
-import { formatDate } from "@/utils/format";
-import { PageHeader } from "@/components/PageHeader";
 import { useTheme } from "@/hooks/useTheme";
 import Spacer from "@/components/Spacer";
 import { useAuth } from "@/contexts/AuthContext";
 import { Spacing, BorderRadius } from "@/constants/theme";
-import { PaginationControls } from "@/components/PaginationControls";
+import { getBusinessDateIST } from "@/utils/attendanceTimestamp";
 
-const PRIMARY = "#6D1B6D";
 const PAGE_SIZE = 25;
 
-const CATEGORIES = ["All", "Attendance", "Leave", "Field Visit"];
+type Category = "all" | "attendance" | "leave" | "field_visit";
 
-const CATEGORY_COLORS: Record<string, string> = {
-  attendance: "#10B981",
-  leave:       "#F59E0B",
-  field_visit: "#3B82F6",
+const CATEGORIES: { key: Category; label: string; icon: keyof typeof Feather.glyphMap }[] = [
+  { key: "all", label: "All", icon: "layers" },
+  { key: "attendance", label: "Attendance", icon: "clock" },
+  { key: "leave", label: "Leave", icon: "calendar" },
+  { key: "field_visit", label: "Field visits", icon: "map-pin" },
+];
+
+const CATEGORY_META: Record<string, { color: string; icon: keyof typeof Feather.glyphMap; label: string }> = {
+  attendance: { color: "#10B981", icon: "clock", label: "Attendance" },
+  leave: { color: "#F59E0B", icon: "calendar", label: "Leave" },
+  field_visit: { color: "#3B82F6", icon: "map-pin", label: "Field visit" },
 };
+const OTHER_META = { color: "#9CA3AF", icon: "activity" as const, label: "Activity" };
 
-const CATEGORY_ICONS: Record<string, string> = {
-  attendance: "clock",
-  leave:       "calendar",
-  field_visit: "map-pin",
-};
+const TIME_FMT = new Intl.DateTimeFormat("en-IN", {
+  hour: "numeric", minute: "2-digit", hour12: true, timeZone: "Asia/Kolkata",
+});
+const DAY_FMT = new Intl.DateTimeFormat("en-IN", {
+  weekday: "short", day: "2-digit", month: "short", year: "numeric", timeZone: "Asia/Kolkata",
+});
+const IST_KEY = new Intl.DateTimeFormat("en-CA", {
+  year: "numeric", month: "2-digit", day: "2-digit", timeZone: "Asia/Kolkata",
+});
 
-function formatTimeIST(isoString?: string) {
-  if (!isoString) return "";
-  return new Date(isoString).toLocaleTimeString("en-IN", {
-    hour: "2-digit", minute: "2-digit", hour12: true, timeZone: "Asia/Kolkata",
-  });
+function addDays(isoDate: string, days: number) {
+  const d = new Date(`${isoDate}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+function dayLabel(key: string, today: string) {
+  if (key === today) return "Today";
+  if (key === addDays(today, -1)) return "Yesterday";
+  return DAY_FMT.format(new Date(`${key}T12:00:00+05:30`));
 }
 
 export default function MyActivityLogsScreen() {
@@ -44,254 +58,282 @@ export default function MyActivityLogsScreen() {
   const { user } = useAuth();
 
   const [logs, setLogs] = useState<any[]>([]);
+  const [filter, setFilter] = useState<Category>("all");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [filter, setFilter] = useState("All");
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [page, setPage] = useState(0);
-  const [total, setTotal] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const requestRef = useRef(0);
 
-  const loadLogs = useCallback(async (requestedPage = 0, currentFilter = filter) => {
-    if (!user?.id) return;
-    setError(null);
-    try {
-      const dbFilter =
-        currentFilter === "All" ? "all" :
-        currentFilter === "Field Visit" ? "field_visit" :
-        currentFilter.toLowerCase();
-
+  const fetchPage = useCallback(
+    async (category: Category, offset: number) => {
       const { data, error: rpcError } = await supabase.rpc("rpc_my_unified_activity_log", {
-        p_category: dbFilter,
-        p_limit:    PAGE_SIZE,
-        p_offset:   requestedPage * PAGE_SIZE,
+        p_category: category,
+        p_limit: PAGE_SIZE,
+        p_offset: offset,
       });
-
       if (rpcError) throw rpcError;
+      return Array.isArray(data) ? data : [];
+    },
+    [],
+  );
 
-      const rows = Array.isArray(data) ? data : [];
-      setLogs(rows);
-      setTotal(
-        rows.length < PAGE_SIZE
-          ? requestedPage * PAGE_SIZE + rows.length
-          : (requestedPage + 2) * PAGE_SIZE,
-      );
-      setPage(requestedPage);
-      setFilter(currentFilter);
+  const load = useCallback(
+    async (category: Category, mode: "initial" | "refresh" = "initial") => {
+      if (!user?.id) return;
+      const request = ++requestRef.current;
+      if (mode === "initial") setLoading(true);
+      setError(null);
+      try {
+        const rows = await fetchPage(category, 0);
+        if (request !== requestRef.current) return; // a newer filter won
+        setLogs(rows);
+        setHasMore(rows.length === PAGE_SIZE);
+      } catch (err: any) {
+        if (request !== requestRef.current) return;
+        setError(err?.message || "Activity could not be loaded.");
+      } finally {
+        if (request === requestRef.current) {
+          setLoading(false);
+          setRefreshing(false);
+        }
+      }
+    },
+    [user?.id, fetchPage],
+  );
+
+  const loadMore = async () => {
+    if (loadingMore || !hasMore) return;
+    const request = requestRef.current;
+    setLoadingMore(true);
+    try {
+      const rows = await fetchPage(filter, logs.length);
+      if (request !== requestRef.current) return;
+      setLogs((current) => {
+        const seen = new Set(current.map((row) => row.id));
+        return [...current, ...rows.filter((row: any) => !seen.has(row.id))];
+      });
+      setHasMore(rows.length === PAGE_SIZE);
     } catch (err: any) {
-      setError(err?.message || "Failed to load activity logs.");
-      setLogs([]);
+      setError(err?.message || "More activity could not be loaded.");
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      setLoadingMore(false);
     }
-  }, [user?.id, filter]);
+  };
 
-  useFocusEffect(useCallback(() => {
-    setLoading(true);
-    void loadLogs(0, filter);
-  }, [user?.id]));
+  useFocusEffect(
+    useCallback(() => {
+      void load(filter, logs.length ? "refresh" : "initial");
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [user?.id]),
+  );
+
+  const selectFilter = (category: Category) => {
+    if (category === filter) return;
+    setFilter(category);
+    setExpandedId(null);
+    setLogs([]);
+    void load(category, "initial");
+  };
 
   const onRefresh = () => {
     setRefreshing(true);
-    void loadLogs(page, filter);
+    void load(filter, "refresh");
   };
 
-  // Group by IST date
-  const grouped: Record<string, any[]> = {};
+  // Group by IST calendar day, newest first
+  const today = getBusinessDateIST();
+  const groups: { key: string; items: any[] }[] = [];
   for (const log of logs) {
     if (!log.log_time) continue;
-    const d = new Date(log.log_time);
-    const key = d.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }); // YYYY-MM-DD
-    if (!grouped[key]) grouped[key] = [];
-    grouped[key].push(log);
+    const date = new Date(log.log_time);
+    if (Number.isNaN(date.getTime())) continue;
+    const key = IST_KEY.format(date);
+    const last = groups[groups.length - 1];
+    if (last && last.key === key) last.items.push(log);
+    else groups.push({ key, items: [log] });
   }
-  const sortedDates = Object.keys(grouped).sort((a, b) => b.localeCompare(a));
+
+  const filterLabel = CATEGORIES.find((c) => c.key === filter)?.label ?? "All";
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.backgroundRoot }}>
-      <PageHeader
-        title="My Activity"
-        subtitle="Timeline of your actions across the system"
-      />
-
-      {/* Filter chips */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.filterScroll}
-      >
-        {CATEGORIES.map((c) => {
-          const isActive = filter === c;
-          return (
-            <TouchableOpacity
-              key={c}
-              onPress={() => {
-                setLoading(true);
-                void loadLogs(0, c);
-              }}
-              style={[
-                styles.filterChip,
-                {
-                  backgroundColor: isActive ? PRIMARY : theme.backgroundDefault,
-                  borderColor: isActive ? PRIMARY : theme.border,
-                },
-              ]}
-            >
-              <ThemedText
-                style={{
-                  color: isActive ? "#fff" : theme.textSecondary,
-                  fontWeight: "600",
-                  fontSize: 13,
-                }}
+      {/* Filter bar: fixed height (a horizontal ScrollView otherwise stretches on web) */}
+      <View style={[styles.filterBar, { backgroundColor: theme.backgroundRoot, borderBottomColor: theme.border }]}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={{ flexGrow: 0 }}
+          contentContainerStyle={styles.filterScroll}
+        >
+          {CATEGORIES.map((c) => {
+            const active = filter === c.key;
+            return (
+              <Pressable
+                key={c.key}
+                accessibilityRole="button"
+                accessibilityState={{ selected: active }}
+                onPress={() => selectFilter(c.key)}
+                style={({ pressed }) => [
+                  styles.chip,
+                  {
+                    backgroundColor: active ? theme.primary : theme.backgroundDefault,
+                    borderColor: active ? theme.primary : theme.border,
+                    opacity: pressed ? 0.85 : 1,
+                  },
+                ]}
               >
-                {c}
-              </ThemedText>
-            </TouchableOpacity>
-          );
-        })}
-      </ScrollView>
+                <Feather name={c.icon} size={13} color={active ? "#fff" : theme.textSecondary} />
+                <ThemedText style={[styles.chipText, { color: active ? "#fff" : theme.text }]}>
+                  {c.label}
+                </ThemedText>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+      </View>
 
       {loading ? (
-        <View style={styles.centered}>
-          <ActivityIndicator size="large" color={PRIMARY} />
+        <View style={styles.content}>
+          {[0, 1, 2, 3, 4].map((i) => (
+            <View key={i} style={[styles.skeleton, { backgroundColor: theme.backgroundDefault }]}>
+              <View style={[styles.skeletonDot, { backgroundColor: theme.backgroundSecondary }]} />
+              <View style={{ flex: 1, gap: 8 }}>
+                <View style={[styles.skeletonLine, { width: "60%", backgroundColor: theme.backgroundSecondary }]} />
+                <View style={[styles.skeletonLine, { width: "35%", backgroundColor: theme.backgroundSecondary }]} />
+              </View>
+            </View>
+          ))}
         </View>
-      ) : error ? (
+      ) : error && logs.length === 0 ? (
         <View style={styles.centered}>
           <Feather name="alert-circle" size={36} color="#EF4444" />
           <Spacer height={12} />
-          <ThemedText style={{ color: "#EF4444", textAlign: "center", marginHorizontal: 32 }}>
+          <ThemedText style={{ color: theme.text, fontWeight: "700" }}>Activity could not be loaded</ThemedText>
+          <ThemedText type="caption" style={{ color: theme.textSecondary, textAlign: "center", marginTop: 4, marginHorizontal: 32 }}>
             {error}
           </ThemedText>
-          <TouchableOpacity
-            style={[styles.retryBtn, { backgroundColor: PRIMARY }]}
-            onPress={() => { setLoading(true); void loadLogs(0, filter); }}
-          >
-            <ThemedText style={{ color: "#fff", fontWeight: "700" }}>Retry</ThemedText>
-          </TouchableOpacity>
+          <Pressable style={[styles.primaryBtn, { backgroundColor: theme.primary }]} onPress={() => void load(filter)}>
+            <Feather name="refresh-cw" size={14} color="#fff" />
+            <ThemedText style={{ color: "#fff", fontWeight: "700" }}>Try again</ThemedText>
+          </Pressable>
         </View>
       ) : (
         <ScrollView
-          style={styles.scroll}
+          style={{ flex: 1 }}
           contentContainerStyle={styles.content}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={PRIMARY} />
-          }
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.primary} />}
           showsVerticalScrollIndicator={false}
         >
-          {sortedDates.length === 0 ? (
+          {groups.length === 0 ? (
             <View style={[styles.empty, { backgroundColor: theme.backgroundDefault }]}>
-              <Feather name="activity" size={44} color={theme.textSecondary} />
+              <View style={[styles.emptyIcon, { backgroundColor: theme.primary + "14" }]}>
+                <Feather name="activity" size={28} color={theme.primary} />
+              </View>
               <Spacer height={Spacing.md} />
               <ThemedText style={{ color: theme.text, fontWeight: "700", textAlign: "center", fontSize: 15 }}>
-                No activities found
+                {filter === "all" ? "No activity yet" : `No ${filterLabel.toLowerCase()} activity yet`}
               </ThemedText>
               <ThemedText style={{ color: theme.textSecondary, textAlign: "center", marginTop: 6, lineHeight: 20, fontSize: 13 }}>
-                {filter === "All"
-                  ? "Your check-ins, field visits and leave requests will appear here."
-                  : `No ${filter.toLowerCase()} activity yet.`}
+                Your check-ins, field visits and leave requests appear here as they happen.
               </ThemedText>
             </View>
           ) : (
-            sortedDates.map((dateKey) => {
-              const dayLogs = grouped[dateKey];
-              const displayDate = formatDate(new Date(dateKey + "T12:00:00"));
-              return (
-                <View key={dateKey} style={styles.dateGroup}>
-                  {/* Date header */}
-                  <View style={styles.dateHeader}>
-                    <View style={[styles.dateLine, { backgroundColor: theme.border }]} />
-                    <View style={[styles.datePill, { backgroundColor: PRIMARY + "15", borderColor: PRIMARY + "30" }]}>
-                      <ThemedText style={{ fontSize: 12, fontWeight: "700", color: PRIMARY }}>
-                        {displayDate}
-                      </ThemedText>
-                      <View style={[styles.countDot, { backgroundColor: PRIMARY }]}>
-                        <ThemedText style={{ fontSize: 10, color: "#fff", fontWeight: "700" }}>
-                          {dayLogs.length}
-                        </ThemedText>
-                      </View>
-                    </View>
-                    <View style={[styles.dateLine, { backgroundColor: theme.border }]} />
-                  </View>
+            groups.map((group) => (
+              <View key={group.key} style={styles.dateGroup}>
+                <View style={styles.dateHeader}>
+                  <ThemedText style={[styles.dateLabel, { color: theme.text }]}>
+                    {dayLabel(group.key, today)}
+                  </ThemedText>
+                  <ThemedText type="caption" style={{ color: theme.textSecondary }}>
+                    {group.items.length} {group.items.length === 1 ? "entry" : "entries"}
+                  </ThemedText>
+                </View>
 
-                  {/* Log cards */}
-                  {dayLogs.map((log) => {
-                    const color = CATEGORY_COLORS[log.category] || "#9CA3AF";
-                    const icon = CATEGORY_ICONS[log.category] || "activity";
-                    const isExpanded = expandedId === log.id;
+                <View style={[styles.timeline, { backgroundColor: theme.backgroundDefault }]}>
+                  {group.items.map((log, index) => {
+                    const meta = CATEGORY_META[log.category] ?? OTHER_META;
+                    const expanded = expandedId === log.id;
+                    const description = String(log.description ?? "").trim();
+                    const expandable = description.length > 70;
+                    const last = index === group.items.length - 1;
                     return (
-                      <TouchableOpacity
+                      <Pressable
                         key={log.id}
-                        style={[styles.logCard, { backgroundColor: theme.backgroundDefault, borderColor: theme.border }]}
-                        onPress={() => setExpandedId(isExpanded ? null : log.id)}
-                        activeOpacity={0.8}
+                        disabled={!expandable}
+                        onPress={() => setExpandedId(expanded ? null : log.id)}
+                        style={({ pressed }) => [styles.row, { opacity: pressed ? 0.85 : 1 }]}
                       >
-                        {/* Icon */}
-                        <View style={[styles.iconWrap, { backgroundColor: color + "18" }]}>
-                          <Feather name={icon as any} size={16} color={color} />
+                        <View style={styles.rail}>
+                          <View style={[styles.dot, { backgroundColor: meta.color + "1F" }]}>
+                            <Feather name={meta.icon} size={14} color={meta.color} />
+                          </View>
+                          {!last ? <View style={[styles.railLine, { backgroundColor: theme.border }]} /> : null}
                         </View>
-
-                        {/* Content */}
-                        <View style={styles.logBody}>
-                          <View style={styles.logTitleRow}>
+                        <View style={[styles.body, !last && { borderBottomColor: theme.border, borderBottomWidth: StyleSheet.hairlineWidth }]}>
+                          <View style={styles.titleRow}>
+                            <ThemedText style={[styles.title, { color: theme.text }]} numberOfLines={expanded ? undefined : 2}>
+                              {log.title || meta.label}
+                            </ThemedText>
+                            <ThemedText style={[styles.time, { color: theme.textSecondary }]}>
+                              {TIME_FMT.format(new Date(log.log_time))}
+                            </ThemedText>
+                          </View>
+                          <View style={styles.metaRow}>
+                            <View style={[styles.typePill, { backgroundColor: meta.color + "1A" }]}>
+                              <ThemedText style={[styles.typeText, { color: meta.color }]}>{meta.label}</ThemedText>
+                            </View>
+                          </View>
+                          {description ? (
                             <ThemedText
-                              style={{ flex: 1, fontSize: 14, fontWeight: "600", color: theme.text }}
-                              numberOfLines={isExpanded ? undefined : 1}
+                              style={[styles.description, { color: theme.textSecondary }]}
+                              numberOfLines={expanded ? undefined : 2}
                             >
-                              {log.title}
+                              {description}
                             </ThemedText>
-                            <ThemedText style={{ fontSize: 12, color: theme.textSecondary, marginLeft: 8 }}>
-                              {formatTimeIST(log.log_time)}
+                          ) : null}
+                          {expandable ? (
+                            <ThemedText style={[styles.more, { color: theme.primary }]}>
+                              {expanded ? "Show less" : "Show more"}
                             </ThemedText>
-                          </View>
-
-                          <View style={styles.logMeta}>
-                            <View style={[styles.typePill, { backgroundColor: color + "18" }]}>
-                              <ThemedText style={{ color, fontWeight: "700", fontSize: 10, textTransform: "capitalize" }}>
-                                {(log.category || "other").replace(/_/g, " ")}
-                              </ThemedText>
-                            </View>
-                            {!isExpanded && log.description ? (
-                              <ThemedText
-                                style={{ fontSize: 12, color: theme.textSecondary, flex: 1 }}
-                                numberOfLines={1}
-                              >
-                                {log.description}
-                              </ThemedText>
-                            ) : null}
-                            <Feather
-                              name={isExpanded ? "chevron-up" : "chevron-down"}
-                              size={14}
-                              color={theme.textSecondary}
-                            />
-                          </View>
-
-                          {isExpanded && log.description ? (
-                            <View style={[styles.expanded, { borderTopColor: theme.border }]}>
-                              <ThemedText style={{ color: theme.textSecondary, lineHeight: 20, fontSize: 13 }}>
-                                {log.description}
-                              </ThemedText>
-                            </View>
                           ) : null}
                         </View>
-                      </TouchableOpacity>
+                      </Pressable>
                     );
                   })}
                 </View>
-              );
-            })
+              </View>
+            ))
           )}
 
-          <PaginationControls
-            page={page}
-            pageSize={PAGE_SIZE}
-            total={total}
-            onPageChange={(nextPage) => {
-              setLoading(true);
-              void loadLogs(nextPage, filter);
-            }}
-          />
-          <Spacer height={60} />
+          {groups.length > 0 ? (
+            hasMore ? (
+              <Pressable
+                onPress={() => void loadMore()}
+                disabled={loadingMore}
+                style={({ pressed }) => [
+                  styles.moreBtn,
+                  { borderColor: theme.border, backgroundColor: theme.backgroundDefault, opacity: pressed ? 0.85 : 1 },
+                ]}
+              >
+                {loadingMore ? (
+                  <ActivityIndicator size="small" color={theme.primary} />
+                ) : (
+                  <ThemedText style={{ color: theme.primary, fontWeight: "700" }}>Load older activity</ThemedText>
+                )}
+              </Pressable>
+            ) : (
+              <ThemedText type="caption" style={{ color: theme.textSecondary, textAlign: "center", marginTop: 4 }}>
+                You've reached the beginning of your activity.
+              </ThemedText>
+            )
+          ) : null}
+          {error && logs.length > 0 ? (
+            <ThemedText type="caption" style={{ color: "#EF4444", textAlign: "center", marginTop: 8 }}>{error}</ThemedText>
+          ) : null}
+          <Spacer height={48} />
         </ScrollView>
       )}
     </View>
@@ -299,23 +341,37 @@ export default function MyActivityLogsScreen() {
 }
 
 const styles = StyleSheet.create({
-  centered:     { flex: 1, justifyContent: "center", alignItems: "center" },
-  filterScroll: { paddingHorizontal: Spacing.lg, paddingVertical: Spacing.sm, gap: 8 },
-  filterChip:   { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20, borderWidth: 1 },
-  scroll:       { flex: 1 },
-  content:      { padding: Spacing.lg, paddingBottom: 60 },
-  empty:        { alignItems: "center", padding: 40, borderRadius: BorderRadius.lg, marginTop: Spacing.xl },
-  retryBtn:     { marginTop: 16, paddingHorizontal: 24, paddingVertical: 10, borderRadius: 8 },
-  dateGroup:    { marginBottom: Spacing.xl },
-  dateHeader:   { flexDirection: "row", alignItems: "center", marginBottom: Spacing.md, gap: 8 },
-  dateLine:     { flex: 1, height: 1 },
-  datePill:     { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, borderWidth: 1 },
-  countDot:     { width: 18, height: 18, borderRadius: 9, alignItems: "center", justifyContent: "center" },
-  logCard:      { flexDirection: "row", borderRadius: BorderRadius.md, marginBottom: Spacing.sm, borderWidth: 1, overflow: "hidden" },
-  iconWrap:     { width: 48, alignItems: "center", justifyContent: "center" },
-  logBody:      { flex: 1, padding: Spacing.md },
-  logTitleRow:  { flexDirection: "row", alignItems: "center", marginBottom: 6 },
-  logMeta:      { flexDirection: "row", alignItems: "center", gap: 8 },
-  typePill:     { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
-  expanded:     { marginTop: Spacing.md, paddingTop: Spacing.md, borderTopWidth: StyleSheet.hairlineWidth },
+  centered: { flex: 1, justifyContent: "center", alignItems: "center", padding: 24 },
+  filterBar: { borderBottomWidth: StyleSheet.hairlineWidth },
+  filterScroll: { paddingHorizontal: Spacing.lg, paddingVertical: 10, gap: 8, alignItems: "center" },
+  chip: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    paddingHorizontal: 14, height: 34, borderRadius: 17, borderWidth: 1,
+  },
+  chipText: { fontWeight: "600", fontSize: 13 },
+  content: { padding: Spacing.lg, width: "100%", maxWidth: 760, alignSelf: "center" },
+  skeleton: { flexDirection: "row", gap: 12, alignItems: "center", padding: 14, borderRadius: BorderRadius.md, marginBottom: 10 },
+  skeletonDot: { width: 32, height: 32, borderRadius: 16 },
+  skeletonLine: { height: 10, borderRadius: 5 },
+  empty: { alignItems: "center", padding: 32, borderRadius: BorderRadius.lg, marginTop: Spacing.lg },
+  emptyIcon: { width: 56, height: 56, borderRadius: 28, alignItems: "center", justifyContent: "center" },
+  primaryBtn: { marginTop: 16, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 20, paddingVertical: 10, borderRadius: 10 },
+  dateGroup: { marginBottom: Spacing.lg },
+  dateHeader: { flexDirection: "row", alignItems: "baseline", justifyContent: "space-between", marginBottom: 8, paddingHorizontal: 4 },
+  dateLabel: { fontSize: 14, fontWeight: "800" },
+  timeline: { borderRadius: BorderRadius.lg, paddingHorizontal: 12, overflow: "hidden" },
+  row: { flexDirection: "row", gap: 12 },
+  rail: { width: 32, alignItems: "center", paddingTop: 12 },
+  dot: { width: 32, height: 32, borderRadius: 16, alignItems: "center", justifyContent: "center" },
+  railLine: { width: 2, flex: 1, marginTop: 4, borderRadius: 1 },
+  body: { flex: 1, minWidth: 0, paddingVertical: 12 },
+  titleRow: { flexDirection: "row", alignItems: "flex-start", gap: 8 },
+  title: { flex: 1, minWidth: 0, fontSize: 14, fontWeight: "600", lineHeight: 20 },
+  time: { fontSize: 12, lineHeight: 20 },
+  metaRow: { flexDirection: "row", marginTop: 4 },
+  typePill: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10 },
+  typeText: { fontSize: 11, fontWeight: "700" },
+  description: { fontSize: 13, lineHeight: 19, marginTop: 6 },
+  more: { fontSize: 12, fontWeight: "700", marginTop: 4 },
+  moreBtn: { alignItems: "center", justifyContent: "center", height: 44, borderRadius: 10, borderWidth: 1, marginTop: 4 },
 });

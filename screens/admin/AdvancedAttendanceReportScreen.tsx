@@ -313,7 +313,7 @@ export default function AdvancedAttendanceReportScreen({ route }: any) {
     try {
       const perm = getScopedPermission('attendance.view');
         const isGlobal = perm?.scope === 'GLOBAL' || hasPermission('SYSTEM_ADMIN');
-        setRows(await fetchAttendanceRows(resolvedStart, resolvedEnd, isGlobal ? undefined : { office_id: perm?.scope_id || undefined }));
+        setRows(await fetchAttendanceRows(resolvedStart, resolvedEnd, isGlobal ? undefined : { office_id: (perm?.scope === 'OFFICE' || perm?.scope === 'OFFICE_TREE') ? perm.scope_id : undefined }));
     } catch (error: any) {
       const rawMessage = error?.message ?? "Unable to load report.";
       const message = rawMessage.includes(

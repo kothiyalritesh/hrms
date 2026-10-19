@@ -71,13 +71,19 @@ export default function RaiseTicketScreen() {
       Alert.alert("Required", "Please fill in title and description.");
       return;
     }
-    if (!user?.id) return;
+    if (!user?.id || submitting) return;
     setSubmitting(true);
-    const { error } = await SupportTicketService.createTicket({
-      userId: user.id, title: title.trim(),
-      description: description.trim(), category, priority,
-    });
-    setSubmitting(false);
+    let error: { message?: string } | null = null;
+    try {
+      ({ error } = await SupportTicketService.createTicket({
+        userId: user.id, title: title.trim(),
+        description: description.trim(), category, priority,
+      }));
+    } catch (e: any) {
+      error = { message: e?.message || "Please try again." };
+    } finally {
+      setSubmitting(false);
+    }
     if (error) {
       Alert.alert("Error", "Failed to submit ticket: " + error.message);
     } else {
@@ -226,7 +232,9 @@ export default function RaiseTicketScreen() {
             />
 
             <Spacer height={Spacing.xl} />
-            <Button onPress={handleSubmit}>{submitting ? "Submitting..." : "Submit Ticket"}</Button>
+            <Button onPress={handleSubmit} loading={submitting} disabled={submitting}>
+              {submitting ? "Submitting..." : "Submit Ticket"}
+            </Button>
           </ScrollView>
         : <FlatList
             data={myTickets}

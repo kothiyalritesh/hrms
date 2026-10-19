@@ -77,9 +77,16 @@ Deno.serve(async (request: Request) => {
 
   const onLeaveUserIds = new Set((leaves ?? []).map((l: { user_id: string }) => l.user_id));
 
-  // 4. Identify employees missing check-in
+  // 4. Weekly offs and holidays (per employee calendar). If the helper is not
+  // installed yet, keep reminding rather than failing the whole run.
+  const { data: offIds, error: offError } = await admin.rpc("hrms_off_day_user_ids", { p_date: nowIST });
+  if (offError) console.warn("daily-checkin-alert: off-day lookup unavailable:", offError.message);
+  const offDayUserIds = new Set<string>(Array.isArray(offIds) ? (offIds as string[]) : []);
+
+  // 5. Identify employees missing check-in
   const missingEmployees = (employees ?? []).filter(
-    (e: { id: string }) => !checkedInUserIds.has(e.id) && !onLeaveUserIds.has(e.id),
+    (e: { id: string }) =>
+      !checkedInUserIds.has(e.id) && !onLeaveUserIds.has(e.id) && !offDayUserIds.has(e.id),
   );
 
   let alertedCount = 0;
@@ -109,6 +116,7 @@ Deno.serve(async (request: Request) => {
     total_active_employees: employees?.length ?? 0,
     checked_in_count: checkedInUserIds.size,
     on_leave_count: onLeaveUserIds.size,
+    off_day_count: offDayUserIds.size,
     alerted_count: alertedCount,
   });
 });

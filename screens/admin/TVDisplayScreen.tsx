@@ -335,7 +335,8 @@ export default function TVDisplayScreen({ navigation }: any) {
           checkin_time: row.official_first_in,
           checkout_time: row.official_last_out,
           office_id: row.office_id,
-          warning: !!row.warning,
+          // The canonical view returns the flag as text, so "false" must not count.
+          warning: row.warning === true || String(row.warning).toLowerCase() === "true",
           distance_from_office: row.distance_from_office_m,
           attendance_status: row.attendance_status,
           active_field_visit_id: row.active_field_visit_id,
@@ -475,20 +476,17 @@ export default function TVDisplayScreen({ navigation }: any) {
       // 1. GPS turned off (RED_GPS_OFF status)
       // 2. Out of range (RED_RANGE status) 
       // 3. Checked in with warning flag
-      // 4. Location data stale (>15 min) - NEW: added
       const isFraud =
         ping?.status === "RED_RANGE" ||
         ping?.status === "RED_GPS_OFF" ||
-        ping?.status === "ORANGE" ||  // Borderline
-        ping?.stale === true ||
+        // Inside the allowed area (incl. the 50-100 m band) or simply no recent
+        // ping is normal, not suspicious.
         (att?.warning === true && cIn && !cOut);
 
       if (isFraud) {
         let reason = "Suspicious check-in";
         if (ping?.status === "RED_GPS_OFF") reason = "GPS turned off";
         else if (ping?.status === "RED_RANGE") reason = "Out of office range";
-        else if (ping?.status === "ORANGE") reason = "Near office boundary (50-100m)";
-        else if (ping?.stale) reason = "Last ping is stale";
         else if (att?.warning) reason = "Checked in far from office";
         fraudList.push({ name: p.name, reason, distance: ping?.dist ?? att?.distance_from_office });
       }

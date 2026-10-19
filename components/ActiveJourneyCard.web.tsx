@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { StyleSheet, TouchableOpacity, View } from "react-native";
 import Feather from "@expo/vector-icons/Feather";
 import { ThemedText } from "@/components/ThemedText";
+import { useTheme } from "@/hooks/useTheme";
 import { Destination } from "@/services/location/types";
 import { nativeBridge } from "@/services/nativeBridge/client";
 import { loadGoogleMaps } from "@/utils/googleMapsLoader";
@@ -17,7 +18,10 @@ export default function ActiveJourneyCard({
   fallbackDestination,
 }: {
   fallbackDestination?: Destination | null;
+  /** Accepted for parity with the native card; the web card has one layout. */
+  onSite?: boolean;
 }) {
+  const { theme, isDark } = useTheme();
   const mapRef = useRef<HTMLDivElement>(null);
   const [nativeShell, setNativeShell] = useState(() => nativeBridge.isAvailable());
   const [mapFailed, setMapFailed] = useState(false);
@@ -208,12 +212,20 @@ export default function ActiveJourneyCard({
     "&z=15&output=embed";
 
   return (
-    <View style={styles.card}>
+    <View
+      style={[
+        styles.card,
+        {
+          backgroundColor: theme.backgroundDefault,
+          borderColor: isDark ? theme.border : "#E9D8E9",
+        },
+      ]}
+    >
       <ThemedText style={styles.title}>
           Route to {fallbackDestination.name}
         </ThemedText>
         {distanceText && (
-          <ThemedText style={{ color: "#6D1B6D", fontWeight: "600", marginBottom: 8, fontSize: 14 }}>
+          <ThemedText style={{ color: isDark ? "#E2A6E2" : "#6D1B6D", fontWeight: "600", marginBottom: 8, fontSize: 14 }}>
             {distanceText} (Live)
           </ThemedText>
         )}
@@ -234,7 +246,16 @@ export default function ActiveJourneyCard({
         />
       )}
 
-      <ThemedText style={nativeShell ? styles.nativeStatus : styles.warning}>
+      <ThemedText
+        style={[
+          nativeShell ? styles.nativeStatus : styles.warning,
+          isDark
+            ? nativeShell
+              ? { color: theme.successText, backgroundColor: theme.successBg }
+              : { color: theme.warningText, backgroundColor: theme.warningBg }
+            : null,
+        ]}
+      >
         {nativeShell
           ? "Android background arrival tracking is connected."
           : "Browser tracking works only while this page remains open and active. Background arrival alerts are not guaranteed."}
@@ -257,12 +278,10 @@ export default function ActiveJourneyCard({
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: "#FFFFFF",
     borderRadius: 14,
     padding: 14,
     marginBottom: 14,
     borderWidth: 1,
-    borderColor: "#E9D8E9",
     gap: 10,
   },
   title: { fontSize: 15, fontWeight: "800" },
