@@ -15,12 +15,7 @@ import { usePermissions } from "@/hooks/usePermissions";
 import { SCREEN_PERMISSIONS } from "@/constants/permissionCatalog";
 import { ThemedText } from "@/components/ThemedText";
 import { supabase } from "@/lib/supabase";
-import {
-  canAccessHRPanelRole,
-  isAdminRole,
-  isHRRole,
-  normalizeUserRole,
-} from "@/utils/userRole";
+import { canAccessHRPanelRole, normalizeUserRole } from "@/utils/userRole";
 
 const IS_WEB  = Platform.OS === "web";
 const IS_WIDE = IS_WEB && Dimensions.get("window").width >= 768;
@@ -82,54 +77,35 @@ const TAB_ROOT_SCREENS: Record<string, string> = {
 function CustomTabBar({ state, descriptors, navigation }: any) {
   const { theme, isDark } = useTheme();
   const { user } = useAuth();
-  const { canOpenScreen, hasPermission } = usePermissions();
+  const { canOpenScreen, hasPermission, isDataAdmin, hasReports } = usePermissions();
   const insets = useSafeAreaInsets();
-
-  const normalizedRole = normalizeUserRole(user?.role);
-  const isAdmin = isAdminRole(normalizedRole);
-  const isHR = isHRRole(normalizedRole);
   const [isEscalationMember, setIsEscalationMember] = useState(false);
   const [hasTeamMembers, setHasTeamMembers] = useState(false);
 
-  const SALES_ROLES = [
-    "SALES_EXECUTIVE","BDE","SENIOR_BDE","BDM","BDM_SALES",
-    "ASSOCIATE_BDE","ASSOCIATE_BDM","ASSOCIATE_SALES_EXECUTIVE",
-    "ASSOCIATE_PARTNER","SALES","TELECALLER","AGENT","CO-ORDINATOR",
-  ];
-  // SALES_MANAGER is intentionally excluded: managers with direct reports
-  // receive the My Team tab and can monitor their assigned sales staff.
-  const isSalesRole = SALES_ROLES.includes(normalizedRole);
-
+  // Tabs follow access, not role names: full data access (role setting in the
+  // Permission Manager), the screens' permissions, and the reporting line.
   useEffect(() => {
-    if (!user?.id || isAdmin || isHR || isSalesRole) return;
+    if (!user?.id || isDataAdmin) return;
     supabase
       .from("escalation_matrix")
       .select("id")
       .eq("user_id", user.id)
       .limit(1)
       .then(({ data }: { data: any[] | null }) => setIsEscalationMember(!!data?.length));
-  }, [user?.id, isAdmin, isHR, isSalesRole]);
+  }, [user?.id, isDataAdmin]);
 
   // The HR Panel is shown when at least one of its screens can be opened
-  // (same rules the screens and the database enforce), never just because
-  // some unrelated permission key contains ".view".
+  // through the user's own grants or role (same rules the screens and the
+  // database enforce). Access that comes only from managing a team is used
+  // through My Team instead, so every manager does not get the HR Panel.
   const hasAnyAdminPermission = Object.keys(SCREEN_PERMISSIONS).some(
-    (route) => route !== "TVDisplay" && !route.startsWith("Reports") && canOpenScreen(route),
+    (route) => route !== "TVDisplay" && !route.startsWith("Reports") && canOpenScreen(route, { ignoreManager: true }),
   );
-  const canSeeAdmin = (!isSalesRole && (isAdmin || isHR)) || hasAnyAdminPermission;
+  const canSeeAdmin = isDataAdmin || hasAnyAdminPermission;
 
-  // Check if user has team members
+  // Fallback for servers without get_my_access (hasReports comes from it).
   useEffect(() => {
-    if (!user?.id) {
-      setHasTeamMembers(false);
-      return;
-    }
-    // Hide My Team for admin roles completely
-    if (isAdmin || isHR) {
-      setHasTeamMembers(false);
-      return;
-    }
-    if (isSalesRole) {
+    if (!user?.id || isDataAdmin || hasReports) {
       setHasTeamMembers(false);
       return;
     }
@@ -138,18 +114,19 @@ function CustomTabBar({ state, descriptors, navigation }: any) {
       .select("id")
       .eq("reports_to", user.id)
       .eq("is_active", true)
+      .limit(1)
       .then(({ data }: { data: any[] | null }) => setHasTeamMembers(!!data?.length));
-  }, [user?.id, isAdmin, isHR, isSalesRole]);
+  }, [user?.id, isDataAdmin, hasReports]);
 
-  // Filter routes based on admin visibility
-  const canSeeReports = (!isSalesRole && (isAdmin || isHR)) || hasPermission("reports.view");
+  const canSeeReports = isDataAdmin || hasPermission("reports.view");
   let filtered = state.routes.filter(
     (r: any) =>
       (r.name !== "AdminTab" || canSeeAdmin) && (r.name !== "ReportsTab" || canSeeReports),
   );
 
-  // Filter out MyTeamTab if user doesn't have team members OR is admin/HR
-  const showMyTeam = !isSalesRole && !isAdmin && !isHR && (isEscalationMember || hasTeamMembers);
+  // My Team: anyone with people reporting to them (or on the escalation
+  // matrix); full-data-access roles use the HR Panel instead.
+  const showMyTeam = !isDataAdmin && (hasReports || hasTeamMembers || isEscalationMember);
   const routesToShow = showMyTeam
     ? filtered
     : filtered.filter((r: any) => r.name !== "MyTeamTab");

@@ -1,5 +1,9 @@
 import React, { ReactNode } from "react";
 import { usePermissions } from "@/hooks/usePermissions";
+import { canonicalPermission } from "@/constants/permissionCatalog";
+
+const hasPermissionKey = (granted: string, wanted: string) =>
+  granted === wanted || canonicalPermission(granted) === canonicalPermission(wanted);
 
 interface PermissionGateProps {
   permission: string;
@@ -18,19 +22,19 @@ export function PermissionGate({
   fallback = null,
   children,
 }: PermissionGateProps) {
-  const { hasPermission, getScopedPermission } = usePermissions();
+  const { hasPermission, scopedPermissions, isDataAdmin } = usePermissions();
 
   let isAllowed = false;
 
   if (scopeId) {
-    const scope = getScopedPermission(permission);
-    if (scope && (scope.scope === "GLOBAL" || scope.scope_id === scopeId)) {
-      isAllowed = true;
-    }
-    // Also check the master bypass for ADMIN/SYSTEM_ADMIN
-    if (hasPermission("SYSTEM_ADMIN")) {
-      isAllowed = true;
-    }
+    // Full data access covers every scope; otherwise any grant of the key that
+    // is company-wide or names this scope target. (Server checks still apply.)
+    isAllowed =
+      (isDataAdmin && !permission.startsWith("permissions.")) ||
+      (hasPermission(permission) &&
+        scopedPermissions.some(
+          (g) => (g.scope === "GLOBAL" || g.scope_id === scopeId) && hasPermissionKey(g.permission, permission),
+        ));
   } else {
     isAllowed = hasPermission(permission);
   }

@@ -1,0 +1,8 @@
+# npm run typecheck (final) — 2026-10-19T07:59:59Z
+commit: bcb28f3 + working tree
+---
+
+> my-app@1.2.0 typecheck
+> tsc --noEmit
+
+exit=0

@@ -1,3 +1,10 @@
+-- =============================================================================
+-- HISTORICAL BUNDLE - DO NOT RUN (marked 2026-10-19)
+-- Snapshot of the 2026-09-08 migrations. Many functions in it were replaced
+-- by later migrations; running it now would roll them back. Deploy from the
+-- ordered supabase/migrations folder instead (see
+-- docs/realtyhrm-audit/11_DEPLOYMENT_MANIFEST.md).
+-- =============================================================================
 -- ==============================================================================
 -- REALTYHRM MASTER ENHANCEMENTS DEPLOYMENT SCRIPT (2026-09-08)
 --

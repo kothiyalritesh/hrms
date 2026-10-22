@@ -7,7 +7,7 @@ const read = (relativePath: string) =>
 describe("Permissions Grant Fix & Audit Logs Compatibility", () => {
   const hotfixSql = read("supabase/fix_admin_grant_permission.sql");
   const masterDeploySql = read("supabase/deploy_all_20260908_enhancements.sql");
-  const permissionsContext = read("contexts/PermissionsContext.tsx");
+  const usePermissionsTs = read("hooks/usePermissions.ts");
 
   test("hotfix script alters audit_logs.record_id to text to avoid 42804 datatype mismatch", () => {
     expect(hotfixSql).toContain("alter table public.audit_logs alter column record_id type text");
@@ -39,10 +39,15 @@ describe("Permissions Grant Fix & Audit Logs Compatibility", () => {
     expect(masterDeploySql).toContain("notify pgrst, 'reload schema';");
   });
 
-  test("PermissionsContext defensively sanitizes scopeId and validates inputs", () => {
-    expect(permissionsContext).toContain("sanitizedScopeId");
-    expect(permissionsContext).toContain("User ID is required");
-    expect(permissionsContext).toContain("Permission is required");
+  // 2026-10-20: the unused PermissionsContext was removed; grants and revokes go
+  // through the server RPCs (admin_set_access_bulk / admin_revoke_access_bulk),
+  // which validate users, keys and scopes. The app's permission source is the
+  // shared usePermissions store.
+  test("usePermissions never caches a failed load and refreshes live", () => {
+    expect(usePermissionsTs).toContain("supabase.rpc('get_my_access')");
+    expect(usePermissionsTs).toContain("A failed load is never cached");
+    expect(usePermissionsTs).toContain("table: 'user_permission_versions'");
+    expect(usePermissionsTs).toMatch(/if \(inflight && inflightUser === userId\) return inflight;/);
   });
 });
 

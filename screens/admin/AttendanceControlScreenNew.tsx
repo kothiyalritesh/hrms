@@ -11,6 +11,7 @@ import { useTheme } from "@/hooks/useTheme";
 import { Spacing, BorderRadius, Colors } from "@/constants/theme";
 import Spacer from "@/components/Spacer";
 import { supabase } from "@/lib/supabase";
+import type { BiometricPunch } from "@/components/BiometricPunchList";
 import LocationTimelineModal, {
   PingPoint,
 } from "@/components/LocationTimelineModal";
@@ -299,11 +300,28 @@ export default function AttendanceControlScreenNew() {
   const [timelinePings, setTimelinePings] = useState<PingPoint[]>([]);
   const [timelineStory, setTimelineStory] = useState<LocationStory | null>(null);
   const [timelineLoading, setTimelineLoading] = useState(false);
+  const [timelinePunches, setTimelinePunches] = useState<BiometricPunch[]>([]);
 
   const openTimeline = useCallback(async (userId: string, name: string, date: string) => {
     setTimelineEmployee({ id: userId, name, date });
     setTimelineLoading(true);
     setTimelineStory(null);
+    setTimelinePunches([]);
+    setTimelinePings([]);
+
+    // Biometric punches of the day: the timeline of biometric-only staff, and
+    // next to the GPS story for App + Biometric staff.
+    const { data: punchRows } = await supabase
+      .from("smartoffice_device_logs")
+      .select("log_time, punch_direction, serial_number")
+      .eq("user_id", userId)
+      .eq("log_date_only", date)
+      .order("log_time", { ascending: true });
+    setTimelinePunches(
+      ((punchRows ?? []) as any[])
+        .filter((r) => r.log_time)
+        .map((r) => ({ time: String(r.log_time), direction: r.punch_direction ?? null, device: r.serial_number ?? null })),
+    );
 
     // The day as stays / trips / gaps with real timestamps; check-in and
     // check-out are events there, never GPS points.
@@ -2763,12 +2781,10 @@ export default function AttendanceControlScreenNew() {
                         </View>
                       )}
                       {(item.warning === true || String(item.warning).toLowerCase() === 'true') && <Feather name="alert-triangle" size={14} color={Colors.light.warning} />}
-                      {!isBio && (
-                        <TouchableOpacity style={s.timelineBtn} onPress={() => openTimeline(item.user_id, item.employee_name, item.date)}>
-                          <Feather name="map-pin" size={11} color="#3B82F6" />
-                          <ThemedText style={s.timelineBtnText}>Timeline</ThemedText>
-                        </TouchableOpacity>
-                      )}
+                      <TouchableOpacity style={s.timelineBtn} onPress={() => openTimeline(item.user_id, item.employee_name, item.date)}>
+                        <Feather name={isBio ? "clock" : "map-pin"} size={11} color="#3B82F6" />
+                        <ThemedText style={s.timelineBtnText}>Timeline</ThemedText>
+                      </TouchableOpacity>
                     </View>
                   </View>
                 </View>
@@ -3043,6 +3059,10 @@ export default function AttendanceControlScreenNew() {
                                       <ThemedText style={[s.statusText, { color: '#7C3AED' }]}>Bio</ThemedText>
                                     </View>
                                   )}
+                                  <TouchableOpacity style={s.timelineBtn} onPress={() => openTimeline(item.user_id, item.employee_name, item.date)}>
+                                    <Feather name="clock" size={11} color="#3B82F6" />
+                                    <ThemedText style={s.timelineBtnText}>Timeline</ThemedText>
+                                  </TouchableOpacity>
                                 </View>
                               </View>
                             </View>
@@ -3237,6 +3257,7 @@ export default function AttendanceControlScreenNew() {
         date={timelineEmployee?.date ?? ""}
         pings={timelinePings}
         story={timelineStory}
+        punches={timelinePunches}
         loading={timelineLoading}
         onClose={() => setTimelineEmployee(null)}
       />

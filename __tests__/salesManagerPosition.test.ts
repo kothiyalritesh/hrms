@@ -20,17 +20,16 @@ describe("Sales Manager position release contract", () => {
     expect(migration).toContain("deferrable initially deferred");
   });
 
-  test("Sales Manager is not hidden as an individual-contributor sales role", () => {
+  // 2026-10-20: tabs follow access instead of a role-name list. My Team shows
+  // for anyone with people reporting to them (Sales Manager included), so no
+  // role can hide it; the HR Panel follows the user's own grants.
+  test("Sales Manager is not hidden: My Team follows the reporting line, not role names", () => {
     const navigation = read("navigation/MainTabNavigator.tsx");
-    const salesRolesBlock = navigation.match(
-      /const SALES_ROLES = \[([\s\S]*?)\];/,
-    )?.[1];
 
-    expect(salesRolesBlock).toBeDefined();
-    expect(salesRolesBlock).toContain('"SALES_EXECUTIVE"');
-    expect(salesRolesBlock).toContain('"TELECALLER"');
-    expect(salesRolesBlock).toContain('"AGENT"');
-    expect(salesRolesBlock).not.toContain('"SALES_MANAGER"');
+    expect(navigation).not.toContain("SALES_ROLES");
+    expect(navigation).toContain(
+      "const showMyTeam = !isDataAdmin && (hasReports || hasTeamMembers || isEscalationMember);",
+    );
     expect(navigation).toContain('.eq("reports_to", user.id)');
   });
 

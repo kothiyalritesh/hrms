@@ -2,8 +2,10 @@
 import fs from "fs";
 import path from "path";
 
+// Windows checkouts (core.autocrlf) turn LF into CRLF; contracts below are
+// written with LF, so compare on normalised line endings.
 const read = (relativePath: string) =>
-  fs.readFileSync(path.resolve(__dirname, "..", relativePath), "utf8");
+  fs.readFileSync(path.resolve(__dirname, "..", relativePath), "utf8").replace(/\r\n/g, "\n");
 
 const sourceFiles = (relativeDirectory: string): string[] => {
   const directory = path.resolve(__dirname, "..", relativeDirectory);
@@ -190,7 +192,13 @@ describe("production hardening contracts", () => {
       const edge = read(`supabase/functions/${functionName}/index.ts`);
       expect(edge).toContain('action === "version"');
       expect(edge).toContain(`function: "${functionName}"`);
-      expect(edge).toContain(release.requiredBackendSchemaVersion);
+      // Disposition 2026-10-19: each function declares the schema IT needs
+      // (it must not need a newer one than this release) and the version it
+      // reports must be the one the release expects, so a deploy is verifiable.
+      expect(edge).toContain(`"${release.requiredEdgeFunctionVersions[functionName]}"`);
+      const declared = edge.match(/(?:requiredBackendSchemaVersion:|BACKEND_SCHEMA_VERSION =)\s*"(\d{14})"/);
+      expect(declared).not.toBeNull();
+      expect(Number(declared[1])).toBeLessThanOrEqual(Number(release.requiredBackendSchemaVersion));
       const userAuthentication = edge.indexOf(".auth.getUser(");
       if (userAuthentication >= 0) {
         expect(edge.indexOf('action === "version"')).toBeLessThan(
@@ -746,8 +754,10 @@ describe("production hardening contracts", () => {
     const currentDayMigration = read(
       "supabase/migrations/20260803030000_current_day_operational_verification.sql",
     );
+    // Disposition 2026-10-19: the daily report now reads the single canonical
+    // attendance RPC (rpc_admin_attendance_daily_v3 was retired).
     expect(read("services/canonical-attendance.service.ts")).toContain(
-      '"rpc_admin_attendance_daily_v3"',
+      '"rpc_attendance_canonical_range"',
     );
     expect(screen).toContain('"CONFIG_REQUIRED"');
     expect(screen).toContain("filtered.filter(isPresent).length");

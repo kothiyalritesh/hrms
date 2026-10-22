@@ -22,6 +22,10 @@ import { downloadBrowserBytes } from "@/utils/browserFileDownload";
 import { formatHrmsDateTime, formatHrmsTime } from "@/utils/attendanceTimestamp";
 import { usePermissions } from "@/hooks/usePermissions";
 import {
+  parseAttendanceReportQuery,
+  type ParsedAttendanceReportQuery,
+} from "@/utils/attendanceReportQuery";
+import {
   CanonicalAttendanceService,
   withAttendanceV2Aliases,
 } from "@/services/canonical-attendance.service";
@@ -231,6 +235,12 @@ function isPresent(row: any) {
 function specialistMatch(row: any, filter: string) {
   if (!filter) return true;
   if (filter === "LATE") return isLate(row);
+  const dayStatus = String(row.attendance_status || "").toUpperCase();
+  if (filter === "PRESENT") return isPresent(row);
+  if (filter === "ABSENT") return row.report_status === "ABSENT" || dayStatus === "ABSENT";
+  if (filter === "ON_LEAVE") return dayStatus === "LEAVE" || row.report_status === "ON_LEAVE";
+  if (filter === "HOLIDAY") return dayStatus === "HOLIDAY" || row.report_status === "HOLIDAY";
+  if (filter === "WEEKLY_OFF") return dayStatus === "WEEKLY_OFF" || row.report_status === "WEEKLY_OFF";
   if (filter === "NO_CHECKOUT") {
     return (
       row.suggested_status === "NO_CHECKOUT" ||
@@ -271,6 +281,32 @@ const EMPTY_FILTERS: Filters = {
   search: "",
 };
 
+const SPECIALIST_STATUSES = [
+  "LATE",
+  "ABSENT",
+  "NO_CHECKOUT",
+  "FIELD_VISIT",
+  "MISMATCH",
+  "SUSPICIOUS_GPS",
+  "CONFIG_REQUIRED",
+];
+
+const SMART_REPORT_EXAMPLES = [
+  "Marketing team from 3 Aug to 16 Aug who were late",
+  "Absent employees yesterday",
+  "Biometric attendance for Lucknow office last month",
+];
+
+/** A name typed in a smart query, matched to a value that exists in the report. */
+function resolveLabel(typed: string | undefined, candidates: string[]) {
+  if (!typed) return undefined;
+  const wanted = typed.trim().toLowerCase();
+  const exact = candidates.find((candidate) => candidate.toLowerCase() === wanted);
+  if (exact) return exact;
+  const partial = candidates.filter((candidate) => candidate.toLowerCase().includes(wanted));
+  return partial.length === 1 ? partial[0] : undefined;
+}
+
 const REPORT_SECTIONS = [
   "Overview",
   "Daily Records",
@@ -298,22 +334,30 @@ export default function AdvancedAttendanceReportScreen({ route }: any) {
       : "Overview",
   );
 
-  const load = useCallback(async () => {
+  const [smartQuery, setSmartQuery] = useState("");
+  const [smartRunning, setSmartRunning] = useState(false);
+  const [smartResult, setSmartResult] = useState<{ understood: string[]; warnings: string[] } | null>(null);
+
+  // Returns the loaded rows (null when nothing loaded) so a smart report can
+  // match names against the period it asked for.
+  const load = useCallback(async (period?: { start: string; end: string }): Promise<any[] | null> => {
     const serverDate = await BusinessClockService.getDate(true);
-    const resolvedStart = start || `${serverDate.slice(0, 8)}01`;
-    const resolvedEnd = end || serverDate;
+    const resolvedStart = period?.start || start || `${serverDate.slice(0, 8)}01`;
+    const resolvedEnd = period?.end || end || serverDate;
     if (!start) setStart(resolvedStart);
     if (!end) setEnd(resolvedEnd);
     if (resolvedEnd < resolvedStart) {
       Alert.alert("Invalid range", "End date must be after start date.");
-      return;
+      return null;
     }
     setLoading(true);
     setLoadError("");
     try {
       const perm = getScopedPermission('attendance.view');
         const isGlobal = perm?.scope === 'GLOBAL' || hasPermission('SYSTEM_ADMIN');
-        setRows(await fetchAttendanceRows(resolvedStart, resolvedEnd, isGlobal ? undefined : { office_id: (perm?.scope === 'OFFICE' || perm?.scope === 'OFFICE_TREE') ? perm.scope_id : undefined }));
+        const loaded = await fetchAttendanceRows(resolvedStart, resolvedEnd, isGlobal ? undefined : { office_id: (perm?.scope === 'OFFICE' || perm?.scope === 'OFFICE_TREE') ? perm.scope_id : undefined });
+        setRows(loaded);
+        return loaded;
     } catch (error: any) {
       const rawMessage = error?.message ?? "Unable to load report.";
       const message = rawMessage.includes(
@@ -323,10 +367,53 @@ export default function AdvancedAttendanceReportScreen({ route }: any) {
         : rawMessage;
       setLoadError(message);
       Alert.alert("Report error", message);
+      return null;
     } finally {
       setLoading(false);
     }
   }, [start, end, getScopedPermission, hasPermission]);
+
+  const runSmartReport = useCallback(async () => {
+    if (smartRunning || !smartQuery.trim()) return;
+    setSmartRunning(true);
+    try {
+      const businessDate = await BusinessClockService.getDate(true);
+      const parsed: ParsedAttendanceReportQuery = parseAttendanceReportQuery(smartQuery, businessDate);
+      if (!parsed.interpretation.length) {
+        setSmartResult({ understood: [], warnings: parsed.warnings });
+        return;
+      }
+      if (parsed.start) setStart(parsed.start);
+      if (parsed.end) setEnd(parsed.end);
+      if (parsed.section) setSection(parsed.section);
+      const loaded =
+        (await load(parsed.start && parsed.end ? { start: parsed.start, end: parsed.end } : undefined)) ?? rows;
+
+      const labels = (key: string, kind: LabelKind) =>
+        [...new Set(loaded.map((row) => canonicalLabel(row[key], kind)).filter(Boolean))] as string[];
+      const warnings = parsed.warnings.filter((warning) => warning !== "No supported filter was recognised.");
+      const pick = (typed: string | undefined, key: string, kind: LabelKind, noun: string) => {
+        if (!typed) return "";
+        const match = resolveLabel(typed, labels(key, kind));
+        if (!match) warnings.push(`No ${noun} called “${typed}” in this period, so that part was not applied.`);
+        return match ?? "";
+      };
+      // A smart report replaces the current filters with exactly what was asked.
+      setFilters({
+        ...EMPTY_FILTERS,
+        office: pick(parsed.filters.office, "office_name", "office", "office"),
+        team: pick(parsed.filters.team, "team", "team", "team"),
+        head: pick(parsed.filters.head, "team_head_name", "person", "team head"),
+        role: pick(parsed.filters.role, "role", "role", "role"),
+        status: parsed.filters.status ?? "",
+        source: parsed.filters.source ?? "",
+        search: parsed.filters.search ?? "",
+      });
+      setSmartResult({ understood: parsed.interpretation, warnings });
+    } finally {
+      setSmartRunning(false);
+    }
+  }, [smartQuery, smartRunning, load, rows]);
 
   useFocusEffect(
     useCallback(() => {
@@ -679,7 +766,7 @@ export default function AdvancedAttendanceReportScreen({ route }: any) {
       foreground: theme.warningText,
     },
     {
-      label: "Mismatch",
+      label: "Source mismatch",
       value: summary.mismatch,
       icon: "alert-triangle" as const,
       background: theme.errorBg,
@@ -780,6 +867,101 @@ export default function AdvancedAttendanceReportScreen({ route }: any) {
         ]}
       >
         <View style={styles.panelTitleRow}>
+          <View style={[styles.sectionIcon, { backgroundColor: theme.backgroundSecondary }]}>
+            <Feather name="message-square" size={17} color={theme.primary} />
+          </View>
+          <View style={styles.flex}>
+            <ThemedText type="h4">Smart report</ThemedText>
+            <ThemedText type="caption" style={{ color: theme.textSecondary }}>
+              Describe it in words: period, team or office, manager, role, and who (late, absent, no checkout…)
+            </ThemedText>
+          </View>
+        </View>
+        <TextInput
+          style={[
+            styles.input,
+            styles.smartInput,
+            { backgroundColor: theme.backgroundSecondary, borderColor: theme.border, color: theme.text },
+          ]}
+          value={smartQuery}
+          onChangeText={setSmartQuery}
+          placeholder={`e.g. ${SMART_REPORT_EXAMPLES[0]}`}
+          placeholderTextColor={theme.textTertiary}
+          multiline
+          blurOnSubmit
+          returnKeyType="search"
+          onSubmitEditing={() => void runSmartReport()}
+          accessibilityLabel="Smart report request"
+        />
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
+          {SMART_REPORT_EXAMPLES.map((example) => (
+            <Pressable
+              key={example}
+              onPress={() => setSmartQuery(example)}
+              style={[styles.exampleChip, { borderColor: theme.border, backgroundColor: theme.backgroundSecondary }]}
+            >
+              <ThemedText type="caption" style={{ color: theme.textSecondary }}>
+                {example}
+              </ThemedText>
+            </Pressable>
+          ))}
+        </ScrollView>
+        <Pressable
+          accessibilityRole="button"
+          style={({ pressed }) => [
+            styles.primaryButton,
+            {
+              backgroundColor: theme.primary,
+              opacity: pressed || smartRunning || loading || !smartQuery.trim() ? 0.6 : 1,
+            },
+          ]}
+          onPress={() => void runSmartReport()}
+          disabled={smartRunning || loading || !smartQuery.trim()}
+        >
+          {smartRunning ? (
+            <ActivityIndicator color={theme.buttonText} />
+          ) : (
+            <Feather name="zap" size={17} color={theme.buttonText} />
+          )}
+          <ThemedText style={[styles.buttonText, { color: theme.buttonText }]}>
+            {smartRunning ? "Building report..." : "Run smart report"}
+          </ThemedText>
+        </Pressable>
+        {smartResult ? (
+          <View style={{ gap: 6 }}>
+            {smartResult.understood.length ? (
+              <View style={styles.understoodRow}>
+                <ThemedText type="caption" style={{ color: theme.textSecondary }}>
+                  Understood:
+                </ThemedText>
+                {smartResult.understood.map((item) => (
+                  <View key={item} style={[styles.understoodChip, { backgroundColor: theme.infoBg }]}>
+                    <ThemedText type="caption" style={{ color: theme.infoText, fontWeight: "700" }}>
+                      {item}
+                    </ThemedText>
+                  </View>
+                ))}
+              </View>
+            ) : null}
+            {smartResult.warnings.map((warning) => (
+              <ThemedText key={warning} type="small" style={{ color: theme.warningText }}>
+                {warning}
+              </ThemedText>
+            ))}
+          </View>
+        ) : null}
+      </View>
+
+      <View
+        style={[
+          styles.panel,
+          {
+            backgroundColor: theme.backgroundDefault,
+            borderColor: theme.border,
+          },
+        ]}
+      >
+        <View style={styles.panelTitleRow}>
           <View style={[styles.sectionIcon, { backgroundColor: theme.infoBg }]}>
             <Feather name="calendar" size={17} color={theme.infoText} />
           </View>
@@ -841,7 +1023,7 @@ export default function AdvancedAttendanceReportScreen({ route }: any) {
               opacity: pressed || loading ? 0.75 : 1,
             },
           ]}
-          onPress={load}
+          onPress={() => void load()}
           disabled={loading}
         >
           {loading ? (
@@ -943,12 +1125,9 @@ export default function AdvancedAttendanceReportScreen({ route }: any) {
           placeholderTextColor={theme.textTertiary}
         />
         {renderFilter("SPECIALIST", "status", [
-          "LATE",
-          "NO_CHECKOUT",
-          "FIELD_VISIT",
-          "MISMATCH",
-          "SUSPICIOUS_GPS",
-          "CONFIG_REQUIRED",
+          ...SPECIALIST_STATUSES,
+          // a status set by a smart report stays visible and removable here
+          ...(filters.status && !SPECIALIST_STATUSES.includes(filters.status) ? [filters.status] : []),
         ])}
       </View>
 
@@ -1298,6 +1477,10 @@ const styles = StyleSheet.create({
     gap: Spacing.lg,
   },
   sectionTabs: { gap: 8, paddingVertical: 2 },
+  smartInput: { minHeight: 64, textAlignVertical: "top" },
+  exampleChip: { borderWidth: 1, borderRadius: 16, paddingHorizontal: 10, paddingVertical: 6 },
+  understoodRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6 },
+  understoodChip: { borderRadius: 12, paddingHorizontal: 8, paddingVertical: 3 },
   sectionTab: { borderWidth: 1, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 9 },
   flex: { flex: 1 },
   hero: {

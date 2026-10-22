@@ -642,12 +642,14 @@ class SmartOfficeService {
 
       console.log(`Received ${deviceLogs.length} device logs from SmartOffice`);
 
-      // Get local employees with SmartOffice codes
+      // Active employees with SmartOffice codes (punches of people who left
+      // must not be applied to attendance).
       const { data: localEmployees, error: employeeError } =
         await fetchAllPages<any>((from, to) =>
           supabase
             .from("profiles")
             .select("id, smartoffice_employee_code")
+            .eq("is_active", true)
             .not("smartoffice_employee_code", "is", null)
             .order("id")
             .range(from, to),

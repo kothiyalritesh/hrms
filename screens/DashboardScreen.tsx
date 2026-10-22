@@ -13,7 +13,7 @@ import {
   Dimensions,
 } from "react-native";
 import Feather from "@expo/vector-icons/Feather";
-import { useFocusEffect, useIsFocused } from "@react-navigation/native";
+import { useFocusEffect, useIsFocused, useRoute } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { ScreenScrollView } from "@/components/ScreenScrollView";
 import { NotificationHealthBanner } from "@/components/NotificationAlerts";
@@ -25,7 +25,7 @@ import { Spacing, BorderRadius, Colors, Shadows } from "@/constants/theme";
 import Spacer from "@/components/Spacer";
 import { supabase } from "@/lib/supabase";
 import { AttendanceService } from "@/services/attendance.service";
-import GeofenceReasonModal from "@/components/modals/GeofenceReasonModal";
+import { requestOfficeExitPrompt } from "@/services/location/officeExitPrompt";
 import { OfficeService } from "@/services/office.service";
 import * as Location from "expo-location";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -64,6 +64,7 @@ import {
   toTitleCase,
 } from "@/utils/format";
 import { DashboardSummaryService } from "@/services/dashboard-summary.service";
+import { usePermissions } from "@/hooks/usePermissions";
 
 import { describeAge, minutesAgo } from "@/utils/locationFreshness";
 
@@ -220,6 +221,9 @@ function QuickAction({
 export default function DashboardScreen({ navigation }: DashboardScreenProps) {
   const { theme, isDark } = useTheme();
   const { user } = useAuth();
+  // Birthdays are shown only to people allowed to see them (View birthdays).
+  const { canOpenScreen } = usePermissions();
+  const canSeeBirthdays = canOpenScreen("UpcomingBirthdays");
   const isFocused = useIsFocused();
   const insets = useSafeAreaInsets();
   const { health: trackingHealth, recheck: recheckTracking } =
@@ -244,7 +248,6 @@ export default function DashboardScreen({ navigation }: DashboardScreenProps) {
   const [attendanceLoading, setAttendanceLoading] = useState(false);
   const [showAttendanceCheckout, setShowAttendanceCheckout] = useState(false);
   const [pendingVisits, setPendingVisits] = useState(0);
-  const [geofenceEvent, setGeofenceEvent] = useState<{ id: string; distance: number } | null>(null);
   const [checkInMsg, setCheckInMsg] = useState<{
     type: "success" | "error";
     text: string;
@@ -497,24 +500,16 @@ export default function DashboardScreen({ navigation }: DashboardScreenProps) {
     return () => clearInterval(interval);
   }, [isFocused]);
 
-  // Confirmed office exit waiting for this employee's reason (server-detected).
-  const checkPendingGeofenceReason = useCallback(async () => {
-    if (!user?.id) return;
-    const { data, error } = await supabase.rpc("rpc_my_pending_geofence_reason");
-    if (error || !data || typeof data !== "object" || !(data as any).id) {
-      setGeofenceEvent(null);
-      return;
-    }
-    setGeofenceEvent({ id: String((data as any).id), distance: Number((data as any).distance) || 0 });
-  }, [user?.id]);
-
-  useFocusEffect(
-    useCallback(() => {
-      void checkPendingGeofenceReason();
-      const timer = setInterval(() => void checkPendingGeofenceReason(), 5 * 60_000);
-      return () => clearInterval(timer);
-    }, [checkPendingGeofenceReason]),
-  );
+  // A link to /HRMS/?geofenceEvent=<id> (in-app notification, web) opens the
+  // office exit reason form; OfficeExitReasonHost shows it and also asks on
+  // its own when a confirmed exit has no reason yet.
+  const route = useRoute<any>();
+  const linkedGeofenceEvent = route.params?.geofenceEvent as string | undefined;
+  useEffect(() => {
+    if (!linkedGeofenceEvent) return;
+    requestOfficeExitPrompt(String(linkedGeofenceEvent));
+    navigation.setParams({ geofenceEvent: undefined } as any);
+  }, [linkedGeofenceEvent, navigation]);
 
   // A biometric punch is imported by the server even when this app is already
   // open. Realtime refreshes the card immediately; polling is a fallback for
@@ -1518,12 +1513,14 @@ export default function DashboardScreen({ navigation }: DashboardScreenProps) {
             color={C.primary}
             onPress={() => navigation.navigate("MyActivityLogs")}
           />
-          <QuickAction
-            icon="gift"
-            label="Birthdays"
-            color={C.primary}
-            onPress={() => navigation.navigate("UpcomingBirthdays")}
-          />
+          {canSeeBirthdays ? (
+            <QuickAction
+              icon="gift"
+              label="Birthdays"
+              color={C.primary}
+              onPress={() => navigation.navigate("UpcomingBirthdays")}
+            />
+          ) : null}
           <QuickAction
             icon="life-buoy"
             label="Support"
@@ -1776,16 +1773,6 @@ export default function DashboardScreen({ navigation }: DashboardScreenProps) {
           </View>
         </View>
       </Modal>
-
-      {geofenceEvent ? (
-        <GeofenceReasonModal
-          visible
-          eventId={geofenceEvent.id}
-          distance={geofenceEvent.distance}
-          onClose={() => setGeofenceEvent(null)}
-          onSubmitSuccess={() => setGeofenceEvent(null)}
-        />
-      ) : null}
 
       {/* ── Event Picker Modal ── */}
       <Modal

@@ -9,6 +9,9 @@ interface GeofenceReasonModalProps {
   visible: boolean;
   eventId: string;
   distance: number;
+  /** POTENTIAL_EXIT: just left (can explain right away); PENDING_REASON: outside 10+ min. */
+  status?: string | null;
+  officeName?: string | null;
   onClose: () => void;
   onSubmitSuccess: () => void;
 }
@@ -20,8 +23,18 @@ function friendlyError(message: string) {
   return "Could not submit the reason. Check your connection and try again.";
 }
 
-/** Asks the employee why they left the office (server-confirmed exit > 10 min). */
-export default function GeofenceReasonModal({ visible, eventId, distance, onClose, onSubmitSuccess }: GeofenceReasonModalProps) {
+/** Asks the employee why they left the office (just left, or outside > 10 min). */
+export default function GeofenceReasonModal({
+  visible,
+  eventId,
+  distance,
+  status,
+  officeName,
+  onClose,
+  onSubmitSuccess,
+}: GeofenceReasonModalProps) {
+  const office = officeName || "your office";
+  const justLeft = status === "POTENTIAL_EXIT";
   const { theme } = useTheme();
   const [reason, setReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -72,8 +85,9 @@ export default function GeofenceReasonModal({ visible, eventId, distance, onClos
               </View>
               <ThemedText style={styles.title}>You left the office</ThemedText>
               <ThemedText style={[styles.subtitle, { color: theme.textSecondary }]}>
-                You were about {Math.round(distance)} m from your office for more than 10 minutes during working hours.
-                Please tell us why.
+                {justLeft
+                  ? `You are about ${Math.round(distance)} m from ${office}, outside the allowed area. If this is for work, tell us why now.`
+                  : `You were about ${Math.round(distance)} m from ${office} for more than 10 minutes during working hours. Please tell us why.`}
               </ThemedText>
               <TextInput
                 style={[styles.input, { color: theme.text, borderColor: error ? theme.error : theme.border, backgroundColor: theme.backgroundSecondary }]}

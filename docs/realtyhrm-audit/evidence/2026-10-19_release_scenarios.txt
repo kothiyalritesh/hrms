@@ -1,0 +1,123 @@
+﻿# supabase/tests/release_2026_10/run.ps1 -Port 54330 (fresh local PostgreSQL 17.11) - 2026-10-19T08:09:34Z
+wrote supabase/tests/release_2026_10/mock_schema.sql
+NOTICE:  database "hrms_rel_01" does not exist, skipping
+  ok  migration applies twice (v2 patched once)
+  ok  v3 manager warning uses the office radius
+  ok  checkin_attempts accepts geo_fence_blocked and keeps old values
+  ok  normal check-in analysis records nothing
+  ok  no fraud rows after a normal check-in
+  ok  inside reading, poor accuracy: blocked
+  ok  inside reading, poor accuracy: not suspicious
+  ok  blocked attempt is logged
+  ok  250 m: blocked
+  ok  250 m: suspicious signal
+  ok  250 m: HR alerted
+  ok  300 m: blocked
+  ok  same day again: still one entry
+01_suspicious_outside_office: PASS
+  ok  report 40 m: not recorded
+  ok  report with 150 m accuracy: ignored
+  ok  report 499 m: recorded
+  ok  report without sign-in refused
+  ok  anon cannot execute the report RPC
+NOTICE:  database "hrms_rel_02" does not exist, skipping
+  ok  biometric sync keeps HR check-in (patched once)
+  ok  not signed in
+  ok  employee without permission
+  ok  HR corrects own attendance
+  ok  older than previous month
+  ok  future date
+  ok  checkout before check-in
+  ok  past day without checkout
+  ok  no acknowledgement
+  ok  remarks too short
+  ok  more than 16 hours
+  ok  routine correction applies
+  ok  attendance row written
+  ok  audit row by HR1
+  ok  employee notified
+  ok  retry with same key is replayed
+  ok  still one correction
+  ok  existing check-in -> waits
+  ok  record unchanged while pending
+  ok  second open request same day
+  ok  submitter cannot approve
+  ok  employee cannot approve
+  ok  no permission cannot approve
+  ok  other HR approves
+  ok  approved times applied
+  ok  cannot decide twice
+  ok  weekly off + unverified waits
+  ok  reject needs a note
+  ok  approver grant rejects
+  ok  nothing written for rejected day
+  ok  full-day leave blocks
+  ok  half-day leave waits
+  ok  scoped officer can submit
+  ok  scoped officer cannot approve
+  ok  approver grant approves
+  ok  same-day checkout passes the protected-checkout trigger
+  ok  policy window default
+  ok  older than window
+  ok  future date
+  ok  no declaration
+  ok  short explanation
+  ok  no checkout
+  ok  valid request waits
+  ok  attendance unchanged until approved
+  ok  admins + same-office HR notified (not other office, not employee)
+  ok  retry is replayed
+  ok  second open request refused
+  ok  day with attendance refused
+  ok  employee cannot review own request
+  ok  HR returns for information
+  ok  someone else cannot answer
+  ok  employee answers
+  ok  HR approves
+  ok  request applied to attendance
+  ok  employee told it was approved
+  ok  history in order
+  ok  employee sees only own requests
+  ok  request for rejection test
+  ok  rejected
+  ok  linked re-request allowed
+  ok  re-request flagged for reviewer
+  ok  employee withdraws
+  ok  window setting is honoured
+  ok  corrections cannot be edited directly
+  ok  corrections cannot be deleted
+  ok  history cannot be deleted
+  ok  clients cannot write corrections directly
+  ok  anon cannot submit
+  ok  HR check-in kept after an earlier punch
+02_corrections_and_regularization: PASS
+NOTICE:  database "hrms_rel_03" does not exist, skipping
+  ok  E creates -> C and D see it
+  ok  creator recorded
+  ok  A creates -> only E and B
+  ok  E forwards to C and D
+  ok  B forwards only to G
+  ok  audience after forwarding
+  ok  B cannot forward to E's team
+  ok  C has no team to forward to
+  ok  F never received it
+  ok  forwarding twice adds nobody
+  ok  private task stays private
+  ok  A list
+  ok  C list
+  ok  G list
+  ok  H list
+  ok  shared task is view-only, forwarded by E
+  ok  people notified
+  ok  RLS: C reads A-task and E-task
+  ok  RLS: H reads nothing
+  ok  RLS: H cannot add himself to an audience
+  ok  RLS: A reads own private task
+03_task_hierarchy: PASS
+NOTICE:  database "hrms_rel_04" does not exist, skipping
+  ok  registering requeues only that user's live waiting pushes
+  ok  heartbeat update of an active token requeues nothing
+  ok  re-activated token requeues
+04_push_token_requeue: PASS
+All release scenarios passed.
+exit=0

@@ -1,0 +1,4807 @@
+# npm test (final) — 2026-10-19T08:00:33Z
+commit: bcb28f3 + working tree
+---
+
+> my-app@1.2.0 test
+> jest --runInBand --silent
+
+FAIL __tests__/enterpriseAttendanceReporting.test.ts
+  ● enterprise attendance reporting v4 › routes the advanced report through v4 and exposes smart queries
+
+    expect(received).toContain(expected) // indexOf
+
+    Expected substring: "parseAttendanceReportQuery"
+    Received string:    "import React, { useCallback, useMemo, useState } from \"react\";·
+    import {·
+      ActivityIndicator,·
+      Alert,·
+      Pressable,·
+      ScrollView,·
+      StyleSheet,·
+      TextInput,·
+      View,·
+    } from \"react-native\";·
+    import Feather from \"@expo/vector-icons/Feather\";·
+    import { useFocusEffect } from \"@react-navigation/native\";·
+    import { ScreenScrollView } from \"@/components/ScreenScrollView\";·
+    import { ThemedText } from \"@/components/ThemedText\";·
+    import { BorderRadius, Shadows, Spacing } from \"@/constants/theme\";·
+    import { useTheme } from \"@/hooks/useTheme\";·
+    import { supabase } from \"@/lib/supabase\";·
+    import { BusinessClockService } from \"@/services/business-clock.service\";·
+    import { reportNonFatalError } from \"@/utils/operationalErrors\";·
+    import { toTitleCase } from \"@/utils/format\";·
+    import { downloadBrowserBytes } from \"@/utils/browserFileDownload\";·
+    import { formatHrmsDateTime, formatHrmsTime } from \"@/utils/attendanceTimestamp\";·
+    import { usePermissions } from \"@/hooks/usePermissions\";·
+    import {·
+      CanonicalAttendanceService,·
+      withAttendanceV2Aliases,·
+    } from \"@/services/canonical-attendance.service\";···
+    const PAGE_SIZE = 1000;·
+    const MAX_EXPORT_ROWS = 20_000;·
+    const MAX_BROWSER_EXCEL_ROWS = MAX_EXPORT_ROWS;·
+    const IST_TIME_ZONE = \"Asia/Kolkata\";·
+    const XLSX_MIME_TYPE =·
+      \"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet\";···
+    const yieldToBrowser = () =>·
+      new Promise<void>((resolve) => {·
+        if (typeof window !== \"undefined\" && window.requestAnimationFrame) {·
+          window.requestAnimationFrame(() => window.setTimeout(resolve, 0));·
+          return;·
+        }·
+        setTimeout(resolve, 0);·
+      });···
+    async function downloadWorkbook(XLSX: any, workbook: any, filename: string) {·
+      if (·
+        typeof window === \"undefined\" ||·
+        typeof document === \"undefined\" ||·
+        typeof Blob === \"undefined\"·
+      ) {·
+        XLSX.writeFile(workbook, filename, { compression: true });·
+        return;·
+      }···
+      const bytes = XLSX.write(workbook, {·
+        bookType: \"xlsx\",·
+        type: \"array\",·
+        // ZIP compression is CPU-heavy and used to freeze monthly exports on the·
+        // browser main thread. The larger uncompressed workbook downloads much·
+        // faster and Excel opens it normally.·
+        compression: false,·
+      });·
+      await downloadBrowserBytes(bytes, filename, XLSX_MIME_TYPE);·
+    }···
+    type LabelKind = \"office\" | \"team\" | \"person\" | \"role\";···
+    const LABEL_ACRONYMS = new Set([·
+      \"agm\",·
+      \"ak\",·
+      \"bde\",·
+      \"bdm\",·
+      \"gm\",·
+      \"gv\",·
+      \"hr\",·
+      \"hrd\",·
+      \"mh\",·
+      \"vp\",·
+    ]);···
+    const TEAM_ALIASES: Record<string, string> = {·
+      \"ankit mavi team\": \"Ankit Mavi\",·
+      \"mh mhendi team\": \"Mohammad Mehdi\",·
+      \"mohammad mehdi\": \"Mohammad Mehdi\",·
+      \"mohammed mehdi\": \"Mohammad Mehdi\",·
+      \"mohhamad mehdi\": \"Mohammad Mehdi\",·
+      \"prince mavi team\": \"Prince Mavi\",·
+      \"satya prkash\": \"Satya Prakash\",·
+    };···
+    function canonicalLabel(value: unknown, kind: LabelKind): string {·
+      const clean = String(value ?? \"\")·
+        .trim()·
+        .replace(/\\s+/g, \" \");·
+      if (!clean) return \"\";·
+      if (kind === \"person\") return toTitleCase(clean);·
+      if (kind === \"team\" && TEAM_ALIASES[clean.toLowerCase()]) {·
+        return TEAM_ALIASES[clean.toLowerCase()];·
+      }···
+      return clean·
+        .replaceAll(\"_\", \" \")·
+        .toLowerCase()·
+        .split(\" \")·
+        .map((word) =>·
+          LABEL_ACRONYMS.has(word)·
+            ? word.toUpperCase()·
+            : word.charAt(0).toUpperCase() + word.slice(1),·
+        )·
+        .join(\" \");·
+    }···
+    function csvCell(value: unknown) {·
+      const text = value == null ? \"\" : String(value);·
+      return `\"${text.replaceAll('\"', '\"\"')}\"`;·
+    }···
+    async function downloadAttendanceCsv(rows: any[], filename: string) {·
+      if (·
+        typeof window === \"undefined\" ||·
+        typeof document === \"undefined\" ||·
+        typeof Blob === \"undefined\"·
+      ) {·
+        throw new Error(\"CSV recovery download is available on the web app only.\");·
+      }·
+      const headers = [·
+        \"Date\",·
+        \"Employee\",·
+        \"Employee No\",·
+        \"Registered Office\",·
+        \"Check-In Office\",·
+        \"Attendance Source\",·
+        \"Team\",·
+        \"Team Head\",·
+        \"Role\",·
+        \"App In\",·
+        \"Biometric In\",·
+        \"Final In\",·
+        \"App Out\",·
+        \"Biometric Out\",·
+        \"Final Out\",·
+        \"Status\",·
+        \"Source\",·
+        \"Suggested\",·
+        \"Fraud Severity\",·
+        \"Fraud Score\",·
+      ];·
+      const values = rows.map((row) => [·
+        row.date,·
+        canonicalLabel(row.name, \"person\"),·
+        row.employee_number,·
+        canonicalLabel(row.office_name, \"office\"),·
+        canonicalLabel((row as any).check_in_office_name ?? row.office_name, \"office\"),·
+        (row as any).attendance_source ?? row.presence_source ?? \"APP\",·
+        canonicalLabel(row.team, \"team\"),·
+        canonicalLabel(row.team_head_name, \"person\"),·
+        canonicalLabel(row.role, \"role\"),·
+        formatHrmsDateTime(row.app_in, \"No check-in\"),·
+        formatHrmsDateTime(row.bio_in, \"No biometric punch\"),·
+        formatHrmsDateTime(row.final_in, \"No check-in\"),·
+        formatHrmsDateTime(row.app_out, \"No checkout\"),·
+        formatHrmsDateTime(row.bio_out, \"No biometric evidence\"),·
+        formatHrmsDateTime(row.final_out, \"No checkout\"),·
+        row.report_status,·
+        row.presence_source,·
+        row.suggested_status,·
+        row.fraud_severity,·
+        row.fraud_score,·
+      ]);·
+      const csv = [headers, ...values]·
+        .map((line) => line.map(csvCell).join(\",\"))·
+        .join(\"\\r\\n\");·
+      await downloadBrowserBytes(·
+        new TextEncoder().encode(`\\uFEFF${csv}`),·
+        filename,·
+        \"text/csv;charset=utf-8\",·
+      );·
+    }···
+    const formatTime = (value: string | null | undefined) => {·
+      if (!value) return \"Not recorded\";·
+      return formatHrmsTime(value, \"No time recorded\");·
+    };···
+    async function fetchAllRows(·
+      table: string,·
+      select: string,·
+      start: string,·
+      end: string,·
+    ) {·
+      const rows: any[] = [];·
+      for (let from = 0; from < MAX_EXPORT_ROWS; from += PAGE_SIZE) {·
+        const { data, error } = await supabase·
+          .from(table)·
+          .select(select)·
+          .gte(\"date\", start)·
+          .lte(\"date\", end)·
+          .order(\"date\", { ascending: false })·
+          .range(from, from + PAGE_SIZE - 1);·
+        if (error) throw error;·
+        rows.push(...(data ?? []));·
+        if ((data?.length ?? 0) < PAGE_SIZE) return rows;·
+      }·
+      throw new Error(·
+        `Report exceeds ${MAX_EXPORT_ROWS.toLocaleString(\"en-IN\")} rows. Select a smaller date range.`,·
+      );·
+    }···
+    async function fetchAttendanceRows(start: string, end: string, scopeFilters?: any) {·
+      return (await CanonicalAttendanceService.list(start, end, MAX_EXPORT_ROWS, scopeFilters)).map(·
+        withAttendanceV2Aliases,·
+      );·
+    }···
+    function isLate(row: any) {·
+      return (·
+        row.is_late === true ||·
+        String(row.attendance_status || row.day_status || \"\").toUpperCase() ===·
+          \"LATE\"·
+      );·
+    }···
+    function isPresent(row: any) {·
+      return (·
+        !!row.final_in ||·
+        !!row.has_field_visit ||·
+        [\"P\", \"P-NC\", \"FV\"].includes(String(row.report_status || \"\").toUpperCase())·
+      );·
+    }···
+    function specialistMatch(row: any, filter: string) {·
+      if (!filter) return true;·
+      if (filter === \"LATE\") return isLate(row);·
+      if (filter === \"NO_CHECKOUT\") {·
+        return (·
+          row.suggested_status === \"NO_CHECKOUT\" ||·
+          row.report_status === \"P-NC\" ||·
+          (!row.final_out && !!row.final_in)·
+        );·
+      }·
+      if (filter === \"FIELD_VISIT\") return !!row.has_field_visit;·
+      if (filter === \"SUSPICIOUS_GPS\") {·
+        return String(row.fraud_severity).toUpperCase() === \"SUSPICIOUS\";·
+      }·
+      return row.suggested_status === filter || row.report_status === filter;·
+    }···
+    const displayStatus = (row: any) =>·
+      String(row.report_status || row.suggested_status || \"UNKNOWN\").replaceAll(·
+        \"_\",·
+        \" \",·
+      );···
+    type Filters = {·
+      office: string;·
+      team: string;·
+      head: string;·
+      role: string;·
+      status: string;·
+      source: string;·
+      search: string;·
+    };···
+    const EMPTY_FILTERS: Filters = {·
+      office: \"\",·
+      team: \"\",·
+      head: \"\",·
+      role: \"\",·
+      status: \"\",·
+      source: \"\",·
+      search: \"\",·
+    };···
+    const REPORT_SECTIONS = [·
+      \"Overview\",·
+      \"Daily Records\",·
+      \"Exceptions\",·
+      \"Field Visits\",·
+      \"Reconciliation\",·
+      \"Exports\",·
+    ] as const;···
+    export default function AdvancedAttendanceReportScreen({ route }: any) {·
+      const { theme } = useTheme();·
+      const [start, setStart] = useState(\"\");·
+      const [end, setEnd] = useState(\"\");·
+      const [rows, setRows] = useState<any[]>([]);·
+      const [loading, setLoading] = useState(false);·
+      const [exporting, setExporting] = useState(false);·
+      const [exportStage, setExportStage] = useState(\"\");·
+      const [exportError, setExportError] = useState(\"\");·
+      const [loadError, setLoadError] = useState(\"\");·
+      const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);·
+      const { getScopedPermission, hasPermission } = usePermissions();·
+      const [section, setSection] = useState<(typeof REPORT_SECTIONS)[number]>(·
+        REPORT_SECTIONS.includes(route?.params?.initialSection)·
+          ? route.params.initialSection·
+          : \"Overview\",·
+      );···
+      const load = useCallback(async () => {·
+        const serverDate = await BusinessClockService.getDate(true);·
+        const resolvedStart = start || `${serverDate.slice(0, 8)}01`;·
+        const resolvedEnd = end || serverDate;·
+        if (!start) setStart(resolvedStart);·
+        if (!end) setEnd(resolvedEnd);·
+        if (resolvedEnd < resolvedStart) {·
+          Alert.alert(\"Invalid range\", \"End date must be after start date.\");·
+          return;·
+        }·
+        setLoading(true);·
+        setLoadError(\"\");·
+        try {·
+          const perm = getScopedPermission('attendance.view');·
+            const isGlobal = perm?.scope === 'GLOBAL' || hasPermission('SYSTEM_ADMIN');·
+            setRows(await fetchAttendanceRows(resolvedStart, resolvedEnd, isGlobal ? undefined : { office_id: (perm?.scope === 'OFFICE' || perm?.scope === 'OFFICE_TREE') ? perm.scope_id : undefined }));·
+        } catch (error: any) {·
+          const rawMessage = error?.message ?? \"Unable to load report.\";·
+          const message = rawMessage.includes(·
+            \"HISTORICAL_ASSIGNMENT_OR_POLICY_NOT_VERIFIED\",·
+          )·
+            ? \"Historical payroll reporting is blocked because an employee assignment, office policy or calendar is not verified for part of this period. Complete historical configuration or select today only.\"·
+            : rawMessage;·
+          setLoadError(message);·
+          Alert.alert(\"Report error\", message);·
+        } finally {·
+          setLoading(false);·
+        }·
+      }, [start, end, getScopedPermission, hasPermission]);···
+      useFocusEffect(·
+        useCallback(() => {·
+          load();·
+        }, [load]),·
+      );···
+      const filtered = useMemo(·
+        () =>·
+          rows.filter(·
+            (row) =>·
+              (!filters.office ||·
+                canonicalLabel(row.office_name, \"office\") === filters.office) &&·
+              (!filters.team ||·
+                canonicalLabel(row.team, \"team\") === filters.team) &&·
+              (!filters.head ||·
+                canonicalLabel(row.team_head_name, \"person\") === filters.head) &&·
+              (!filters.role ||·
+                canonicalLabel(row.role, \"role\") === filters.role) &&·
+              (!filters.source || row.presence_source === filters.source) &&·
+              (!filters.search || `${row.name ?? \"\"} ${row.employee_number ?? \"\"}`.toLowerCase().includes(filters.search.toLowerCase())) &&·
+              specialistMatch(row, filters.status),·
+          ),·
+        [rows, filters],·
+      );···
+      const sectionRows = useMemo(() => {·
+        if (section === \"Field Visits\") {·
+          return filtered.filter((row) => row.has_field_visit);·
+        }·
+        if (section === \"Exceptions\") {·
+          return filtered.filter(·
+            (row) =>·
+              row.attendance_status === \"ABSENT\" ||·
+              isLate(row) ||·
+              specialistMatch(row, \"NO_CHECKOUT\") ||·
+              Boolean(row.tracking_health_reason || row.ping_is_stale) ||·
+              row.history_verified !== true,·
+          );·
+        }·
+        if (section === \"Reconciliation\") {·
+          return filtered.filter(·
+            (row) =>·
+              row.presence_source === \"MULTIPLE\" ||·
+              row.report_status === \"MISMATCH\" ||·
+              Boolean(row.biometric_last_punch_evidence),·
+          );·
+        }·
+        return filtered;·
+      }, [filtered, section]);···
+      const options = (key: string, kind: LabelKind) =>·
+        (·
+          [·
+            ...new Set(·
+              rows.map((row) => canonicalLabel(row[key], kind)).filter(Boolean),·
+            ),·
+          ] as string[]·
+        ).sort((a, b) => a.localeCompare(b));···
+      const summary = useMemo(·
+        () => ({·
+          total: filtered.length,·
+          present: filtered.filter(isPresent).length,·
+          late: filtered.filter(isLate).length,·
+          mismatch: filtered.filter((row) => row.report_status === \"MISMATCH\")·
+            .length,·
+          noCheckout: filtered.filter((row) => specialistMatch(row, \"NO_CHECKOUT\"))·
+            .length,·
+          setupRequired: filtered.filter((row) => row.history_verified !== true)·
+            .length,·
+          absent: filtered.filter((row) => row.report_status === \"ABSENT\").length,·
+          fieldVisits: filtered.filter((row) => row.has_field_visit).length,·
+          gpsExceptions: filtered.filter((row) => row.tracking_health_reason || row.ping_is_stale).length,·
+        }),·
+        [filtered],·
+      );···
+      const activeFilterCount = Object.values(filters).filter(Boolean).length;···
+      const statusColors = (row: any) => {·
+        const status = displayStatus(row).toUpperCase();·
+        if (status === \"P\" || status === \"VERIFIED\") {·
+          return { background: theme.successBg, foreground: theme.successText };·
+        }·
+        if (status.includes(\"MISMATCH\") || status.includes(\"SUSPICIOUS\")) {·
+          return { background: theme.errorBg, foreground: theme.errorText };·
+        }·
+        if (status.includes(\"NO CHECKOUT\") || status.includes(\"P-NC\")) {·
+          return { background: theme.warningBg, foreground: theme.warningText };·
+        }·
+        if (status.includes(\"CONFIG REQUIRED\")) {·
+          return { background: theme.warningBg, foreground: theme.warningText };·
+        }·
+        return { background: theme.infoBg, foreground: theme.infoText };·
+      };···
+      const renderFilter = (·
+        label: string,·
+        filter: keyof Filters,·
+        values: string[],·
+      ) => (·
+        <View style={styles.filterGroup}>·
+          <ThemedText·
+            type=\"caption\"·
+            style={[styles.filterLabel, { color: theme.textSecondary }]}·
+          >·
+            {label}·
+          </ThemedText>·
+          <ScrollView·
+            horizontal·
+            showsHorizontalScrollIndicator={false}·
+            contentContainerStyle={styles.chipRow}·
+          >·
+            {[\"\", ...values].map((value) => {·
+              const selected = filters[filter] === value;·
+              return (·
+                <Pressable·
+                  key={value || \"all\"}·
+                  accessibilityRole=\"button\"·
+                  accessibilityState={{ selected }}·
+                  style={({ pressed }) => [·
+                    styles.chip,·
+                    {·
+                      backgroundColor: selected·
+                        ? theme.primary·
+                        : theme.backgroundSecondary,·
+                      borderColor: selected ? theme.primary : theme.border,·
+                      opacity: pressed ? 0.72 : 1,·
+                    },·
+                  ]}·
+                  onPress={() =>·
+                    setFilters((previous) => ({·
+                      ...previous,·
+                      [filter]: value,·
+                    }))·
+                  }·
+                >·
+                  <ThemedText·
+                    type=\"caption\"·
+                    style={{·
+                      color: selected ? theme.buttonText : theme.text,·
+                      fontWeight: selected ? \"700\" : \"500\",·
+                    }}·
+                  >·
+                    {value || \"All\"}·
+                  </ThemedText>·
+                </Pressable>·
+              );·
+            })}·
+          </ScrollView>·
+        </View>·
+      );···
+      const exportSevenSheets = async () => {·
+        if (!filtered.length || exporting) {·
+          if (!exporting) {·
+            setExportError(\"There are no matching attendance records to export.\");·
+          }·
+          Alert.alert(·
+            \"No data\",·
+            \"Load records or change the filters before exporting.\",·
+          );·
+          return;·
+        }·
+        if (filtered.length > MAX_BROWSER_EXCEL_ROWS) {·
+          const message = `This export contains ${filtered.length.toLocaleString(\"en-IN\")} attendance rows. Select a period containing ${MAX_BROWSER_EXCEL_ROWS.toLocaleString(\"en-IN\")} rows or fewer.`;·
+          setExportError(message);·
+          Alert.alert(\"Range too large for browser Excel\", message);·
+          return;·
+        }·
+        setExporting(true);·
+        setExportError(\"\");·
+        setExportStage(\"Loading Excel tools...\");·
+        await yieldToBrowser();·
+        try {·
+          const XLSX = await import(\"xlsx\");·
+          const workbook = XLSX.utils.book_new();·
+          const addSheet = async (name: string, data: any[]) => {·
+            setExportStage(`Building ${name}...`);·
+            await yieldToBrowser();·
+            XLSX.utils.book_append_sheet(·
+              workbook,·
+              XLSX.utils.json_to_sheet(data),·
+              name,·
+            );·
+          };·
+          const daily = filtered.map((row) => ({·
+            Date: row.date,·
+            Employee: canonicalLabel(row.name, \"person\"),·
+            EmployeeNo: row.employee_number,·
+            RegisteredOffice: canonicalLabel(row.office_name, \"office\"),·
+            CheckInOffice: canonicalLabel((row as any).check_in_office_name ?? row.office_name, \"office\"),·
+            AttendanceSource: (row as any).attendance_source ?? row.presence_source ?? \"APP\",·
+            Team: canonicalLabel(row.team, \"team\"),·
+            TeamHead: canonicalLabel(row.team_head_name, \"person\"),·
+            Role: canonicalLabel(row.role, \"role\"),·
+            AppIn: formatHrmsDateTime(row.app_in, \"No check-in\"),·
+            BioIn: formatHrmsDateTime(row.bio_in, \"No biometric punch\"),·
+            FinalIn: formatHrmsDateTime(row.final_in, \"No check-in\"),·
+            FirstInSource: row.first_in_source || \"Unknown / Needs review\",·
+            AppOut: formatHrmsDateTime(row.app_out, \"No checkout\"),·
+            BioLastPunchEvidence: formatHrmsDateTime(row.bio_out, \"No biometric evidence\"),·
+            FinalOut: formatHrmsDateTime(row.final_out, \"No checkout\"),·
+            LastOutSource: row.last_out_source || \"Unknown / Needs review\",·
+            Status: row.report_status,·
+            Source: row.presence_source,·
+            Suggested: row.suggested_status,·
+            FraudSeverity: row.fraud_severity,·
+            FraudScore: row.fraud_score,·
+          }));·
+          const summarize = (key: string, label: string, kind: LabelKind) =>·
+            Object.values(·
+              filtered.reduce((all: any, row: any) => {·
+                const value = canonicalLabel(row[key], kind) || \"Unassigned\";·
+                all[value] ??= {·
+                  [label]: value,·
+                  Records: 0,·
+                  Present: 0,·
+                  Mismatch: 0,·
+                  Late: 0,·
+                  NoCheckout: 0,·
+                  FieldVisits: 0,·
+                  SuspiciousGPS: 0,·
+                };·
+                const item = all[value];·
+                item.Records += 1;·
+                if (isPresent(row)) item.Present += 1;·
+                if (row.report_status === \"MISMATCH\") item.Mismatch += 1;·
+                if (isLate(row)) item.Late += 1;·
+                if (specialistMatch(row, \"NO_CHECKOUT\")) item.NoCheckout += 1;·
+                if (row.has_field_visit) item.FieldVisits += 1;·
+                if (specialistMatch(row, \"SUSPICIOUS_GPS\")) item.SuspiciousGPS += 1;·
+                return all;·
+              }, {}),·
+            );·
+          await addSheet(\"Daily Attendance\", daily);·
+          await addSheet(·
+            \"Employee Summary\",·
+            summarize(\"name\", \"Employee\", \"person\"),·
+          );·
+          await addSheet(\"Team Summary\", summarize(\"team\", \"Team\", \"team\"));·
+          await addSheet(·
+            \"Late Report\",·
+            daily.filter((_item, index) => isLate(filtered[index])),·
+          );·
+          await addSheet(·
+            \"No Checkout Report\",·
+            daily.filter((_item, index) =>·
+              specialistMatch(filtered[index], \"NO_CHECKOUT\"),·
+            ),·
+          );·
+          let fieldVisits: any[] = [];·
+          let fieldVisitWarning = \"\";·
+          try {·
+            setExportStage(\"Loading field visits...\");·
+            await yieldToBrowser();·
+            fieldVisits = await fetchAllRows(·
+              \"field_visits\",·
+              \"date,user_id,location_name,visit_type,checkin_time,checkout_time,status,profiles:user_id(name)\",·
+              start,·
+              end,·
+            );·
+          } catch (error: any) {·
+            fieldVisitWarning =·
+              \"Field visits could not be loaded; the attendance workbook was still downloaded.\";·
+            void reportNonFatalError(\"attendance_report.field_visit_export\", error);·
+          }·
+          await addSheet(·
+            \"Field Visit Report\",·
+            fieldVisits.length·
+              ? fieldVisits.map((visit: any) => ({·
+                  Date: visit.date,·
+                  Employee: visit.profiles?.name,·
+                  Location: visit.location_name,·
+                  Type: visit.visit_type,·
+                  In: formatHrmsDateTime(visit.checkin_time, \"No check-in\"),·
+                  Out: formatHrmsDateTime(visit.checkout_time, \"No checkout\"),·
+                  Status: visit.status,·
+                }))·
+              : [·
+                  {·
+                    Notice:·
+                      fieldVisitWarning ||·
+                      \"No field visits were recorded for the selected period.\",·
+                  },·
+                ],·
+          );·
+          await addSheet(·
+            \"Biometric Mismatch\",·
+            daily.filter(·
+              (item) =>·
+                item.Status === \"MISMATCH\" || item.Suggested === \"NEEDS_REVIEW\",·
+            ),·
+          );·
+          setExportStage(\"Preparing download...\");·
+          await yieldToBrowser();·
+          await downloadWorkbook(·
+            XLSX,·
+            workbook,·
+            `Advanced_Attendance_${start}_${end}.xlsx`,·
+          );·
+          Alert.alert(·
+            \"Export ready\",·
+            `Created seven sheets from ${filtered.length.toLocaleString(\"en-IN\")} attendance records.${fieldVisitWarning ? ` ${fieldVisitWarning}` : \"\"}`,·
+          );·
+        } catch (error: any) {·
+          const excelMessage = error?.message ?? \"Unable to create Excel export.\";·
+          try {·
+            setExportStage(\"Creating CSV recovery download...\");·
+            await yieldToBrowser();·
+            await downloadAttendanceCsv(·
+              filtered,·
+              `Advanced_Attendance_${start}_${end}.csv`,·
+            );·
+            setExportError(·
+              `Excel could not be created (${excelMessage}). A CSV attendance report was downloaded instead.`,·
+            );·
+          } catch (csvError: any) {·
+            const message = `${excelMessage} CSV recovery also failed: ${csvError?.message ?? \"unknown error\"}`;·
+            setExportError(message);·
+            Alert.alert(\"Export failed\", message);·
+          }·
+        } finally {·
+          setExporting(false);·
+          setExportStage(\"\");·
+        }·
+      };···
+      const metrics = [·
+        {·
+          label: \"Total\",·
+          value: summary.total,·
+          icon: \"database\" as const,·
+          background: theme.infoBg,·
+          foreground: theme.infoText,·
+        },·
+        {·
+          label: \"Present\",·
+          value: summary.present,·
+          icon: \"check-circle\" as const,·
+          background: theme.successBg,·
+          foreground: theme.successText,·
+        },·
+        {·
+          label: \"Late\",·
+          value: summary.late,·
+          icon: \"clock\" as const,·
+          background: theme.warningBg,·
+          foreground: theme.warningText,·
+        },·
+        {·
+          label: \"Mismatch\",·
+          value: summary.mismatch,·
+          icon: \"alert-triangle\" as const,·
+          background: theme.errorBg,·
+          foreground: theme.errorText,·
+        },·
+        {·
+          label: \"No checkout\",·
+          value: summary.noCheckout,·
+          icon: \"log-out\" as const,·
+          background: theme.warningBg,·
+          foreground: theme.warningText,·
+        },·
+        {·
+          label: \"Setup required\",·
+          value: summary.setupRequired,·
+          icon: \"settings\" as const,·
+          background: theme.warningBg,·
+          foreground: theme.warningText,·
+        },·
+        {·
+          label: \"Absent\",·
+          value: summary.absent,·
+          icon: \"user-x\" as const,·
+          background: theme.errorBg,·
+          foreground: theme.errorText,·
+        },·
+        {·
+          label: \"Field visits\",·
+          value: summary.fieldVisits,·
+          icon: \"map-pin\" as const,·
+          background: theme.infoBg,·
+          foreground: theme.infoText,·
+        },·
+        {·
+          label: \"GPS exceptions\",·
+          value: summary.gpsExceptions,·
+          icon: \"navigation\" as const,·
+          background: theme.warningBg,·
+          foreground: theme.warningText,·
+        },·
+      ];···
+      return (·
+        <ScreenScrollView·
+          keyboardShouldPersistTaps=\"handled\"·
+          contentContainerStyle={styles.wrap}·
+        >·
+          <View·
+            style={[styles.hero, { backgroundColor: theme.primary }, Shadows.md]}·
+          >·
+            <View style={styles.heroIcon}>·
+              <Feather name=\"bar-chart-2\" size={22} color={theme.buttonText} />·
+            </View>·
+            <View style={styles.flex}>·
+              <ThemedText type=\"h2\" style={{ color: theme.buttonText }}>·
+                Attendance intelligence·
+              </ThemedText>·
+              <ThemedText type=\"small\" style={styles.heroSubtitle}>·
+                App, biometric, field visit and GPS reconciliation·
+              </ThemedText>·
+            </View>·
+            <View style={styles.heroCount}>·
+              <ThemedText·
+                style={[styles.heroCountValue, { color: theme.buttonText }]}·
+              >·
+                {sectionRows.length.toLocaleString(\"en-IN\")}·
+              </ThemedText>·
+              <ThemedText type=\"caption\" style={styles.heroSubtitle}>·
+                records·
+              </ThemedText>·
+            </View>·
+          </View>···
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sectionTabs}>·
+            {REPORT_SECTIONS.map((item, idx) => (·
+              <Pressable·
+                key={`section-${idx}`}·
+                onPress={() => setSection(item)}·
+                style={[·
+                  styles.sectionTab,·
+                  { borderColor: section === item ? theme.primary : theme.border, backgroundColor: section === item ? theme.primary : theme.backgroundDefault },·
+                ]}·
+              >·
+                <ThemedText type=\"small\" style={{ color: section === item ? theme.buttonText : theme.text, fontWeight: \"700\" }}>·
+                  {item}·
+                </ThemedText>·
+              </Pressable>·
+            ))}·
+          </ScrollView>···
+          <View·
+            style={[·
+              styles.panel,·
+              {·
+                backgroundColor: theme.backgroundDefault,·
+                borderColor: theme.border,·
+              },·
+            ]}·
+          >·
+            <View style={styles.panelTitleRow}>·
+              <View style={[styles.sectionIcon, { backgroundColor: theme.infoBg }]}>·
+                <Feather name=\"calendar\" size={17} color={theme.infoText} />·
+              </View>·
+              <View style={styles.flex}>·
+                <ThemedText type=\"h4\">Report period</ThemedText>·
+                <ThemedText type=\"caption\" style={{ color: theme.textSecondary }}>·
+                  Dates are interpreted in Indian Standard Time·
+                </ThemedText>·
+              </View>·
+            </View>·
+            <View style={styles.dateRow}>·
+              <View style={styles.dateField}>·
+                <ThemedText type=\"caption\" style={{ color: theme.textSecondary }}>·
+                  FROM·
+                </ThemedText>·
+                <TextInput·
+                  style={[·
+                    styles.input,·
+                    {·
+                      backgroundColor: theme.backgroundSecondary,·
+                      borderColor: theme.border,·
+                      color: theme.text,·
+                    },·
+                  ]}·
+                  value={start}·
+                  onChangeText={setStart}·
+                  placeholder=\"YYYY-MM-DD\"·
+                  placeholderTextColor={theme.textTertiary}·
+                  autoCapitalize=\"none\"·
+                />·
+              </View>·
+              <View style={styles.dateField}>·
+                <ThemedText type=\"caption\" style={{ color: theme.textSecondary }}>·
+                  TO·
+                </ThemedText>·
+                <TextInput·
+                  style={[·
+                    styles.input,·
+                    {·
+                      backgroundColor: theme.backgroundSecondary,·
+                      borderColor: theme.border,·
+                      color: theme.text,·
+                    },·
+                  ]}·
+                  value={end}·
+                  onChangeText={setEnd}·
+                  placeholder=\"YYYY-MM-DD\"·
+                  placeholderTextColor={theme.textTertiary}·
+                  autoCapitalize=\"none\"·
+                />·
+              </View>·
+            </View>·
+            <Pressable·
+              accessibilityRole=\"button\"·
+              style={({ pressed }) => [·
+                styles.primaryButton,·
+                {·
+                  backgroundColor: theme.primary,·
+                  opacity: pressed || loading ? 0.75 : 1,·
+                },·
+              ]}·
+              onPress={load}·
+              disabled={loading}·
+            >·
+              {loading ? (·
+                <ActivityIndicator color={theme.buttonText} />·
+              ) : (·
+                <Feather name=\"refresh-cw\" size={17} color={theme.buttonText} />·
+              )}·
+              <ThemedText style={[styles.buttonText, { color: theme.buttonText }]}>·
+                {loading ? \"Loading report...\" : \"Refresh report\"}·
+              </ThemedText>·
+            </Pressable>·
+            {exportError ? (·
+              <ThemedText·
+                type=\"small\"·
+                style={{ color: theme.errorText, textAlign: \"center\" }}·
+              >·
+                Download failed: {exportError}·
+              </ThemedText>·
+            ) : null}·
+          </View>···
+          <View style={styles.metricsGrid}>·
+            {metrics.map((metric) => (·
+              <View·
+                key={metric.label}·
+                style={[·
+                  styles.metric,·
+                  {·
+                    backgroundColor: theme.backgroundDefault,·
+                    borderColor: theme.border,·
+                  },·
+                ]}·
+              >·
+                <View·
+                  style={[·
+                    styles.metricIcon,·
+                    { backgroundColor: metric.background },·
+                  ]}·
+                >·
+                  <Feather name={metric.icon} size={16} color={metric.foreground} />·
+                </View>·
+                <ThemedText type=\"h3\">·
+                  {metric.value.toLocaleString(\"en-IN\")}·
+                </ThemedText>·
+                <ThemedText type=\"caption\" style={{ color: theme.textSecondary }}>·
+                  {metric.label}·
+                </ThemedText>·
+              </View>·
+            ))}·
+          </View>···
+          <View·
+            style={[·
+              styles.panel,·
+              {·
+                backgroundColor: theme.backgroundDefault,·
+                borderColor: theme.border,·
+              },·
+            ]}·
+          >·
+            <View style={styles.panelTitleRow}>·
+              <View·
+                style={[·
+                  styles.sectionIcon,·
+                  { backgroundColor: theme.backgroundSecondary },·
+                ]}·
+              >·
+                <Feather name=\"filter\" size={17} color={theme.primary} />·
+              </View>·
+              <View style={styles.flex}>·
+                <ThemedText type=\"h4\">Filters</ThemedText>·
+                <ThemedText type=\"caption\" style={{ color: theme.textSecondary }}>·
+                  {activeFilterCount·
+                    ? `${activeFilterCount} active filter${activeFilterCount === 1 ? \"\" : \"s\"}`·
+                    : \"Showing all available records\"}·
+                </ThemedText>·
+              </View>·
+              {activeFilterCount ? (·
+                <Pressable onPress={() => setFilters(EMPTY_FILTERS)} hitSlop={8}>·
+                  <ThemedText·
+                    type=\"small\"·
+                    style={{ color: theme.primary, fontWeight: \"700\" }}·
+                  >·
+                    Clear all·
+                  </ThemedText>·
+                </Pressable>·
+              ) : null}·
+            </View>·
+            {renderFilter(\"OFFICE\", \"office\", options(\"office_name\", \"office\"))}·
+            {renderFilter(\"TEAM\", \"team\", options(\"team\", \"team\"))}·
+            {renderFilter(\"TEAM HEAD\", \"head\", options(\"team_head_name\", \"person\"))}·
+            {renderFilter(\"ROLE\", \"role\", options(\"role\", \"role\"))}·
+            {renderFilter(\"SOURCE\", \"source\", [\"APP\", \"BIOMETRIC\", \"FIELD_VISIT\", \"MULTIPLE\", \"NO_DATA\"])}·
+            <TextInput·
+              style={[styles.input, { backgroundColor: theme.backgroundSecondary, borderColor: theme.border, color: theme.text }]}·
+              value={filters.search}·
+              onChangeText={(search) => setFilters((previous) => ({ ...previous, search }))}·
+              placeholder=\"Search employee or employee ID\"·
+              placeholderTextColor={theme.textTertiary}·
+            />·
+            {renderFilter(\"SPECIALIST\", \"status\", [·
+              \"LATE\",·
+              \"NO_CHECKOUT\",·
+              \"FIELD_VISIT\",·
+              \"MISMATCH\",·
+              \"SUSPICIOUS_GPS\",·
+              \"CONFIG_REQUIRED\",·
+            ])}·
+          </View>···
+          <View style={styles.resultsHeader}>·
+            <View>·
+              <ThemedText type=\"h3\">{section}</ThemedText>·
+              <ThemedText type=\"caption\" style={{ color: theme.textSecondary }}>·
+                {rows.length >= PAGE_SIZE·
+                  ? \"Paginated production data\"·
+                  : \"Reconciled data\"}·
+              </ThemedText>·
+            </View>·
+            <View·
+              style={[·
+                styles.resultPill,·
+                { backgroundColor: theme.backgroundSecondary },·
+              ]}·
+            >·
+              <ThemedText·
+                type=\"caption\"·
+                style={{ color: theme.primary, fontWeight: \"800\" }}·
+              >·
+                {sectionRows.length.toLocaleString(\"en-IN\")}·
+              </ThemedText>·
+            </View>·
+          </View>···
+          {loadError ? (·
+            <View·
+              style={[·
+                styles.stateCard,·
+                { backgroundColor: theme.errorBg, borderColor: theme.error },·
+              ]}·
+            >·
+              <Feather name=\"alert-circle\" size={24} color={theme.errorText} />·
+              <ThemedText type=\"h4\" style={{ color: theme.errorText }}>·
+                Could not load the report·
+              </ThemedText>·
+              <ThemedText·
+                type=\"small\"·
+                style={{ color: theme.errorText, textAlign: \"center\" }}·
+              >·
+                {loadError}·
+              </ThemedText>·
+            </View>·
+          ) : loading && !rows.length ? (·
+            <View·
+              style={[·
+                styles.stateCard,·
+                {·
+                  backgroundColor: theme.backgroundDefault,·
+                  borderColor: theme.border,·
+                },·
+              ]}·
+            >·
+              <ActivityIndicator color={theme.primary} />·
+              <ThemedText type=\"small\" style={{ color: theme.textSecondary }}>·
+                Reconciling attendance records...·
+              </ThemedText>·
+            </View>·
+          ) : !sectionRows.length ? (·
+            <View·
+              style={[·
+                styles.stateCard,·
+                {·
+                  backgroundColor: theme.backgroundDefault,·
+                  borderColor: theme.border,·
+                },·
+              ]}·
+            >·
+              <View·
+                style={[·
+                  styles.emptyIcon,·
+                  { backgroundColor: theme.backgroundSecondary },·
+                ]}·
+              >·
+                <Feather name=\"search\" size={25} color={theme.textSecondary} />·
+              </View>·
+              <ThemedText type=\"h4\">No matching records</ThemedText>·
+              <ThemedText·
+                type=\"small\"·
+                style={{ color: theme.textSecondary, textAlign: \"center\" }}·
+              >·
+                Try another date range or clear one of the active filters.·
+              </ThemedText>·
+            </View>·
+          ) : (·
+            sectionRows.slice(0, 200).map((row, index) => {·
+              const colors = statusColors(row);·
+              return (·
+                <View·
+                  key={`${row.user_id}-${row.date}-${index}`}·
+                  style={[·
+                    styles.recordCard,·
+                    {·
+                      backgroundColor: theme.backgroundDefault,·
+                      borderColor: theme.border,·
+                    },·
+                  ]}·
+                >·
+                  <View style={styles.recordTop}>·
+                    <View·
+                      style={[·
+                        styles.avatar,·
+                        { backgroundColor: theme.backgroundSecondary },·
+                      ]}·
+                    >·
+                      <ThemedText·
+                        style={{ color: theme.primary, fontWeight: \"800\" }}·
+                      >·
+                        {String(row.name || \"?\")·
+                          .trim()·
+                          .charAt(0)·
+                          .toUpperCase()}·
+                      </ThemedText>·
+                    </View>·
+                    <View style={styles.flex}>·
+                      <ThemedText type=\"h4\" numberOfLines={1}>·
+                        {canonicalLabel(row.name, \"person\") || \"Unknown employee\"}·
+                      </ThemedText>·
+                      <ThemedText·
+                        type=\"caption\"·
+                        style={{ color: theme.textSecondary }}·
+                        numberOfLines={1}·
+                      >·
+                        {[·
+                          row.employee_number,·
+                          row.date,·
+                          canonicalLabel(row.team, \"team\"),·
+                        ]·
+                          .filter(Boolean)·
+                          .join(\" | \")}·
+                      </ThemedText>·
+                    </View>·
+                    <View·
+                      style={[·
+                        styles.statusBadge,·
+                        { backgroundColor: colors.background },·
+                      ]}·
+                    >·
+                      <ThemedText·
+                        type=\"caption\"·
+                        style={{ color: colors.foreground, fontWeight: \"800\" }}·
+                      >·
+                        {displayStatus(row)}·
+                      </ThemedText>·
+                    </View>·
+                  </View>···
+                  <View·
+                    style={[styles.timeRow, { borderColor: theme.borderLight }]}·
+                  >·
+                    <View style={styles.timeCell}>·
+                      <ThemedText·
+                        type=\"caption\"·
+                        style={{ color: theme.textSecondary }}·
+                      >·
+                        FIRST IN·
+                      </ThemedText>·
+                      <ThemedText type=\"small\" style={styles.timeValue}>·
+                        {formatTime(row.final_in || row.app_in)}·
+                      </ThemedText>·
+                    </View>·
+                    <View·
+                      style={[·
+                        styles.timeDivider,·
+                        { backgroundColor: theme.borderLight },·
+                      ]}·
+                    />·
+                    <View style={styles.timeCell}>·
+                      <ThemedText·
+                        type=\"caption\"·
+                        style={{ color: theme.textSecondary }}·
+                      >·
+                        LAST OUT·
+                      </ThemedText>·
+                      <ThemedText type=\"small\" style={styles.timeValue}>·
+                        {formatTime(row.final_out || row.app_out)}·
+                      </ThemedText>·
+                    </View>·
+                    <View·
+                      style={[·
+                        styles.timeDivider,·
+                        { backgroundColor: theme.borderLight },·
+                      ]}·
+                    />·
+                    <View style={styles.timeCell}>·
+                      <ThemedText·
+                        type=\"caption\"·
+                        style={{ color: theme.textSecondary }}·
+                      >·
+                        SOURCE·
+                      </ThemedText>·
+                      <ThemedText·
+                        type=\"small\"·
+                        style={styles.timeValue}·
+                        numberOfLines={1}·
+                      >·
+                        {row.presence_source || \"-\"}·
+                      </ThemedText>·
+                    </View>·
+                  </View>···
+                  {isLate(row) ||·
+                  row.has_field_visit ||·
+                  row.fraud_severity ||·
+                  row.history_verified !== true ? (·
+                    <View style={styles.flagsRow}>·
+                      {isLate(row) ? (·
+                        <View·
+                          style={[·
+                            styles.flag,·
+                            { backgroundColor: theme.warningBg },·
+                          ]}·
+                        >·
+                          <Feather·
+                            name=\"clock\"·
+                            size={12}·
+                            color={theme.warningText}·
+                          />·
+                          <ThemedText·
+                            type=\"caption\"·
+                            style={{ color: theme.warningText }}·
+                          >·
+                            Late·
+                          </ThemedText>·
+                        </View>·
+                      ) : null}·
+                      {row.has_field_visit ? (·
+                        <View·
+                          style={[styles.flag, { backgroundColor: theme.infoBg }]}·
+                        >·
+                          <Feather·
+                            name=\"map-pin\"·
+                            size={12}·
+                            color={theme.infoText}·
+                          />·
+                          <ThemedText·
+                            type=\"caption\"·
+                            style={{ color: theme.infoText }}·
+                          >·
+                            Field visit·
+                          </ThemedText>·
+                        </View>·
+                      ) : null}·
+                      {row.history_verified !== true ? (·
+                        <View·
+                          style={[·
+                            styles.flag,·
+                            { backgroundColor: theme.warningBg },·
+                          ]}·
+                        >·
+                          <Feather·
+                            name=\"settings\"·
+                            size={12}·
+                            color={theme.warningText}·
+                          />·
+                          <ThemedText·
+                            type=\"caption\"·
+                            style={{ color: theme.warningText }}·
+                          >·
+                            Office/policy setup required·
+                          </ThemedText>·
+                        </View>·
+                      ) : null}·
+                      {row.fraud_severity ? (·
+                        <View·
+                          style={[styles.flag, { backgroundColor: theme.errorBg }]}·
+                        >·
+                          <Feather·
+                            name=\"shield\"·
+                            size={12}·
+                            color={theme.errorText}·
+                          />·
+                          <ThemedText·
+                            type=\"caption\"·
+                            style={{ color: theme.errorText }}·
+                          >·
+                            {row.fraud_severity}·
+                          </ThemedText>·
+                        </View>·
+                      ) : null}·
+                    </View>·
+                  ) : null}·
+                </View>·
+              );·
+            })·
+          )}···
+          {sectionRows.length > 200 ? (·
+            <View style={[styles.preview, { backgroundColor: theme.infoBg }]}>·
+              <Feather name=\"info\" size={16} color={theme.infoText} />·
+              <ThemedText type=\"small\" style={{ color: theme.infoText, flex: 1 }}>·
+                Showing the first 200 records. Excel includes all{\" \"}·
+                {sectionRows.length.toLocaleString(\"en-IN\")} records in this section.·
+              </ThemedText>·
+            </View>·
+          ) : null}···
+          <View·
+            style={[·
+              styles.exportPanel,·
+              {·
+                backgroundColor: theme.successBg,·
+                borderColor: theme.success,·
+              },·
+            ]}·
+          >·
+            <View style={styles.exportCopy}>·
+              <ThemedText type=\"h4\" style={{ color: theme.successText }}>·
+                Seven-sheet Excel report·
+              </ThemedText>·
+              <ThemedText type=\"caption\" style={{ color: theme.successText }}>·
+                Daily, employee, team, late, no-checkout, field visit and biometric·
+                mismatch·
+              </ThemedText>·
+            </View>·
+            <Pressable·
+              accessibilityRole=\"button\"·
+              style={({ pressed }) => [·
+                styles.export,·
+                {·
+                  backgroundColor: theme.success,·
+                  opacity: pressed || exporting ? 0.75 : 1,·
+                },·
+              ]}·
+              onPress={exportSevenSheets}·
+              disabled={exporting}·
+            >·
+              {exporting ? (·
+                <ActivityIndicator color={theme.buttonText} />·
+              ) : (·
+                <Feather name=\"download\" size={17} color={theme.buttonText} />·
+              )}·
+              <ThemedText style={[styles.buttonText, { color: theme.buttonText }]}>·
+                {exporting ? exportStage || \"Building sheets...\" : \"Export Excel\"}·
+              </ThemedText>·
+            </Pressable>·
+          </View>·
+        </ScreenScrollView>·
+      );·
+    }···
+    const styles = StyleSheet.create({·
+      wrap: {·
+        paddingHorizontal: Spacing.lg,·
+        gap: Spacing.lg,·
+      },·
+      sectionTabs: { gap: 8, paddingVertical: 2 },·
+      sectionTab: { borderWidth: 1, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 9 },·
+      flex: { flex: 1 },·
+      hero: {·
+        borderRadius: BorderRadius.xl,·
+        padding: Spacing.lg,·
+        flexDirection: \"row\",·
+        alignItems: \"center\",·
+        gap: Spacing.md,·
+      },·
+      heroIcon: {·
+        width: 44,·
+        height: 44,·
+        borderRadius: BorderRadius.md,·
+        backgroundColor: \"rgba(255,255,255,0.15)\",·
+        alignItems: \"center\",·
+        justifyContent: \"center\",·
+      },·
+      heroSubtitle: { color: \"rgba(255,255,255,0.78)\" },·
+      heroCount: { alignItems: \"flex-end\" },·
+      heroCountValue: { fontSize: 20, fontWeight: \"800\" },·
+      panel: {·
+        borderWidth: 1,·
+        borderRadius: BorderRadius.lg,·
+        padding: Spacing.lg,·
+        gap: Spacing.md,·
+      },·
+      panelTitleRow: {·
+        flexDirection: \"row\",·
+        alignItems: \"center\",·
+        gap: Spacing.sm,·
+      },·
+      sectionIcon: {·
+        width: 36,·
+        height: 36,·
+        borderRadius: BorderRadius.md,·
+        alignItems: \"center\",·
+        justifyContent: \"center\",·
+      },·
+      dateRow: { flexDirection: \"row\", gap: Spacing.sm },·
+      dateField: { flex: 1, gap: Spacing.xs },·
+      input: {·
+        borderWidth: 1,·
+        height: 46,·
+        paddingHorizontal: Spacing.md,·
+        borderRadius: BorderRadius.md,·
+        fontSize: 14,·
+      },·
+      primaryButton: {·
+        minHeight: 46,·
+        borderRadius: BorderRadius.md,·
+        flexDirection: \"row\",·
+        alignItems: \"center\",·
+        justifyContent: \"center\",·
+        gap: Spacing.sm,·
+      },·
+      buttonText: { fontWeight: \"800\" },·
+      metricsGrid: {·
+        flexDirection: \"row\",·
+        flexWrap: \"wrap\",·
+        gap: Spacing.sm,·
+      },·
+      metric: {·
+        minWidth: 104,·
+        flexGrow: 1,·
+        flexBasis: \"30%\",·
+        borderWidth: 1,·
+        borderRadius: BorderRadius.md,·
+        padding: Spacing.md,·
+        gap: 3,·
+      },·
+      metricIcon: {·
+        width: 30,·
+        height: 30,·
+        borderRadius: BorderRadius.sm,·
+        alignItems: \"center\",·
+        justifyContent: \"center\",·
+        marginBottom: Spacing.xs,·
+      },·
+      filterGroup: { gap: 2 },·
+      filterLabel: { fontWeight: \"800\", letterSpacing: 0.7 },·
+      chipRow: { paddingVertical: Spacing.xs, paddingRight: Spacing.sm },·
+      chip: {·
+        minHeight: 32,·
+        justifyContent: \"center\",·
+        paddingHorizontal: Spacing.md,·
+        borderWidth: 1,·
+        borderRadius: BorderRadius.full,·
+        marginRight: Spacing.sm,·
+      },·
+      resultsHeader: {·
+        flexDirection: \"row\",·
+        alignItems: \"center\",·
+        justifyContent: \"space-between\",·
+      },·
+      resultPill: {·
+        borderRadius: BorderRadius.full,·
+        paddingHorizontal: 12,·
+        paddingVertical: 6,·
+      },·
+      stateCard: {·
+        minHeight: 170,·
+        borderWidth: 1,·
+        borderRadius: BorderRadius.lg,·
+        padding: Spacing.xl,·
+        alignItems: \"center\",·
+        justifyContent: \"center\",·
+        gap: Spacing.sm,·
+      },·
+      emptyIcon: {·
+        width: 52,·
+        height: 52,·
+        borderRadius: 26,·
+        alignItems: \"center\",·
+        justifyContent: \"center\",·
+      },·
+      recordCard: {·
+        borderWidth: 1,·
+        borderRadius: BorderRadius.lg,·
+        padding: Spacing.md,·
+        gap: Spacing.md,·
+      },·
+      recordTop: {·
+        flexDirection: \"row\",·
+        alignItems: \"center\",·
+        gap: Spacing.sm,·
+      },·
+      avatar: {·
+        width: 38,·
+        height: 38,·
+        borderRadius: 19,·
+        alignItems: \"center\",·
+        justifyContent: \"center\",·
+      },·
+      statusBadge: {·
+        maxWidth: 110,·
+        borderRadius: BorderRadius.full,·
+        paddingHorizontal: Spacing.sm,·
+        paddingVertical: 5,·
+      },·
+      timeRow: {·
+        flexDirection: \"row\",·
+        borderTopWidth: 1,·
+        paddingTop: Spacing.md,·
+      },·
+      timeCell: { flex: 1, gap: 3 },·
+      timeDivider: { width: 1, marginHorizontal: Spacing.sm },·
+      timeValue: { fontWeight: \"700\" },·
+      flagsRow: { flexDirection: \"row\", flexWrap: \"wrap\", gap: Spacing.xs },·
+      flag: {·
+        flexDirection: \"row\",·
+        alignItems: \"center\",·
+        gap: 4,·
+        paddingHorizontal: Spacing.sm,·
+        paddingVertical: 4,·
+        borderRadius: BorderRadius.full,·
+      },·
+      preview: {·
+        flexDirection: \"row\",·
+        alignItems: \"flex-start\",·
+        gap: Spacing.sm,·
+        padding: Spacing.md,·
+        borderRadius: BorderRadius.md,·
+      },·
+      exportPanel: {·
+        borderWidth: 1,·
+        borderRadius: BorderRadius.lg,·
+        padding: Spacing.lg,·
+        gap: Spacing.md,·
+      },·
+      exportCopy: { gap: 3 },·
+      export: {·
+        minHeight: 46,·
+        borderRadius: BorderRadius.md,·
+        flexDirection: \"row\",·
+        alignItems: \"center\",·
+        justifyContent: \"center\",·
+        gap: Spacing.sm,·
+      },·
+    });·
+    "
+
+    [0m [90m 55 |[39m     [36mconst[39m screen [33m=[39m read([32m"screens/admin/AdvancedAttendanceReportScreen.tsx"[39m)[33m;[39m
+     [90m 56 |[39m     [90m// expect(service).toContain('"rpc_admin_attendance_report_v5"');[39m
+    [31m[1m>[22m[39m[90m 57 |[39m     expect(screen)[33m.[39mtoContain([32m"parseAttendanceReportQuery"[39m)[33m;[39m
+     [90m    |[39m                    [31m[1m^[22m[39m
+     [90m 58 |[39m     expect(screen)[33m.[39mtoContain([32m"Run smart report"[39m)[33m;[39m
+     [90m 59 |[39m     expect(screen)[33m.[39mtoContain(
+     [90m 60 |[39m       [32m"Marketing team from 3 Aug to 16 Aug who were late"[39m[33m,[39m[0m
+
+      at Object.toContain (__tests__/enterpriseAttendanceReporting.test.ts:57:20)
+
+FAIL __tests__/otpSecurityAndIdempotency.test.ts
+  ● OTP Security, Idempotency & Architecture › enforces idempotency and request deduplication in Edge Function & Migration
+
+    expect(received).toContain(expected) // indexOf
+
+    Expected substring: "requestId"
+    Received string:    "import { createClient } from \"npm:@supabase/supabase-js@2.39.0\";···
+    const cors = {·
+      \"Access-Control-Allow-Origin\": \"*\",·
+      \"Access-Control-Allow-Headers\":·
+        \"authorization, x-client-info, apikey, content-type\",·
+    };·
+    const reply = (body: unknown, status = 200) =>·
+      new Response(JSON.stringify(body), {·
+        status,·
+        headers: { ...cors, \"Content-Type\": \"application/json\" },·
+      });·
+    const hex = (bytes: Uint8Array) =>·
+      Array.from(bytes)·
+        .map((b) => b.toString(16).padStart(2, \"0\"))·
+        .join(\"\");·
+    const normalizePhone = (value: unknown) => {·
+      const digits = String(value ?? \"\").replace(/\\D/g, \"\");·
+      return digits.length === 12 && digits.startsWith(\"91\")·
+        ? digits.slice(2)·
+        : digits;·
+    };·
+    const SYSTEM_ADMIN_PHONE = \"9999999999\";·
+    async function hashOtp(phone: string, otp: string, salt: string) {·
+      const input = new TextEncoder().encode(`${phone}:${otp}:${salt}`);·
+      return hex(new Uint8Array(await crypto.subtle.digest(\"SHA-256\", input)));·
+    }···
+    async function createAuthSession(db: any, profile: any, phone: string) {·
+      const authEmail = `employee-${profile.id}@auth.realtyhrm.invalid`;·
+      const { data: existingAuth } = await db.auth.admin.getUserById(profile.id);·
+      if (!existingAuth.user) {·
+        const { error: createError } = await db.auth.admin.createUser({·
+          id: profile.id,·
+          email: authEmail,·
+          email_confirm: true,·
+          user_metadata: { profile_id: profile.id, phone },·
+        });·
+        if (createError) throw createError;·
+      }·
+      const email = existingAuth.user?.email || authEmail;·
+      const { data: link, error: linkError } = await db.auth.admin.generateLink({·
+        type: \"magiclink\",·
+        email,·
+      });·
+      if (linkError || !link?.properties?.hashed_token)·
+        throw linkError || new Error(\"Unable to create secure session\");·
+      return {·
+        email,·
+        token_hash: link.properties.hashed_token,·
+        type: \"magiclink\",·
+      };·
+    }···
+    Deno.serve(async (req) => {·
+      if (req.method === \"OPTIONS\") return new Response(null, { headers: cors });·
+      if (req.method !== \"POST\")·
+        return reply({ success: false, error: \"METHOD_NOT_ALLOWED\" }, 405);·
+      try {·
+        const body = await req.json();·
+        if (body?.action === \"version\") {·
+          return reply({·
+            success: true,·
+            function: \"otp-auth\",·
+            version: \"20260731.1\",·
+            requiredBackendSchemaVersion: \"20260810000000\",·
+          });·
+        }·
+        const url = Deno.env.get(\"SUPABASE_URL\");·
+        const roleKey = Deno.env.get(\"SUPABASE_SERVICE_ROLE_KEY\");·
+        const configuredSmsKey = Deno.env.get(\"SMS_OTP_API_KEY\");·
+        if (!url || !roleKey)·
+          throw new Error(\"Supabase server secrets are not configured\");·
+        const db = createClient(url, roleKey, { auth: { persistSession: false } });·
+        const smsKey = configuredSmsKey;·
+        const action = String(body.action ?? \"\");·
+        const phone = normalizePhone(body.phone);·
+        const phoneCandidates = [phone, `91${phone}`, `+91${phone}`];·
+        const ip =·
+          req.headers.get(\"x-forwarded-for\")?.split(\",\")[0]?.trim() ?? null;·
+        if (!/^\\d{10}$/.test(phone))·
+          return reply(·
+            {·
+              success: false,·
+              error: \"INVALID_PHONE\",·
+              message: \"Enter a valid 10-digit phone number.\",·
+            },·
+            400,·
+          );···
+        if (action === \"request\") {·
+          const since = new Date(Date.now() - 10 * 60_000).toISOString();·
+          const { count } = await db·
+            .from(\"otp_login_challenges\")·
+            .select(\"id\", { count: \"exact\", head: true })·
+            .eq(\"phone\", phone)·
+            .gte(\"created_at\", since);·
+          if ((count ?? 0) >= 3)·
+            return reply(·
+              {·
+                success: false,·
+                error: \"RATE_LIMITED\",·
+                message: \"Too many OTP requests. Try again in 10 minutes.\",·
+              },·
+              429,·
+            );·
+          const { data: profile } = await db·
+            .from(\"profiles\")·
+            .select(\"id,role\")·
+            .in(\"phone\", phoneCandidates)·
+            .eq(\"is_active\", true)·
+            .maybeSingle();·
+          if (!profile)·
+            return reply({·
+              success: true,·
+              message: \"If this number is registered, an OTP has been sent.\",·
+            });···
+          const isSystemAdmin = phone === SYSTEM_ADMIN_PHONE;·
+          if (isSystemAdmin && profile.role !== \"SYSTEM_ADMIN\")·
+            return reply(·
+              {·
+                success: false,·
+                error: \"SYSTEM_ADMIN_NOT_CONFIGURED\",·
+                message: \"The system administrator account is not configured.\",·
+              },·
+              403,·
+            );·
+          if (isSystemAdmin) {·
+            const { data: credential, error: credentialError } = await db·
+              .from(\"system_admin_login_credentials\")·
+              .select(\"profile_id\")·
+              .eq(\"profile_id\", profile.id)·
+              .eq(\"phone\", phone)·
+              .eq(\"enabled\", true)·
+              .maybeSingle();·
+            if (credentialError) throw credentialError;·
+            if (!credential)·
+              return reply(·
+                {·
+                  success: false,·
+                  error: \"SYSTEM_ADMIN_OTP_NOT_CONFIGURED\",·
+                  message: \"The system administrator OTP is not configured.\",·
+                },·
+                503,·
+              );·
+          }·
+          if (!isSystemAdmin && !smsKey)·
+            return reply(·
+              {·
+                success: false,·
+                error: \"SMS_NOT_CONFIGURED\",·
+                message: \"SMS OTP is not configured.\",·
+              },·
+              503,·
+            );···
+          const otp = (·
+            crypto.getRandomValues(new Uint32Array(1))[0] % 1_000_000·
+          )·
+            .toString()·
+            .padStart(6, \"0\");·
+          const salt = hex(crypto.getRandomValues(new Uint8Array(16)));·
+          const otpHash = await hashOtp(phone, otp, salt);·
+          const { error: insertError } = await db·
+            .from(\"otp_login_challenges\")·
+            .insert({·
+              phone,·
+              otp_hash: otpHash,·
+              salt,·
+              requested_ip: ip,·
+              expires_at: new Date(Date.now() + 5 * 60_000).toISOString(),·
+            });·
+          if (insertError) throw insertError;·
+          if (isSystemAdmin)·
+            return reply({·
+              success: true,·
+              message: \"Enter the administrator OTP.\",·
+            });···
+          const sms = await fetch(\"https://smsapi.edumarcsms.com/api/v1/sendsms\", {·
+            method: \"POST\",·
+            headers: { \"Content-Type\": \"application/json\", apikey: smsKey },·
+            body: JSON.stringify({·
+              number: [phone],·
+              message: `Your verification code is : ${otp} Regards BOP REALTY`,·
+              senderId: \"REABOP\",·
+              templateId: \"1607100000000223009\",·
+            }),·
+          });·
+          if (!sms.ok) {·
+            await db·
+              .from(\"otp_login_challenges\")·
+              .delete()·
+              .eq(\"phone\", phone)·
+              .eq(\"otp_hash\", otpHash);·
+            return reply(·
+              {·
+                success: false,·
+                error: \"SMS_FAILED\",·
+                message: \"OTP delivery failed. Please try again.\",·
+              },·
+              502,·
+            );·
+          }·
+          return reply({ success: true, message: \"OTP sent.\" });·
+        }···
+        if (action === \"verify\") {·
+          const otp = String(body.otp ?? \"\").trim();·
+          if (!/^\\d{6}$/.test(otp))·
+            return reply(·
+              {·
+                success: false,·
+                error: \"INVALID_OTP\",·
+                message: \"Enter the 6-digit OTP.\",·
+              },·
+              400,·
+            );·
+          const { data: challenge } = await db·
+            .from(\"otp_login_challenges\")·
+            .select(\"*\")·
+            .eq(\"phone\", phone)·
+            .is(\"consumed_at\", null)·
+            .gt(\"expires_at\", new Date().toISOString())·
+            .order(\"created_at\", { ascending: false })·
+            .limit(1)·
+            .maybeSingle();·
+          if (!challenge || challenge.attempts >= 5)·
+            return reply(·
+              {·
+                success: false,·
+                error: \"OTP_EXPIRED\",·
+                message: \"OTP expired or locked. Request a new code.\",·
+              },·
+              401,·
+            );·
+          const isSystemAdmin = phone === SYSTEM_ADMIN_PHONE;·
+          let systemAdminCredential: any = null;·
+          let expectedOtpHash = challenge.otp_hash;·
+          let suppliedOtpHash = await hashOtp(phone, otp, challenge.salt);·
+          if (isSystemAdmin) {·
+            const { data: credential, error: credentialError } = await db·
+              .from(\"system_admin_login_credentials\")·
+              .select(\"profile_id,otp_hash,salt\")·
+              .eq(\"phone\", phone)·
+              .eq(\"enabled\", true)·
+              .maybeSingle();·
+            if (credentialError) throw credentialError;·
+            if (!credential)·
+              return reply(·
+                {·
+                  success: false,·
+                  error: \"SYSTEM_ADMIN_OTP_NOT_CONFIGURED\",·
+                  message: \"The system administrator OTP is not configured.\",·
+                },·
+                503,·
+              );·
+            systemAdminCredential = credential;·
+            expectedOtpHash = credential.otp_hash;·
+            suppliedOtpHash = await hashOtp(phone, otp, credential.salt);·
+          }·
+          if (suppliedOtpHash !== expectedOtpHash) {·
+            await db·
+              .from(\"otp_login_challenges\")·
+              .update({ attempts: challenge.attempts + 1 })·
+              .eq(\"id\", challenge.id);·
+            return reply(·
+              { success: false, error: \"INCORRECT_OTP\", message: \"Incorrect OTP.\" },·
+              401,·
+            );·
+          }·
+          await db·
+            .from(\"otp_login_challenges\")·
+            .update({ consumed_at: new Date().toISOString() })·
+            .eq(\"id\", challenge.id);·
+          const { data: profile } = await db·
+            .from(\"profiles\")·
+            .select(\"id,name,email,phone,role,avatar,is_active,created_at\")·
+            .in(\"phone\", phoneCandidates)·
+            .eq(\"is_active\", true)·
+            .maybeSingle();·
+          if (!profile)·
+            return reply(·
+              {·
+                success: false,·
+                error: \"USER_NOT_FOUND\",·
+                message: \"User not found.\",·
+              },·
+              404,·
+            );·
+          if (·
+            isSystemAdmin &&·
+            (profile.id !== systemAdminCredential.profile_id ||·
+              profile.role !== \"SYSTEM_ADMIN\")·
+          )·
+            return reply(·
+              {·
+                success: false,·
+                error: \"SYSTEM_ADMIN_NOT_CONFIGURED\",·
+                message: \"The system administrator account is not configured.\",·
+              },·
+              403,·
+            );···
+          return reply({·
+            success: true,·
+            profile,·
+            auth: await createAuthSession(db, profile, phone),·
+          });·
+        }·
+        return reply({ success: false, error: \"INVALID_ACTION\" }, 400);·
+      } catch (error) {·
+        console.error(\"otp-auth error\", error);·
+        return reply(·
+          {·
+            success: false,·
+            error: \"SERVER_ERROR\",·
+            message: \"OTP service is temporarily unavailable.\",·
+          },·
+          500,·
+        );·
+      }·
+    });·
+    "
+
+    [0m [90m 32 |[39m     expect(migration)[33m.[39mtoContain([32m"ADD COLUMN IF NOT EXISTS resend_count INTEGER"[39m)[33m;[39m
+     [90m 33 |[39m     expect(migration)[33m.[39mtoContain([32m"idx_otp_request_id"[39m)[33m;[39m
+    [31m[1m>[22m[39m[90m 34 |[39m     expect(edgeFunction)[33m.[39mtoContain([32m"requestId"[39m)[33m;[39m
+     [90m    |[39m                          [31m[1m^[22m[39m
+     [90m 35 |[39m     expect(edgeFunction)[33m.[39mtoContain([32m".eq(\"request_id\", requestId)"[39m)[33m;[39m
+     [90m 36 |[39m     expect(edgeFunction)[33m.[39mtoContain([32m"retry_after"[39m)[33m;[39m
+     [90m 37 |[39m     expect(edgeFunction)[33m.[39mtoContain([32m"challenge_id: insertedChallenge.id"[39m)[33m;[39m[0m
+
+      at Object.toContain (__tests__/otpSecurityAndIdempotency.test.ts:34:26)
+
+  ● OTP Security, Idempotency & Architecture › wires request_id, challenge_id, and retry_after through AuthContext and LoginScreen
+
+    expect(received).toContain(expected) // indexOf
+
+    Expected substring: "request_id: requestId"
+    Received string:    "import React, {
+      createContext,
+      ReactNode,
+      useCallback,
+      useContext,
+      useEffect,
+      useRef,
+      useState,
+    } from \"react\";
+    import { persistentAuthStorage } from \"@/utils/secureStorage\";
+    import { AppState, Platform } from \"react-native\";
+    import type { Session } from \"@supabase/supabase-js\";
+    import { supabase, supabaseAuthStorageKey } from \"@/lib/supabase\";
+    import { firstRpcRow } from \"@/utils/supabaseRpc\";
+    import {
+      canAccessHRPanelRole,
+      isAdminRole,
+      isHRRole,
+      normalizeUserRole,
+    } from \"@/utils/userRole\";
+    import { DeviceSessionService } from \"@/services/device-session.service\";
+    import { stopNativeTracking } from \"@/services/location/backgroundLocationTask\";
+    import { clearOfflineLocationQueue } from \"@/services/location/secureQueue\";
+    import { CurrentLocationVisitService } from \"@/services/current-location-visit.service\";
+    import { getFunctionErrorMessage } from \"@/utils/functionError\";
+    import { deactivateCurrentDevicePushToken } from \"@/services/location/notification.service\";·
+    export type UserRole =
+      | \"SYSTEM_ADMIN\"
+      | \"ADMIN\"
+      | \"HR\"
+      | \"HRD\"
+      | \"BUSINESS_HEAD\"
+      | \"TEAM_HEAD\"
+      | \"TEAM_LEADER\"
+      | \"VP_SALES\"
+      | \"SALES_MANAGER\"
+      | \"GM_SALES\"
+      | \"AGM_SALES\"
+      | \"HEAD_BUSINESS_DEVELOPMENT\"
+      | \"BDM\"
+      | \"BDM_SALES\"
+      | \"SENIOR_BDE\"
+      | \"BDE\"
+      | \"SALES_EXECUTIVE\"
+      | \"ASSOCIATE_BUSINESS_HEAD\"
+      | \"ASSOCIATE_TEAM_HEAD\"
+      | \"ASSOCIATE_SENIOR_BDM\"
+      | \"ASSOCIATE_BDM\"
+      | \"ASSOCIATE_BDE\"
+      | \"ASSOCIATE_SALES_EXECUTIVE\"
+      | \"ASSOCIATE_MANAGER\"
+      | \"ASSOCIATE_SR_MANAGER\"
+      | \"ASSOCIATE_GM_SALES\"
+      | \"ASSOCIATE_AGM_SALES\"
+      | \"AGENT\"
+      | \"CO-ORDINATOR\"
+      | \"TELECALLER\"
+      | \"SALES\"
+      | \"DEPUTY_GENERAL_MANAGER\"
+      | \"SENIOR_ASSOCIATE_BDM\"
+      | \"VIDEO_EDITOR\"
+      | \"WEB_DEVELOPER\"
+      | \"DIGITAL_MARKETING_MANAGER\"
+      | \"ASSOCIATE_PARTNER\";·
+    export interface User {
+      id: string;
+      name: string;
+      email: string | null;
+      phone?: string | null;
+      role: UserRole;
+      avatar?: string | null;
+      status: \"ACTIVE\" | \"INACTIVE\" | \"SUSPENDED\";
+      reports_to?: string | null;
+      created_at: string;
+    }·
+    interface AuthContextType {
+      user: User | null;
+      isLoading: boolean;
+      isAuthenticated: boolean;
+      authState: \"loading\" | \"authenticated\" | \"unauthenticated\";
+      requestOTP: (phone: string) => Promise<{ success: boolean; error?: string }>;
+      verifyOTP: (
+        phone: string,
+        otp: string,
+      ) => Promise<{ success: boolean; error?: string }>;
+      logout: () => Promise<void>;
+      updateUser: (data: Partial<User>, extra?: { home_address?: string }) => Promise<void>;
+      isDevMode: boolean;
+      isAdmin: boolean;
+      isHR: boolean;
+      /** True for HR, HRD, SYSTEM_ADMIN, ADMIN - full panel rights. */
+      isHRD: boolean;
+    }·
+    const AuthContext = createContext<AuthContextType | undefined>(undefined);·
+    // Never version-bump this key: doing so forces every employee to log in again.
+    const STORAGE_KEY = \"@hrms_auth_user_v3\";
+    const AUTH_METADATA_KEY = \"@hrms_auth_metadata_v1\";
+    const LEGACY_STORAGE_KEYS = [
+      \"@hrms_auth_user_v2\",
+      \"@hrms_auth_user_v1\",
+      \"@hrms_auth_user\",
+    ];·
+    interface StoredAuthMetadata {
+      user_id: string;
+      phone: string | null;
+      is_logged_in: boolean;
+      expires_at: number | null;
+      last_successful_authentication_at: string;
+      last_session_refresh_at: string;
+    }·
+    function profileToUser(profile: any): User {
+      const normalizedRole = normalizeUserRole(profile.role) || \"SALES_EXECUTIVE\";
+      return {
+        id: profile.id,
+        name: profile.name,
+        email: profile.email,
+        phone: profile.phone,
+        role: normalizedRole as UserRole,
+        avatar: profile.avatar ?? null,
+        status: profile.is_active ? \"ACTIVE\" : \"INACTIVE\",
+        reports_to: profile.reports_to ?? null,
+        created_at: profile.created_at,
+      };
+    }·
+    function isStoredUser(value: unknown): value is User {
+      const candidate = value as Partial<User> | null;
+      return !!candidate?.id && !!candidate?.name && !!candidate?.role;
+    }·
+    async function readStoredUser(): Promise<User | null> {
+      for (const key of [STORAGE_KEY, ...LEGACY_STORAGE_KEYS]) {
+        try {
+          const raw = await persistentAuthStorage.getItem(key);
+          if (!raw) continue;
+          const parsed: unknown = JSON.parse(raw);
+          if (!isStoredUser(parsed)) continue;
+          if (key !== STORAGE_KEY) {
+            await persistentAuthStorage.setItem(
+              STORAGE_KEY,
+              JSON.stringify(parsed),
+            );
+            await persistentAuthStorage.removeItem(key);
+          }
+          return parsed;
+        } catch {
+          // A damaged legacy value must not prevent secure session recovery.
+        }
+      }
+      return null;
+    }·
+    async function readStoredAuthMetadata(): Promise<StoredAuthMetadata | null> {
+      try {
+        const raw = await persistentAuthStorage.getItem(AUTH_METADATA_KEY);
+        if (!raw) return null;
+        const value = JSON.parse(raw) as Partial<StoredAuthMetadata>;
+        if (!value.user_id || value.is_logged_in !== true) return null;
+        return value as StoredAuthMetadata;
+      } catch {
+        return null;
+      }
+    }·
+    async function persistSessionMetadata(
+      session: Session,
+      user?: User | null,
+      successfulAuthenticationAt?: string,
+    ) {
+      const previousRaw = await persistentAuthStorage.getItem(AUTH_METADATA_KEY);
+      let previous: { last_successful_authentication_at?: string } | null = null;
+      try {
+        previous = previousRaw ? JSON.parse(previousRaw) : null;
+      } catch {
+        previous = null;
+      }
+      await persistentAuthStorage.setItem(
+        AUTH_METADATA_KEY,
+        JSON.stringify({
+          user_id: session.user.id,
+          phone:
+            user?.phone ??
+            session.user.phone ??
+            session.user.user_metadata?.phone ??
+            null,
+          is_logged_in: true,
+          expires_at: session.expires_at ?? null,
+          last_successful_authentication_at:
+            successfulAuthenticationAt ??
+            previous?.last_successful_authentication_at ??
+            new Date().toISOString(),
+          last_session_refresh_at: new Date().toISOString(),
+        }),
+      );
+    }·
+    async function clearPersistedAuthentication() {
+      await Promise.all([
+        persistentAuthStorage.removeItem(supabaseAuthStorageKey),
+        persistentAuthStorage.removeItem(STORAGE_KEY),
+        persistentAuthStorage.removeItem(AUTH_METADATA_KEY),
+        ...LEGACY_STORAGE_KEYS.map((key) => persistentAuthStorage.removeItem(key)),
+      ]);
+    }·
+    export function AuthProvider({ children }: { children: ReactNode }) {
+      const [user, setUser] = useState<User | null>(null);
+      const [isLoading, setIsLoading] = useState(true);
+      const userRef = useRef<User | null>(null);
+      const mountedRef = useRef(true);
+      const logoutRequestedRef = useRef(false);·
+      const applyUser = useCallback((nextUser: User | null) => {
+        userRef.current = nextUser;
+        if (mountedRef.current) setUser(nextUser);
+      }, []);·
+      useEffect(() => {
+        mountedRef.current = true;
+        let disposed = false;·
+        let profileRestoreInFlight: Promise<boolean> | null = null;
+        let lastProfileValidationAt = 0;·
+        const invalidateSession = async () => {
+          logoutRequestedRef.current = true;
+          try {
+            await deactivateCurrentDevicePushToken().catch(() => undefined);
+            await supabase.auth.signOut({ scope: \"local\" }).catch(() => undefined);
+            await clearPersistedAuthentication();
+          } finally {
+            applyUser(null);
+            logoutRequestedRef.current = false;
+          }
+        };·
+        const restoreProfile = (session: Session, cached?: User | null) => {
+          if (profileRestoreInFlight) return profileRestoreInFlight;
+          profileRestoreInFlight = (async () => {
+            const usableCache = cached?.id === session.user.id ? cached : null;·
+            // A locally restored Supabase session is sufficient to open the app.
+            // Server profile/device validation continues in the background and can
+            // revoke access only when the server explicitly confirms it.
+            if (usableCache) {
+              applyUser(usableCache);
+              if (mountedRef.current) setIsLoading(false);
+            }
+            await persistSessionMetadata(session, usableCache).catch((error) => {
+              console.warn(\"Session metadata persistence deferred:\", error);
+            });·
+            if (usableCache && Date.now() - lastProfileValidationAt < 30_000) {
+              return true;
+            }·
+            const { data, error } = await supabase.rpc(\"rpc_get_my_profile_v2\");
+            const profile = firstRpcRow<any>(data);
+            if (disposed || error || !profile) return !!usableCache;·
+            if (!profile.is_active) {
+              await invalidateSession();
+              return false;
+            }·
+            const fresh = profileToUser(profile);
+            lastProfileValidationAt = Date.now();
+            try {
+              const deviceSession = await DeviceSessionService.registerCurrent();
+              if (deviceSession.revoked) {
+                await invalidateSession();
+                return false;
+              }
+            } catch (error) {
+              // Network, server, or heartbeat failures never invalidate a session.
+              console.warn(\"Device session validation deferred:\", error);
+            }·
+            applyUser(fresh);
+            await Promise.all([
+              persistentAuthStorage.setItem(STORAGE_KEY, JSON.stringify(fresh)),
+              persistSessionMetadata(session, fresh),
+            ]);
+            return true;
+          })().finally(() => {
+            profileRestoreInFlight = null;
+          });
+          return profileRestoreInFlight;
+        };·
+        const recoverSession = async (showLoginWhenMissing = false) => {
+          const cached = userRef.current ?? (await readStoredUser());
+          try {
+            const { data, error } = await supabase.auth.getSession();
+            if (disposed) return;
+            if (data.session) {
+              await restoreProfile(data.session, cached);
+            } else if (error && cached) {
+              // An offline/temporary refresh failure must keep the restored shell.
+              applyUser(cached);
+            } else if (showLoginWhenMissing && !error) {
+              await clearPersistedAuthentication();
+              applyUser(null);
+            }
+          } catch (error) {
+            // Temporary connectivity/startup errors must not log the employee out.
+            console.warn(\"Session recovery deferred:\", error);
+          }
+        };·
+        const bootstrap = async () => {
+          const [cached, metadata] = await Promise.all([
+            readStoredUser(),
+            readStoredAuthMetadata(),
+          ]);
+          if (
+            !disposed &&
+            cached &&
+            metadata?.is_logged_in &&
+            metadata.user_id === cached.id
+          ) {
+            // Render the previously authenticated application shell immediately.
+            // Token recovery and server validation continue without a login flash.
+            applyUser(cached);
+            setIsLoading(false);
+          }
+          try {
+            const { data, error } = await supabase.auth.getSession();
+            if (disposed) return;
+            if (data.session) {
+              const restored = await restoreProfile(data.session, cached);
+              if (!restored && !cached) applyUser(null);
+            } else if (error && cached) {
+              applyUser(cached);
+            } else {
+              await clearPersistedAuthentication();
+              applyUser(null);
+            }
+          } catch (error) {
+            if (cached) applyUser(cached);
+            console.warn(\"Auth startup recovery deferred:\", error);
+          } finally {
+            if (!disposed) setIsLoading(false);
+          }
+        };·
+        const { data: authListener } = supabase.auth.onAuthStateChange(
+          (event, session) => {
+            if (disposed) return;
+            if (event === \"INITIAL_SESSION\") return;
+            if (session && event === \"TOKEN_REFRESHED\") {
+              void persistSessionMetadata(session, userRef.current).catch(
+                () => undefined,
+              );
+            } else if (session) {
+              // Keep the callback synchronous to avoid holding Supabase's auth
+              // lock while querying the employee profile.
+              setTimeout(() => {
+                void restoreProfile(session, userRef.current);
+              }, 0);
+            } else if (event === \"SIGNED_OUT\") {
+              // The explicit logout flow verifies persisted auth before it changes
+              // navigation state. Unexpected sign-outs are rechecked after races
+              // settle.
+              if (!logoutRequestedRef.current) {
+                // Confirm a session is genuinely gone after refresh races settle.
+                setTimeout(() => void recoverSession(true), 250);
+              }
+            }
+          },
+        );·
+        let appStateSubscription: { remove: () => void } | undefined;
+        let visibilityHandler: (() => void) | undefined;
+        let onlineHandler: (() => void) | undefined;
+        const deviceSessionHeartbeat = setInterval(
+          () => {
+            if (!userRef.current) return;
+            void DeviceSessionService.registerCurrent()
+              .then(async (result) => {
+                if (!result.revoked || disposed) return;
+                await invalidateSession();
+              })
+              .catch(() => undefined);
+          },
+          5 * 60 * 1000,
+        );·
+        if (Platform.OS !== \"web\") {
+          if (AppState.currentState === \"active\") supabase.auth.startAutoRefresh();
+          appStateSubscription = AppState.addEventListener(\"change\", (state) => {
+            if (state === \"active\") {
+              supabase.auth.startAutoRefresh();
+              void recoverSession();
+            } else {
+              supabase.auth.stopAutoRefresh();
+            }
+          });
+        } else if (typeof document !== \"undefined\") {
+          visibilityHandler = () => {
+            if (document.visibilityState === \"visible\") void recoverSession();
+          };
+          onlineHandler = () => void recoverSession();
+          document.addEventListener(\"visibilitychange\", visibilityHandler);
+          window.addEventListener(\"online\", onlineHandler);
+        }·
+        void bootstrap();·
+        return () => {
+          disposed = true;
+          mountedRef.current = false;
+          authListener.subscription.unsubscribe();
+          clearInterval(deviceSessionHeartbeat);
+          appStateSubscription?.remove();
+          if (Platform.OS !== \"web\") supabase.auth.stopAutoRefresh();
+          if (visibilityHandler) {
+            document.removeEventListener(\"visibilitychange\", visibilityHandler);
+          }
+          if (onlineHandler) window.removeEventListener(\"online\", onlineHandler);
+        };
+      }, [applyUser]);·
+      const requestOTP = async (
+        phone: string,
+      ): Promise<{ success: boolean; error?: string }> => {
+        try {
+          const normalizedPhone = phone.replace(/\\D/g, \"\").slice(-10);
+          const { data, error } = await supabase.functions.invoke(\"otp-auth\", {
+            body: { action: \"request\", phone: normalizedPhone },
+          });
+          if (error || !data?.success) {
+            return {
+              success: false,
+              error:
+                data?.message ||
+                (await getFunctionErrorMessage(error, \"Unable to send OTP. Please try again.\")),
+            };
+          }
+          return { success: true };
+        } catch (error: any) {
+          return {
+            success: false,
+            error: await getFunctionErrorMessage(
+              error,
+              \"Unable to send OTP. Please try again.\",
+            ),
+          };
+        }
+      };·
+      const verifyOTP = async (
+        phone: string,
+        otp: string,
+      ): Promise<{ success: boolean; error?: string }> => {
+        try {
+          const normalizedPhone = phone.replace(/\\D/g, \"\").slice(-10);
+          const { data, error } = await supabase.functions.invoke(\"otp-auth\", {
+            body: { action: \"verify\", phone: normalizedPhone, otp: otp.trim() },
+          });
+          if (error || !data?.success || !data?.auth?.token_hash) {
+            return {
+              success: false,
+              error:
+                data?.message ||
+                (await getFunctionErrorMessage(error, \"Invalid or expired OTP.\")),
+            };
+          }·
+          const { data: sessionData, error: sessionError } =
+            await supabase.auth.verifyOtp({
+              token_hash: data.auth.token_hash,
+              type: \"magiclink\",
+            });
+          if (sessionError || !sessionData.session) {
+            return {
+              success: false,
+              error: \"Unable to establish a secure session. Please try again.\",
+            };
+          }·
+          const userData = profileToUser(data.profile);
+          applyUser(userData);
+          await persistentAuthStorage.setItem(
+            STORAGE_KEY,
+            JSON.stringify(userData),
+          );
+          await persistSessionMetadata(
+            sessionData.session,
+            userData,
+            new Date().toISOString(),
+          );
+          return { success: true };
+        } catch (error: any) {
+          return {
+            success: false,
+            error: await getFunctionErrorMessage(error, \"Invalid or expired OTP.\"),
+          };
+        }
+      };·
+      const logout = async () => {
+        logoutRequestedRef.current = true;
+        let cleanupError: unknown = null;
+        try {
+          await DeviceSessionService.closeCurrent().catch(() => undefined);
+          await deactivateCurrentDevicePushToken().catch(() => undefined);
+          await Promise.all([
+            stopNativeTracking().catch(() => undefined),
+            clearOfflineLocationQueue().catch(() => undefined),
+            CurrentLocationVisitService.clearQueueForLogout().catch(
+              () => undefined,
+            ),
+          ]);
+          await supabase.removeAllChannels();
+          const { error: signOutError } = await supabase.auth.signOut({
+            scope: \"local\",
+          });
+          if (signOutError) {
+            // Manual logout must still remove the local credential when the auth
+            // provider cannot be reached. The stable storage key is cleared below.
+            console.warn(\"Provider sign-out was deferred:\", signOutError);
+          }
+        } catch (error) {
+          console.error(\"Logout failed:\", error);
+          cleanupError = error;
+        } finally {
+          try {
+            await clearPersistedAuthentication();
+          } catch (error) {
+            cleanupError = cleanupError ?? error;
+          }
+          applyUser(null);
+          logoutRequestedRef.current = false;
+        }
+        if (cleanupError) throw cleanupError;
+      };·
+      const updateUser = async (
+        data: Partial<User>,
+        extra?: { home_address?: string },
+      ) => {
+        if (!user) throw new Error(\"An authenticated profile is required.\");
+        const previous = user;
+        const updated = { ...previous, ...data };
+        const { data: responseData, error } = await supabase.rpc(
+          \"rpc_update_my_profile\",
+          {
+            p_values: {
+              name: updated.name,
+              ...(updated.avatar ? { avatar: updated.avatar } : {}),
+              ...(extra?.home_address ? { home_address: extra.home_address } : {}),
+            },
+          },
+        );
+        const response = firstRpcRow<any>(responseData);
+        if (error || response?.success !== true) {
+          throw new Error(
+            error?.message || \"Server did not confirm the profile update.\",
+          );
+        }
+        applyUser(updated);
+        await persistentAuthStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+      };·
+      return (
+        <AuthContext.Provider
+          value={{
+            user,
+            isLoading,
+            isAuthenticated: !!user,
+            authState: isLoading
+              ? \"loading\"
+              : user
+                ? \"authenticated\"
+                : \"unauthenticated\",
+            requestOTP,
+            verifyOTP,
+            logout,
+            updateUser,
+            isDevMode: false,
+            isAdmin: isAdminRole(user?.role),
+            isHR: isHRRole(user?.role),
+            isHRD: canAccessHRPanelRole(user?.role),
+          }}
+        >
+          {children}
+        </AuthContext.Provider>
+      );
+    }·
+    export function useAuth() {
+      const context = useContext(AuthContext);
+      if (!context) throw new Error(\"useAuth must be used inside AuthProvider\");
+      return context;
+    }·
+    /** True for SYSTEM_ADMIN, ADMIN, HR, HRD. */
+    export function useCanAccessHRPanel() {
+      const { isAdmin, isHR } = useAuth();
+      return isAdmin || isHR;
+    }
+    "
+
+    [0m [90m 47 |[39m
+     [90m 48 |[39m   it([32m"wires request_id, challenge_id, and retry_after through AuthContext and LoginScreen"[39m[33m,[39m () [33m=>[39m {
+    [31m[1m>[22m[39m[90m 49 |[39m     expect(authContext)[33m.[39mtoContain([32m"request_id: requestId"[39m)[33m;[39m
+     [90m    |[39m                         [31m[1m^[22m[39m
+     [90m 50 |[39m     expect(authContext)[33m.[39mtoContain([32m"challenge_id: challengeId"[39m)[33m;[39m
+     [90m 51 |[39m     expect(authContext)[33m.[39mtoContain([32m"challenge_id: data?.challenge_id"[39m)[33m;[39m
+     [90m 52 |[39m     expect(authContext)[33m.[39mtoContain([32m"retry_after: data?.retry_after"[39m)[33m;[39m[0m
+
+      at Object.toContain (__tests__/otpSecurityAndIdempotency.test.ts:49:25)
+
+PASS __tests__/savedSiteSelectionFix.test.ts
+PASS __tests__/productionHardening.test.ts
+PASS __tests__/networkResilience.test.ts
+PASS __tests__/scopedPermissionsMatrix.test.ts
+PASS __tests__/fieldVisitOriginRepair.test.ts
+PASS services/__tests__/businessClock.test.ts
+PASS utils/__tests__/bugfixHelpers.test.ts
+PASS utils/__tests__/gpsValidation.test.ts
+PASS __tests__/salesManagerPosition.test.ts
+PASS services/__tests__/canonicalLate.test.ts
+PASS services/location/__tests__/backgroundTask.integration.test.ts
+PASS services/outbox/__tests__/DurableWriteOutbox.lifecycle.test.ts
+PASS services/nativeBridge/__tests__/protocol.test.ts
+PASS services/__tests__/attendanceControlClassification.test.ts
+PASS utils/__tests__/supabaseRpc.test.ts
+PASS __tests__/secureStorage.web.test.ts
+PASS __tests__/serviceWorker.test.ts
+PASS __tests__/attendanceIntelligencePlatform.test.ts
+PASS services/location/__tests__/geo.test.ts
+PASS __tests__/notificationWorkflow.test.ts
+PASS services/location/__tests__/trackingHealth.test.ts
+PASS utils/__tests__/attendanceTimestamp.test.ts
+PASS __tests__/systemAdminOtp.test.ts
+PASS utils/__tests__/userRole.test.ts
+PASS services/__tests__/activityLogic.test.ts
+PASS utils/__tests__/attendanceReportQuery.test.ts
+PASS __tests__/fieldEventSessionNotificationFixes.test.ts
+PASS services/location/__tests__/route.service.test.ts
+PASS utils/__tests__/businessDate.test.ts
+PASS __tests__/attendanceWorkflow.test.ts
+PASS utils/__tests__/biometricSyncRequest.test.ts
+PASS __tests__/attendanceUniverseParity.test.ts
+PASS __tests__/mandatoryEmployeePhone.test.ts
+PASS utils/__tests__/locationFreshness.test.ts
+PASS __tests__/attendanceEventLedger.test.ts
+PASS utils/__tests__/salesHierarchy.test.ts
+PASS services/location/__tests__/offlineQueue.test.ts
+PASS utils/__tests__/indiaCalendarDate.test.ts
+PASS utils/__tests__/biometricSyncResult.test.ts
+PASS __tests__/canonicalAttendanceV3.test.ts
+PASS utils/__tests__/format.test.ts
+PASS services/__tests__/tvOccupancy.test.ts
+PASS utils/__tests__/supabasePagination.test.ts
+PASS __tests__/earliestCheckinResolution.test.ts
+PASS utils/__tests__/functionError.test.ts
+PASS __tests__/authPersistence.test.ts
+PASS __tests__/attendanceDisplayAndTrackingRepair.test.ts
+PASS services/location/__tests__/trackingDate.test.ts
+PASS services/location/__tests__/lifecycle.test.ts
+PASS __tests__/permissionsGrantFix.test.ts
+
+Summary of all failing tests
+FAIL __tests__/enterpriseAttendanceReporting.test.ts
+  ● enterprise attendance reporting v4 › routes the advanced report through v4 and exposes smart queries
+
+    expect(received).toContain(expected) // indexOf
+
+    Expected substring: "parseAttendanceReportQuery"
+    Received string:    "import React, { useCallback, useMemo, useState } from \"react\";·
+    import {·
+      ActivityIndicator,·
+      Alert,·
+      Pressable,·
+      ScrollView,·
+      StyleSheet,·
+      TextInput,·
+      View,·
+    } from \"react-native\";·
+    import Feather from \"@expo/vector-icons/Feather\";·
+    import { useFocusEffect } from \"@react-navigation/native\";·
+    import { ScreenScrollView } from \"@/components/ScreenScrollView\";·
+    import { ThemedText } from \"@/components/ThemedText\";·
+    import { BorderRadius, Shadows, Spacing } from \"@/constants/theme\";·
+    import { useTheme } from \"@/hooks/useTheme\";·
+    import { supabase } from \"@/lib/supabase\";·
+    import { BusinessClockService } from \"@/services/business-clock.service\";·
+    import { reportNonFatalError } from \"@/utils/operationalErrors\";·
+    import { toTitleCase } from \"@/utils/format\";·
+    import { downloadBrowserBytes } from \"@/utils/browserFileDownload\";·
+    import { formatHrmsDateTime, formatHrmsTime } from \"@/utils/attendanceTimestamp\";·
+    import { usePermissions } from \"@/hooks/usePermissions\";·
+    import {·
+      CanonicalAttendanceService,·
+      withAttendanceV2Aliases,·
+    } from \"@/services/canonical-attendance.service\";···
+    const PAGE_SIZE = 1000;·
+    const MAX_EXPORT_ROWS = 20_000;·
+    const MAX_BROWSER_EXCEL_ROWS = MAX_EXPORT_ROWS;·
+    const IST_TIME_ZONE = \"Asia/Kolkata\";·
+    const XLSX_MIME_TYPE =·
+      \"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet\";···
+    const yieldToBrowser = () =>·
+      new Promise<void>((resolve) => {·
+        if (typeof window !== \"undefined\" && window.requestAnimationFrame) {·
+          window.requestAnimationFrame(() => window.setTimeout(resolve, 0));·
+          return;·
+        }·
+        setTimeout(resolve, 0);·
+      });···
+    async function downloadWorkbook(XLSX: any, workbook: any, filename: string) {·
+      if (·
+        typeof window === \"undefined\" ||·
+        typeof document === \"undefined\" ||·
+        typeof Blob === \"undefined\"·
+      ) {·
+        XLSX.writeFile(workbook, filename, { compression: true });·
+        return;·
+      }···
+      const bytes = XLSX.write(workbook, {·
+        bookType: \"xlsx\",·
+        type: \"array\",·
+        // ZIP compression is CPU-heavy and used to freeze monthly exports on the·
+        // browser main thread. The larger uncompressed workbook downloads much·
+        // faster and Excel opens it normally.·
+        compression: false,·
+      });·
+      await downloadBrowserBytes(bytes, filename, XLSX_MIME_TYPE);·
+    }···
+    type LabelKind = \"office\" | \"team\" | \"person\" | \"role\";···
+    const LABEL_ACRONYMS = new Set([·
+      \"agm\",·
+      \"ak\",·
+      \"bde\",·
+      \"bdm\",·
+      \"gm\",·
+      \"gv\",·
+      \"hr\",·
+      \"hrd\",·
+      \"mh\",·
+      \"vp\",·
+    ]);···
+    const TEAM_ALIASES: Record<string, string> = {·
+      \"ankit mavi team\": \"Ankit Mavi\",·
+      \"mh mhendi team\": \"Mohammad Mehdi\",·
+      \"mohammad mehdi\": \"Mohammad Mehdi\",·
+      \"mohammed mehdi\": \"Mohammad Mehdi\",·
+      \"mohhamad mehdi\": \"Mohammad Mehdi\",·
+      \"prince mavi team\": \"Prince Mavi\",·
+      \"satya prkash\": \"Satya Prakash\",·
+    };···
+    function canonicalLabel(value: unknown, kind: LabelKind): string {·
+      const clean = String(value ?? \"\")·
+        .trim()·
+        .replace(/\\s+/g, \" \");·
+      if (!clean) return \"\";·
+      if (kind === \"person\") return toTitleCase(clean);·
+      if (kind === \"team\" && TEAM_ALIASES[clean.toLowerCase()]) {·
+        return TEAM_ALIASES[clean.toLowerCase()];·
+      }···
+      return clean·
+        .replaceAll(\"_\", \" \")·
+        .toLowerCase()·
+        .split(\" \")·
+        .map((word) =>·
+          LABEL_ACRONYMS.has(word)·
+            ? word.toUpperCase()·
+            : word.charAt(0).toUpperCase() + word.slice(1),·
+        )·
+        .join(\" \");·
+    }···
+    function csvCell(value: unknown) {·
+      const text = value == null ? \"\" : String(value);·
+      return `\"${text.replaceAll('\"', '\"\"')}\"`;·
+    }···
+    async function downloadAttendanceCsv(rows: any[], filename: string) {·
+      if (·
+        typeof window === \"undefined\" ||·
+        typeof document === \"undefined\" ||·
+        typeof Blob === \"undefined\"·
+      ) {·
+        throw new Error(\"CSV recovery download is available on the web app only.\");·
+      }·
+      const headers = [·
+        \"Date\",·
+        \"Employee\",·
+        \"Employee No\",·
+        \"Registered Office\",·
+        \"Check-In Office\",·
+        \"Attendance Source\",·
+        \"Team\",·
+        \"Team Head\",·
+        \"Role\",·
+        \"App In\",·
+        \"Biometric In\",·
+        \"Final In\",·
+        \"App Out\",·
+        \"Biometric Out\",·
+        \"Final Out\",·
+        \"Status\",·
+        \"Source\",·
+        \"Suggested\",·
+        \"Fraud Severity\",·
+        \"Fraud Score\",·
+      ];·
+      const values = rows.map((row) => [·
+        row.date,·
+        canonicalLabel(row.name, \"person\"),·
+        row.employee_number,·
+        canonicalLabel(row.office_name, \"office\"),·
+        canonicalLabel((row as any).check_in_office_name ?? row.office_name, \"office\"),·
+        (row as any).attendance_source ?? row.presence_source ?? \"APP\",·
+        canonicalLabel(row.team, \"team\"),·
+        canonicalLabel(row.team_head_name, \"person\"),·
+        canonicalLabel(row.role, \"role\"),·
+        formatHrmsDateTime(row.app_in, \"No check-in\"),·
+        formatHrmsDateTime(row.bio_in, \"No biometric punch\"),·
+        formatHrmsDateTime(row.final_in, \"No check-in\"),·
+        formatHrmsDateTime(row.app_out, \"No checkout\"),·
+        formatHrmsDateTime(row.bio_out, \"No biometric evidence\"),·
+        formatHrmsDateTime(row.final_out, \"No checkout\"),·
+        row.report_status,·
+        row.presence_source,·
+        row.suggested_status,·
+        row.fraud_severity,·
+        row.fraud_score,·
+      ]);·
+      const csv = [headers, ...values]·
+        .map((line) => line.map(csvCell).join(\",\"))·
+        .join(\"\\r\\n\");·
+      await downloadBrowserBytes(·
+        new TextEncoder().encode(`\\uFEFF${csv}`),·
+        filename,·
+        \"text/csv;charset=utf-8\",·
+      );·
+    }···
+    const formatTime = (value: string | null | undefined) => {·
+      if (!value) return \"Not recorded\";·
+      return formatHrmsTime(value, \"No time recorded\");·
+    };···
+    async function fetchAllRows(·
+      table: string,·
+      select: string,·
+      start: string,·
+      end: string,·
+    ) {·
+      const rows: any[] = [];·
+      for (let from = 0; from < MAX_EXPORT_ROWS; from += PAGE_SIZE) {·
+        const { data, error } = await supabase·
+          .from(table)·
+          .select(select)·
+          .gte(\"date\", start)·
+          .lte(\"date\", end)·
+          .order(\"date\", { ascending: false })·
+          .range(from, from + PAGE_SIZE - 1);·
+        if (error) throw error;·
+        rows.push(...(data ?? []));·
+        if ((data?.length ?? 0) < PAGE_SIZE) return rows;·
+      }·
+      throw new Error(·
+        `Report exceeds ${MAX_EXPORT_ROWS.toLocaleString(\"en-IN\")} rows. Select a smaller date range.`,·
+      );·
+    }···
+    async function fetchAttendanceRows(start: string, end: string, scopeFilters?: any) {·
+      return (await CanonicalAttendanceService.list(start, end, MAX_EXPORT_ROWS, scopeFilters)).map(·
+        withAttendanceV2Aliases,·
+      );·
+    }···
+    function isLate(row: any) {·
+      return (·
+        row.is_late === true ||·
+        String(row.attendance_status || row.day_status || \"\").toUpperCase() ===·
+          \"LATE\"·
+      );·
+    }···
+    function isPresent(row: any) {·
+      return (·
+        !!row.final_in ||·
+        !!row.has_field_visit ||·
+        [\"P\", \"P-NC\", \"FV\"].includes(String(row.report_status || \"\").toUpperCase())·
+      );·
+    }···
+    function specialistMatch(row: any, filter: string) {·
+      if (!filter) return true;·
+      if (filter === \"LATE\") return isLate(row);·
+      if (filter === \"NO_CHECKOUT\") {·
+        return (·
+          row.suggested_status === \"NO_CHECKOUT\" ||·
+          row.report_status === \"P-NC\" ||·
+          (!row.final_out && !!row.final_in)·
+        );·
+      }·
+      if (filter === \"FIELD_VISIT\") return !!row.has_field_visit;·
+      if (filter === \"SUSPICIOUS_GPS\") {·
+        return String(row.fraud_severity).toUpperCase() === \"SUSPICIOUS\";·
+      }·
+      return row.suggested_status === filter || row.report_status === filter;·
+    }···
+    const displayStatus = (row: any) =>·
+      String(row.report_status || row.suggested_status || \"UNKNOWN\").replaceAll(·
+        \"_\",·
+        \" \",·
+      );···
+    type Filters = {·
+      office: string;·
+      team: string;·
+      head: string;·
+      role: string;·
+      status: string;·
+      source: string;·
+      search: string;·
+    };···
+    const EMPTY_FILTERS: Filters = {·
+      office: \"\",·
+      team: \"\",·
+      head: \"\",·
+      role: \"\",·
+      status: \"\",·
+      source: \"\",·
+      search: \"\",·
+    };···
+    const REPORT_SECTIONS = [·
+      \"Overview\",·
+      \"Daily Records\",·
+      \"Exceptions\",·
+      \"Field Visits\",·
+      \"Reconciliation\",·
+      \"Exports\",·
+    ] as const;···
+    export default function AdvancedAttendanceReportScreen({ route }: any) {·
+      const { theme } = useTheme();·
+      const [start, setStart] = useState(\"\");·
+      const [end, setEnd] = useState(\"\");·
+      const [rows, setRows] = useState<any[]>([]);·
+      const [loading, setLoading] = useState(false);·
+      const [exporting, setExporting] = useState(false);·
+      const [exportStage, setExportStage] = useState(\"\");·
+      const [exportError, setExportError] = useState(\"\");·
+      const [loadError, setLoadError] = useState(\"\");·
+      const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);·
+      const { getScopedPermission, hasPermission } = usePermissions();·
+      const [section, setSection] = useState<(typeof REPORT_SECTIONS)[number]>(·
+        REPORT_SECTIONS.includes(route?.params?.initialSection)·
+          ? route.params.initialSection·
+          : \"Overview\",·
+      );···
+      const load = useCallback(async () => {·
+        const serverDate = await BusinessClockService.getDate(true);·
+        const resolvedStart = start || `${serverDate.slice(0, 8)}01`;·
+        const resolvedEnd = end || serverDate;·
+        if (!start) setStart(resolvedStart);·
+        if (!end) setEnd(resolvedEnd);·
+        if (resolvedEnd < resolvedStart) {·
+          Alert.alert(\"Invalid range\", \"End date must be after start date.\");·
+          return;·
+        }·
+        setLoading(true);·
+        setLoadError(\"\");·
+        try {·
+          const perm = getScopedPermission('attendance.view');·
+            const isGlobal = perm?.scope === 'GLOBAL' || hasPermission('SYSTEM_ADMIN');·
+            setRows(await fetchAttendanceRows(resolvedStart, resolvedEnd, isGlobal ? undefined : { office_id: (perm?.scope === 'OFFICE' || perm?.scope === 'OFFICE_TREE') ? perm.scope_id : undefined }));·
+        } catch (error: any) {·
+          const rawMessage = error?.message ?? \"Unable to load report.\";·
+          const message = rawMessage.includes(·
+            \"HISTORICAL_ASSIGNMENT_OR_POLICY_NOT_VERIFIED\",·
+          )·
+            ? \"Historical payroll reporting is blocked because an employee assignment, office policy or calendar is not verified for part of this period. Complete historical configuration or select today only.\"·
+            : rawMessage;·
+          setLoadError(message);·
+          Alert.alert(\"Report error\", message);·
+        } finally {·
+          setLoading(false);·
+        }·
+      }, [start, end, getScopedPermission, hasPermission]);···
+      useFocusEffect(·
+        useCallback(() => {·
+          load();·
+        }, [load]),·
+      );···
+      const filtered = useMemo(·
+        () =>·
+          rows.filter(·
+            (row) =>·
+              (!filters.office ||·
+                canonicalLabel(row.office_name, \"office\") === filters.office) &&·
+              (!filters.team ||·
+                canonicalLabel(row.team, \"team\") === filters.team) &&·
+              (!filters.head ||·
+                canonicalLabel(row.team_head_name, \"person\") === filters.head) &&·
+              (!filters.role ||·
+                canonicalLabel(row.role, \"role\") === filters.role) &&·
+              (!filters.source || row.presence_source === filters.source) &&·
+              (!filters.search || `${row.name ?? \"\"} ${row.employee_number ?? \"\"}`.toLowerCase().includes(filters.search.toLowerCase())) &&·
+              specialistMatch(row, filters.status),·
+          ),·
+        [rows, filters],·
+      );···
+      const sectionRows = useMemo(() => {·
+        if (section === \"Field Visits\") {·
+          return filtered.filter((row) => row.has_field_visit);·
+        }·
+        if (section === \"Exceptions\") {·
+          return filtered.filter(·
+            (row) =>·
+              row.attendance_status === \"ABSENT\" ||·
+              isLate(row) ||·
+              specialistMatch(row, \"NO_CHECKOUT\") ||·
+              Boolean(row.tracking_health_reason || row.ping_is_stale) ||·
+              row.history_verified !== true,·
+          );·
+        }·
+        if (section === \"Reconciliation\") {·
+          return filtered.filter(·
+            (row) =>·
+              row.presence_source === \"MULTIPLE\" ||·
+              row.report_status === \"MISMATCH\" ||·
+              Boolean(row.biometric_last_punch_evidence),·
+          );·
+        }·
+        return filtered;·
+      }, [filtered, section]);···
+      const options = (key: string, kind: LabelKind) =>·
+        (·
+          [·
+            ...new Set(·
+              rows.map((row) => canonicalLabel(row[key], kind)).filter(Boolean),·
+            ),·
+          ] as string[]·
+        ).sort((a, b) => a.localeCompare(b));···
+      const summary = useMemo(·
+        () => ({·
+          total: filtered.length,·
+          present: filtered.filter(isPresent).length,·
+          late: filtered.filter(isLate).length,·
+          mismatch: filtered.filter((row) => row.report_status === \"MISMATCH\")·
+            .length,·
+          noCheckout: filtered.filter((row) => specialistMatch(row, \"NO_CHECKOUT\"))·
+            .length,·
+          setupRequired: filtered.filter((row) => row.history_verified !== true)·
+            .length,·
+          absent: filtered.filter((row) => row.report_status === \"ABSENT\").length,·
+          fieldVisits: filtered.filter((row) => row.has_field_visit).length,·
+          gpsExceptions: filtered.filter((row) => row.tracking_health_reason || row.ping_is_stale).length,·
+        }),·
+        [filtered],·
+      );···
+      const activeFilterCount = Object.values(filters).filter(Boolean).length;···
+      const statusColors = (row: any) => {·
+        const status = displayStatus(row).toUpperCase();·
+        if (status === \"P\" || status === \"VERIFIED\") {·
+          return { background: theme.successBg, foreground: theme.successText };·
+        }·
+        if (status.includes(\"MISMATCH\") || status.includes(\"SUSPICIOUS\")) {·
+          return { background: theme.errorBg, foreground: theme.errorText };·
+        }·
+        if (status.includes(\"NO CHECKOUT\") || status.includes(\"P-NC\")) {·
+          return { background: theme.warningBg, foreground: theme.warningText };·
+        }·
+        if (status.includes(\"CONFIG REQUIRED\")) {·
+          return { background: theme.warningBg, foreground: theme.warningText };·
+        }·
+        return { background: theme.infoBg, foreground: theme.infoText };·
+      };···
+      const renderFilter = (·
+        label: string,·
+        filter: keyof Filters,·
+        values: string[],·
+      ) => (·
+        <View style={styles.filterGroup}>·
+          <ThemedText·
+            type=\"caption\"·
+            style={[styles.filterLabel, { color: theme.textSecondary }]}·
+          >·
+            {label}·
+          </ThemedText>·
+          <ScrollView·
+            horizontal·
+            showsHorizontalScrollIndicator={false}·
+            contentContainerStyle={styles.chipRow}·
+          >·
+            {[\"\", ...values].map((value) => {·
+              const selected = filters[filter] === value;·
+              return (·
+                <Pressable·
+                  key={value || \"all\"}·
+                  accessibilityRole=\"button\"·
+                  accessibilityState={{ selected }}·
+                  style={({ pressed }) => [·
+                    styles.chip,·
+                    {·
+                      backgroundColor: selected·
+                        ? theme.primary·
+                        : theme.backgroundSecondary,·
+                      borderColor: selected ? theme.primary : theme.border,·
+                      opacity: pressed ? 0.72 : 1,·
+                    },·
+                  ]}·
+                  onPress={() =>·
+                    setFilters((previous) => ({·
+                      ...previous,·
+                      [filter]: value,·
+                    }))·
+                  }·
+                >·
+                  <ThemedText·
+                    type=\"caption\"·
+                    style={{·
+                      color: selected ? theme.buttonText : theme.text,·
+                      fontWeight: selected ? \"700\" : \"500\",·
+                    }}·
+                  >·
+                    {value || \"All\"}·
+                  </ThemedText>·
+                </Pressable>·
+              );·
+            })}·
+          </ScrollView>·
+        </View>·
+      );···
+      const exportSevenSheets = async () => {·
+        if (!filtered.length || exporting) {·
+          if (!exporting) {·
+            setExportError(\"There are no matching attendance records to export.\");·
+          }·
+          Alert.alert(·
+            \"No data\",·
+            \"Load records or change the filters before exporting.\",·
+          );·
+          return;·
+        }·
+        if (filtered.length > MAX_BROWSER_EXCEL_ROWS) {·
+          const message = `This export contains ${filtered.length.toLocaleString(\"en-IN\")} attendance rows. Select a period containing ${MAX_BROWSER_EXCEL_ROWS.toLocaleString(\"en-IN\")} rows or fewer.`;·
+          setExportError(message);·
+          Alert.alert(\"Range too large for browser Excel\", message);·
+          return;·
+        }·
+        setExporting(true);·
+        setExportError(\"\");·
+        setExportStage(\"Loading Excel tools...\");·
+        await yieldToBrowser();·
+        try {·
+          const XLSX = await import(\"xlsx\");·
+          const workbook = XLSX.utils.book_new();·
+          const addSheet = async (name: string, data: any[]) => {·
+            setExportStage(`Building ${name}...`);·
+            await yieldToBrowser();·
+            XLSX.utils.book_append_sheet(·
+              workbook,·
+              XLSX.utils.json_to_sheet(data),·
+              name,·
+            );·
+          };·
+          const daily = filtered.map((row) => ({·
+            Date: row.date,·
+            Employee: canonicalLabel(row.name, \"person\"),·
+            EmployeeNo: row.employee_number,·
+            RegisteredOffice: canonicalLabel(row.office_name, \"office\"),·
+            CheckInOffice: canonicalLabel((row as any).check_in_office_name ?? row.office_name, \"office\"),·
+            AttendanceSource: (row as any).attendance_source ?? row.presence_source ?? \"APP\",·
+            Team: canonicalLabel(row.team, \"team\"),·
+            TeamHead: canonicalLabel(row.team_head_name, \"person\"),·
+            Role: canonicalLabel(row.role, \"role\"),·
+            AppIn: formatHrmsDateTime(row.app_in, \"No check-in\"),·
+            BioIn: formatHrmsDateTime(row.bio_in, \"No biometric punch\"),·
+            FinalIn: formatHrmsDateTime(row.final_in, \"No check-in\"),·
+            FirstInSource: row.first_in_source || \"Unknown / Needs review\",·
+            AppOut: formatHrmsDateTime(row.app_out, \"No checkout\"),·
+            BioLastPunchEvidence: formatHrmsDateTime(row.bio_out, \"No biometric evidence\"),·
+            FinalOut: formatHrmsDateTime(row.final_out, \"No checkout\"),·
+            LastOutSource: row.last_out_source || \"Unknown / Needs review\",·
+            Status: row.report_status,·
+            Source: row.presence_source,·
+            Suggested: row.suggested_status,·
+            FraudSeverity: row.fraud_severity,·
+            FraudScore: row.fraud_score,·
+          }));·
+          const summarize = (key: string, label: string, kind: LabelKind) =>·
+            Object.values(·
+              filtered.reduce((all: any, row: any) => {·
+                const value = canonicalLabel(row[key], kind) || \"Unassigned\";·
+                all[value] ??= {·
+                  [label]: value,·
+                  Records: 0,·
+                  Present: 0,·
+                  Mismatch: 0,·
+                  Late: 0,·
+                  NoCheckout: 0,·
+                  FieldVisits: 0,·
+                  SuspiciousGPS: 0,·
+                };·
+                const item = all[value];·
+                item.Records += 1;·
+                if (isPresent(row)) item.Present += 1;·
+                if (row.report_status === \"MISMATCH\") item.Mismatch += 1;·
+                if (isLate(row)) item.Late += 1;·
+                if (specialistMatch(row, \"NO_CHECKOUT\")) item.NoCheckout += 1;·
+                if (row.has_field_visit) item.FieldVisits += 1;·
+                if (specialistMatch(row, \"SUSPICIOUS_GPS\")) item.SuspiciousGPS += 1;·
+                return all;·
+              }, {}),·
+            );·
+          await addSheet(\"Daily Attendance\", daily);·
+          await addSheet(·
+            \"Employee Summary\",·
+            summarize(\"name\", \"Employee\", \"person\"),·
+          );·
+          await addSheet(\"Team Summary\", summarize(\"team\", \"Team\", \"team\"));·
+          await addSheet(·
+            \"Late Report\",·
+            daily.filter((_item, index) => isLate(filtered[index])),·
+          );·
+          await addSheet(·
+            \"No Checkout Report\",·
+            daily.filter((_item, index) =>·
+              specialistMatch(filtered[index], \"NO_CHECKOUT\"),·
+            ),·
+          );·
+          let fieldVisits: any[] = [];·
+          let fieldVisitWarning = \"\";·
+          try {·
+            setExportStage(\"Loading field visits...\");·
+            await yieldToBrowser();·
+            fieldVisits = await fetchAllRows(·
+              \"field_visits\",·
+              \"date,user_id,location_name,visit_type,checkin_time,checkout_time,status,profiles:user_id(name)\",·
+              start,·
+              end,·
+            );·
+          } catch (error: any) {·
+            fieldVisitWarning =·
+              \"Field visits could not be loaded; the attendance workbook was still downloaded.\";·
+            void reportNonFatalError(\"attendance_report.field_visit_export\", error);·
+          }·
+          await addSheet(·
+            \"Field Visit Report\",·
+            fieldVisits.length·
+              ? fieldVisits.map((visit: any) => ({·
+                  Date: visit.date,·
+                  Employee: visit.profiles?.name,·
+                  Location: visit.location_name,·
+                  Type: visit.visit_type,·
+                  In: formatHrmsDateTime(visit.checkin_time, \"No check-in\"),·
+                  Out: formatHrmsDateTime(visit.checkout_time, \"No checkout\"),·
+                  Status: visit.status,·
+                }))·
+              : [·
+                  {·
+                    Notice:·
+                      fieldVisitWarning ||·
+                      \"No field visits were recorded for the selected period.\",·
+                  },·
+                ],·
+          );·
+          await addSheet(·
+            \"Biometric Mismatch\",·
+            daily.filter(·
+              (item) =>·
+                item.Status === \"MISMATCH\" || item.Suggested === \"NEEDS_REVIEW\",·
+            ),·
+          );·
+          setExportStage(\"Preparing download...\");·
+          await yieldToBrowser();·
+          await downloadWorkbook(·
+            XLSX,·
+            workbook,·
+            `Advanced_Attendance_${start}_${end}.xlsx`,·
+          );·
+          Alert.alert(·
+            \"Export ready\",·
+            `Created seven sheets from ${filtered.length.toLocaleString(\"en-IN\")} attendance records.${fieldVisitWarning ? ` ${fieldVisitWarning}` : \"\"}`,·
+          );·
+        } catch (error: any) {·
+          const excelMessage = error?.message ?? \"Unable to create Excel export.\";·
+          try {·
+            setExportStage(\"Creating CSV recovery download...\");·
+            await yieldToBrowser();·
+            await downloadAttendanceCsv(·
+              filtered,·
+              `Advanced_Attendance_${start}_${end}.csv`,·
+            );·
+            setExportError(·
+              `Excel could not be created (${excelMessage}). A CSV attendance report was downloaded instead.`,·
+            );·
+          } catch (csvError: any) {·
+            const message = `${excelMessage} CSV recovery also failed: ${csvError?.message ?? \"unknown error\"}`;·
+            setExportError(message);·
+            Alert.alert(\"Export failed\", message);·
+          }·
+        } finally {·
+          setExporting(false);·
+          setExportStage(\"\");·
+        }·
+      };···
+      const metrics = [·
+        {·
+          label: \"Total\",·
+          value: summary.total,·
+          icon: \"database\" as const,·
+          background: theme.infoBg,·
+          foreground: theme.infoText,·
+        },·
+        {·
+          label: \"Present\",·
+          value: summary.present,·
+          icon: \"check-circle\" as const,·
+          background: theme.successBg,·
+          foreground: theme.successText,·
+        },·
+        {·
+          label: \"Late\",·
+          value: summary.late,·
+          icon: \"clock\" as const,·
+          background: theme.warningBg,·
+          foreground: theme.warningText,·
+        },·
+        {·
+          label: \"Mismatch\",·
+          value: summary.mismatch,·
+          icon: \"alert-triangle\" as const,·
+          background: theme.errorBg,·
+          foreground: theme.errorText,·
+        },·
+        {·
+          label: \"No checkout\",·
+          value: summary.noCheckout,·
+          icon: \"log-out\" as const,·
+          background: theme.warningBg,·
+          foreground: theme.warningText,·
+        },·
+        {·
+          label: \"Setup required\",·
+          value: summary.setupRequired,·
+          icon: \"settings\" as const,·
+          background: theme.warningBg,·
+          foreground: theme.warningText,·
+        },·
+        {·
+          label: \"Absent\",·
+          value: summary.absent,·
+          icon: \"user-x\" as const,·
+          background: theme.errorBg,·
+          foreground: theme.errorText,·
+        },·
+        {·
+          label: \"Field visits\",·
+          value: summary.fieldVisits,·
+          icon: \"map-pin\" as const,·
+          background: theme.infoBg,·
+          foreground: theme.infoText,·
+        },·
+        {·
+          label: \"GPS exceptions\",·
+          value: summary.gpsExceptions,·
+          icon: \"navigation\" as const,·
+          background: theme.warningBg,·
+          foreground: theme.warningText,·
+        },·
+      ];···
+      return (·
+        <ScreenScrollView·
+          keyboardShouldPersistTaps=\"handled\"·
+          contentContainerStyle={styles.wrap}·
+        >·
+          <View·
+            style={[styles.hero, { backgroundColor: theme.primary }, Shadows.md]}·
+          >·
+            <View style={styles.heroIcon}>·
+              <Feather name=\"bar-chart-2\" size={22} color={theme.buttonText} />·
+            </View>·
+            <View style={styles.flex}>·
+              <ThemedText type=\"h2\" style={{ color: theme.buttonText }}>·
+                Attendance intelligence·
+              </ThemedText>·
+              <ThemedText type=\"small\" style={styles.heroSubtitle}>·
+                App, biometric, field visit and GPS reconciliation·
+              </ThemedText>·
+            </View>·
+            <View style={styles.heroCount}>·
+              <ThemedText·
+                style={[styles.heroCountValue, { color: theme.buttonText }]}·
+              >·
+                {sectionRows.length.toLocaleString(\"en-IN\")}·
+              </ThemedText>·
+              <ThemedText type=\"caption\" style={styles.heroSubtitle}>·
+                records·
+              </ThemedText>·
+            </View>·
+          </View>···
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sectionTabs}>·
+            {REPORT_SECTIONS.map((item, idx) => (·
+              <Pressable·
+                key={`section-${idx}`}·
+                onPress={() => setSection(item)}·
+                style={[·
+                  styles.sectionTab,·
+                  { borderColor: section === item ? theme.primary : theme.border, backgroundColor: section === item ? theme.primary : theme.backgroundDefault },·
+                ]}·
+              >·
+                <ThemedText type=\"small\" style={{ color: section === item ? theme.buttonText : theme.text, fontWeight: \"700\" }}>·
+                  {item}·
+                </ThemedText>·
+              </Pressable>·
+            ))}·
+          </ScrollView>···
+          <View·
+            style={[·
+              styles.panel,·
+              {·
+                backgroundColor: theme.backgroundDefault,·
+                borderColor: theme.border,·
+              },·
+            ]}·
+          >·
+            <View style={styles.panelTitleRow}>·
+              <View style={[styles.sectionIcon, { backgroundColor: theme.infoBg }]}>·
+                <Feather name=\"calendar\" size={17} color={theme.infoText} />·
+              </View>·
+              <View style={styles.flex}>·
+                <ThemedText type=\"h4\">Report period</ThemedText>·
+                <ThemedText type=\"caption\" style={{ color: theme.textSecondary }}>·
+                  Dates are interpreted in Indian Standard Time·
+                </ThemedText>·
+              </View>·
+            </View>·
+            <View style={styles.dateRow}>·
+              <View style={styles.dateField}>·
+                <ThemedText type=\"caption\" style={{ color: theme.textSecondary }}>·
+                  FROM·
+                </ThemedText>·
+                <TextInput·
+                  style={[·
+                    styles.input,·
+                    {·
+                      backgroundColor: theme.backgroundSecondary,·
+                      borderColor: theme.border,·
+                      color: theme.text,·
+                    },·
+                  ]}·
+                  value={start}·
+                  onChangeText={setStart}·
+                  placeholder=\"YYYY-MM-DD\"·
+                  placeholderTextColor={theme.textTertiary}·
+                  autoCapitalize=\"none\"·
+                />·
+              </View>·
+              <View style={styles.dateField}>·
+                <ThemedText type=\"caption\" style={{ color: theme.textSecondary }}>·
+                  TO·
+                </ThemedText>·
+                <TextInput·
+                  style={[·
+                    styles.input,·
+                    {·
+                      backgroundColor: theme.backgroundSecondary,·
+                      borderColor: theme.border,·
+                      color: theme.text,·
+                    },·
+                  ]}·
+                  value={end}·
+                  onChangeText={setEnd}·
+                  placeholder=\"YYYY-MM-DD\"·
+                  placeholderTextColor={theme.textTertiary}·
+                  autoCapitalize=\"none\"·
+                />·
+              </View>·
+            </View>·
+            <Pressable·
+              accessibilityRole=\"button\"·
+              style={({ pressed }) => [·
+                styles.primaryButton,·
+                {·
+                  backgroundColor: theme.primary,·
+                  opacity: pressed || loading ? 0.75 : 1,·
+                },·
+              ]}·
+              onPress={load}·
+              disabled={loading}·
+            >·
+              {loading ? (·
+                <ActivityIndicator color={theme.buttonText} />·
+              ) : (·
+                <Feather name=\"refresh-cw\" size={17} color={theme.buttonText} />·
+              )}·
+              <ThemedText style={[styles.buttonText, { color: theme.buttonText }]}>·
+                {loading ? \"Loading report...\" : \"Refresh report\"}·
+              </ThemedText>·
+            </Pressable>·
+            {exportError ? (·
+              <ThemedText·
+                type=\"small\"·
+                style={{ color: theme.errorText, textAlign: \"center\" }}·
+              >·
+                Download failed: {exportError}·
+              </ThemedText>·
+            ) : null}·
+          </View>···
+          <View style={styles.metricsGrid}>·
+            {metrics.map((metric) => (·
+              <View·
+                key={metric.label}·
+                style={[·
+                  styles.metric,·
+                  {·
+                    backgroundColor: theme.backgroundDefault,·
+                    borderColor: theme.border,·
+                  },·
+                ]}·
+              >·
+                <View·
+                  style={[·
+                    styles.metricIcon,·
+                    { backgroundColor: metric.background },·
+                  ]}·
+                >·
+                  <Feather name={metric.icon} size={16} color={metric.foreground} />·
+                </View>·
+                <ThemedText type=\"h3\">·
+                  {metric.value.toLocaleString(\"en-IN\")}·
+                </ThemedText>·
+                <ThemedText type=\"caption\" style={{ color: theme.textSecondary }}>·
+                  {metric.label}·
+                </ThemedText>·
+              </View>·
+            ))}·
+          </View>···
+          <View·
+            style={[·
+              styles.panel,·
+              {·
+                backgroundColor: theme.backgroundDefault,·
+                borderColor: theme.border,·
+              },·
+            ]}·
+          >·
+            <View style={styles.panelTitleRow}>·
+              <View·
+                style={[·
+                  styles.sectionIcon,·
+                  { backgroundColor: theme.backgroundSecondary },·
+                ]}·
+              >·
+                <Feather name=\"filter\" size={17} color={theme.primary} />·
+              </View>·
+              <View style={styles.flex}>·
+                <ThemedText type=\"h4\">Filters</ThemedText>·
+                <ThemedText type=\"caption\" style={{ color: theme.textSecondary }}>·
+                  {activeFilterCount·
+                    ? `${activeFilterCount} active filter${activeFilterCount === 1 ? \"\" : \"s\"}`·
+                    : \"Showing all available records\"}·
+                </ThemedText>·
+              </View>·
+              {activeFilterCount ? (·
+                <Pressable onPress={() => setFilters(EMPTY_FILTERS)} hitSlop={8}>·
+                  <ThemedText·
+                    type=\"small\"·
+                    style={{ color: theme.primary, fontWeight: \"700\" }}·
+                  >·
+                    Clear all·
+                  </ThemedText>·
+                </Pressable>·
+              ) : null}·
+            </View>·
+            {renderFilter(\"OFFICE\", \"office\", options(\"office_name\", \"office\"))}·
+            {renderFilter(\"TEAM\", \"team\", options(\"team\", \"team\"))}·
+            {renderFilter(\"TEAM HEAD\", \"head\", options(\"team_head_name\", \"person\"))}·
+            {renderFilter(\"ROLE\", \"role\", options(\"role\", \"role\"))}·
+            {renderFilter(\"SOURCE\", \"source\", [\"APP\", \"BIOMETRIC\", \"FIELD_VISIT\", \"MULTIPLE\", \"NO_DATA\"])}·
+            <TextInput·
+              style={[styles.input, { backgroundColor: theme.backgroundSecondary, borderColor: theme.border, color: theme.text }]}·
+              value={filters.search}·
+              onChangeText={(search) => setFilters((previous) => ({ ...previous, search }))}·
+              placeholder=\"Search employee or employee ID\"·
+              placeholderTextColor={theme.textTertiary}·
+            />·
+            {renderFilter(\"SPECIALIST\", \"status\", [·
+              \"LATE\",·
+              \"NO_CHECKOUT\",·
+              \"FIELD_VISIT\",·
+              \"MISMATCH\",·
+              \"SUSPICIOUS_GPS\",·
+              \"CONFIG_REQUIRED\",·
+            ])}·
+          </View>···
+          <View style={styles.resultsHeader}>·
+            <View>·
+              <ThemedText type=\"h3\">{section}</ThemedText>·
+              <ThemedText type=\"caption\" style={{ color: theme.textSecondary }}>·
+                {rows.length >= PAGE_SIZE·
+                  ? \"Paginated production data\"·
+                  : \"Reconciled data\"}·
+              </ThemedText>·
+            </View>·
+            <View·
+              style={[·
+                styles.resultPill,·
+                { backgroundColor: theme.backgroundSecondary },·
+              ]}·
+            >·
+              <ThemedText·
+                type=\"caption\"·
+                style={{ color: theme.primary, fontWeight: \"800\" }}·
+              >·
+                {sectionRows.length.toLocaleString(\"en-IN\")}·
+              </ThemedText>·
+            </View>·
+          </View>···
+          {loadError ? (·
+            <View·
+              style={[·
+                styles.stateCard,·
+                { backgroundColor: theme.errorBg, borderColor: theme.error },·
+              ]}·
+            >·
+              <Feather name=\"alert-circle\" size={24} color={theme.errorText} />·
+              <ThemedText type=\"h4\" style={{ color: theme.errorText }}>·
+                Could not load the report·
+              </ThemedText>·
+              <ThemedText·
+                type=\"small\"·
+                style={{ color: theme.errorText, textAlign: \"center\" }}·
+              >·
+                {loadError}·
+              </ThemedText>·
+            </View>·
+          ) : loading && !rows.length ? (·
+            <View·
+              style={[·
+                styles.stateCard,·
+                {·
+                  backgroundColor: theme.backgroundDefault,·
+                  borderColor: theme.border,·
+                },·
+              ]}·
+            >·
+              <ActivityIndicator color={theme.primary} />·
+              <ThemedText type=\"small\" style={{ color: theme.textSecondary }}>·
+                Reconciling attendance records...·
+              </ThemedText>·
+            </View>·
+          ) : !sectionRows.length ? (·
+            <View·
+              style={[·
+                styles.stateCard,·
+                {·
+                  backgroundColor: theme.backgroundDefault,·
+                  borderColor: theme.border,·
+                },·
+              ]}·
+            >·
+              <View·
+                style={[·
+                  styles.emptyIcon,·
+                  { backgroundColor: theme.backgroundSecondary },·
+                ]}·
+              >·
+                <Feather name=\"search\" size={25} color={theme.textSecondary} />·
+              </View>·
+              <ThemedText type=\"h4\">No matching records</ThemedText>·
+              <ThemedText·
+                type=\"small\"·
+                style={{ color: theme.textSecondary, textAlign: \"center\" }}·
+              >·
+                Try another date range or clear one of the active filters.·
+              </ThemedText>·
+            </View>·
+          ) : (·
+            sectionRows.slice(0, 200).map((row, index) => {·
+              const colors = statusColors(row);·
+              return (·
+                <View·
+                  key={`${row.user_id}-${row.date}-${index}`}·
+                  style={[·
+                    styles.recordCard,·
+                    {·
+                      backgroundColor: theme.backgroundDefault,·
+                      borderColor: theme.border,·
+                    },·
+                  ]}·
+                >·
+                  <View style={styles.recordTop}>·
+                    <View·
+                      style={[·
+                        styles.avatar,·
+                        { backgroundColor: theme.backgroundSecondary },·
+                      ]}·
+                    >·
+                      <ThemedText·
+                        style={{ color: theme.primary, fontWeight: \"800\" }}·
+                      >·
+                        {String(row.name || \"?\")·
+                          .trim()·
+                          .charAt(0)·
+                          .toUpperCase()}·
+                      </ThemedText>·
+                    </View>·
+                    <View style={styles.flex}>·
+                      <ThemedText type=\"h4\" numberOfLines={1}>·
+                        {canonicalLabel(row.name, \"person\") || \"Unknown employee\"}·
+                      </ThemedText>·
+                      <ThemedText·
+                        type=\"caption\"·
+                        style={{ color: theme.textSecondary }}·
+                        numberOfLines={1}·
+                      >·
+                        {[·
+                          row.employee_number,·
+                          row.date,·
+                          canonicalLabel(row.team, \"team\"),·
+                        ]·
+                          .filter(Boolean)·
+                          .join(\" | \")}·
+                      </ThemedText>·
+                    </View>·
+                    <View·
+                      style={[·
+                        styles.statusBadge,·
+                        { backgroundColor: colors.background },·
+                      ]}·
+                    >·
+                      <ThemedText·
+                        type=\"caption\"·
+                        style={{ color: colors.foreground, fontWeight: \"800\" }}·
+                      >·
+                        {displayStatus(row)}·
+                      </ThemedText>·
+                    </View>·
+                  </View>···
+                  <View·
+                    style={[styles.timeRow, { borderColor: theme.borderLight }]}·
+                  >·
+                    <View style={styles.timeCell}>·
+                      <ThemedText·
+                        type=\"caption\"·
+                        style={{ color: theme.textSecondary }}·
+                      >·
+                        FIRST IN·
+                      </ThemedText>·
+                      <ThemedText type=\"small\" style={styles.timeValue}>·
+                        {formatTime(row.final_in || row.app_in)}·
+                      </ThemedText>·
+                    </View>·
+                    <View·
+                      style={[·
+                        styles.timeDivider,·
+                        { backgroundColor: theme.borderLight },·
+                      ]}·
+                    />·
+                    <View style={styles.timeCell}>·
+                      <ThemedText·
+                        type=\"caption\"·
+                        style={{ color: theme.textSecondary }}·
+                      >·
+                        LAST OUT·
+                      </ThemedText>·
+                      <ThemedText type=\"small\" style={styles.timeValue}>·
+                        {formatTime(row.final_out || row.app_out)}·
+                      </ThemedText>·
+                    </View>·
+                    <View·
+                      style={[·
+                        styles.timeDivider,·
+                        { backgroundColor: theme.borderLight },·
+                      ]}·
+                    />·
+                    <View style={styles.timeCell}>·
+                      <ThemedText·
+                        type=\"caption\"·
+                        style={{ color: theme.textSecondary }}·
+                      >·
+                        SOURCE·
+                      </ThemedText>·
+                      <ThemedText·
+                        type=\"small\"·
+                        style={styles.timeValue}·
+                        numberOfLines={1}·
+                      >·
+                        {row.presence_source || \"-\"}·
+                      </ThemedText>·
+                    </View>·
+                  </View>···
+                  {isLate(row) ||·
+                  row.has_field_visit ||·
+                  row.fraud_severity ||·
+                  row.history_verified !== true ? (·
+                    <View style={styles.flagsRow}>·
+                      {isLate(row) ? (·
+                        <View·
+                          style={[·
+                            styles.flag,·
+                            { backgroundColor: theme.warningBg },·
+                          ]}·
+                        >·
+                          <Feather·
+                            name=\"clock\"·
+                            size={12}·
+                            color={theme.warningText}·
+                          />·
+                          <ThemedText·
+                            type=\"caption\"·
+                            style={{ color: theme.warningText }}·
+                          >·
+                            Late·
+                          </ThemedText>·
+                        </View>·
+                      ) : null}·
+                      {row.has_field_visit ? (·
+                        <View·
+                          style={[styles.flag, { backgroundColor: theme.infoBg }]}·
+                        >·
+                          <Feather·
+                            name=\"map-pin\"·
+                            size={12}·
+                            color={theme.infoText}·
+                          />·
+                          <ThemedText·
+                            type=\"caption\"·
+                            style={{ color: theme.infoText }}·
+                          >·
+                            Field visit·
+                          </ThemedText>·
+                        </View>·
+                      ) : null}·
+                      {row.history_verified !== true ? (·
+                        <View·
+                          style={[·
+                            styles.flag,·
+                            { backgroundColor: theme.warningBg },·
+                          ]}·
+                        >·
+                          <Feather·
+                            name=\"settings\"·
+                            size={12}·
+                            color={theme.warningText}·
+                          />·
+                          <ThemedText·
+                            type=\"caption\"·
+                            style={{ color: theme.warningText }}·
+                          >·
+                            Office/policy setup required·
+                          </ThemedText>·
+                        </View>·
+                      ) : null}·
+                      {row.fraud_severity ? (·
+                        <View·
+                          style={[styles.flag, { backgroundColor: theme.errorBg }]}·
+                        >·
+                          <Feather·
+                            name=\"shield\"·
+                            size={12}·
+                            color={theme.errorText}·
+                          />·
+                          <ThemedText·
+                            type=\"caption\"·
+                            style={{ color: theme.errorText }}·
+                          >·
+                            {row.fraud_severity}·
+                          </ThemedText>·
+                        </View>·
+                      ) : null}·
+                    </View>·
+                  ) : null}·
+                </View>·
+              );·
+            })·
+          )}···
+          {sectionRows.length > 200 ? (·
+            <View style={[styles.preview, { backgroundColor: theme.infoBg }]}>·
+              <Feather name=\"info\" size={16} color={theme.infoText} />·
+              <ThemedText type=\"small\" style={{ color: theme.infoText, flex: 1 }}>·
+                Showing the first 200 records. Excel includes all{\" \"}·
+                {sectionRows.length.toLocaleString(\"en-IN\")} records in this section.·
+              </ThemedText>·
+            </View>·
+          ) : null}···
+          <View·
+            style={[·
+              styles.exportPanel,·
+              {·
+                backgroundColor: theme.successBg,·
+                borderColor: theme.success,·
+              },·
+            ]}·
+          >·
+            <View style={styles.exportCopy}>·
+              <ThemedText type=\"h4\" style={{ color: theme.successText }}>·
+                Seven-sheet Excel report·
+              </ThemedText>·
+              <ThemedText type=\"caption\" style={{ color: theme.successText }}>·
+                Daily, employee, team, late, no-checkout, field visit and biometric·
+                mismatch·
+              </ThemedText>·
+            </View>·
+            <Pressable·
+              accessibilityRole=\"button\"·
+              style={({ pressed }) => [·
+                styles.export,·
+                {·
+                  backgroundColor: theme.success,·
+                  opacity: pressed || exporting ? 0.75 : 1,·
+                },·
+              ]}·
+              onPress={exportSevenSheets}·
+              disabled={exporting}·
+            >·
+              {exporting ? (·
+                <ActivityIndicator color={theme.buttonText} />·
+              ) : (·
+                <Feather name=\"download\" size={17} color={theme.buttonText} />·
+              )}·
+              <ThemedText style={[styles.buttonText, { color: theme.buttonText }]}>·
+                {exporting ? exportStage || \"Building sheets...\" : \"Export Excel\"}·
+              </ThemedText>·
+            </Pressable>·
+          </View>·
+        </ScreenScrollView>·
+      );·
+    }···
+    const styles = StyleSheet.create({·
+      wrap: {·
+        paddingHorizontal: Spacing.lg,·
+        gap: Spacing.lg,·
+      },·
+      sectionTabs: { gap: 8, paddingVertical: 2 },·
+      sectionTab: { borderWidth: 1, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 9 },·
+      flex: { flex: 1 },·
+      hero: {·
+        borderRadius: BorderRadius.xl,·
+        padding: Spacing.lg,·
+        flexDirection: \"row\",·
+        alignItems: \"center\",·
+        gap: Spacing.md,·
+      },·
+      heroIcon: {·
+        width: 44,·
+        height: 44,·
+        borderRadius: BorderRadius.md,·
+        backgroundColor: \"rgba(255,255,255,0.15)\",·
+        alignItems: \"center\",·
+        justifyContent: \"center\",·
+      },·
+      heroSubtitle: { color: \"rgba(255,255,255,0.78)\" },·
+      heroCount: { alignItems: \"flex-end\" },·
+      heroCountValue: { fontSize: 20, fontWeight: \"800\" },·
+      panel: {·
+        borderWidth: 1,·
+        borderRadius: BorderRadius.lg,·
+        padding: Spacing.lg,·
+        gap: Spacing.md,·
+      },·
+      panelTitleRow: {·
+        flexDirection: \"row\",·
+        alignItems: \"center\",·
+        gap: Spacing.sm,·
+      },·
+      sectionIcon: {·
+        width: 36,·
+        height: 36,·
+        borderRadius: BorderRadius.md,·
+        alignItems: \"center\",·
+        justifyContent: \"center\",·
+      },·
+      dateRow: { flexDirection: \"row\", gap: Spacing.sm },·
+      dateField: { flex: 1, gap: Spacing.xs },·
+      input: {·
+        borderWidth: 1,·
+        height: 46,·
+        paddingHorizontal: Spacing.md,·
+        borderRadius: BorderRadius.md,·
+        fontSize: 14,·
+      },·
+      primaryButton: {·
+        minHeight: 46,·
+        borderRadius: BorderRadius.md,·
+        flexDirection: \"row\",·
+        alignItems: \"center\",·
+        justifyContent: \"center\",·
+        gap: Spacing.sm,·
+      },·
+      buttonText: { fontWeight: \"800\" },·
+      metricsGrid: {·
+        flexDirection: \"row\",·
+        flexWrap: \"wrap\",·
+        gap: Spacing.sm,·
+      },·
+      metric: {·
+        minWidth: 104,·
+        flexGrow: 1,·
+        flexBasis: \"30%\",·
+        borderWidth: 1,·
+        borderRadius: BorderRadius.md,·
+        padding: Spacing.md,·
+        gap: 3,·
+      },·
+      metricIcon: {·
+        width: 30,·
+        height: 30,·
+        borderRadius: BorderRadius.sm,·
+        alignItems: \"center\",·
+        justifyContent: \"center\",·
+        marginBottom: Spacing.xs,·
+      },·
+      filterGroup: { gap: 2 },·
+      filterLabel: { fontWeight: \"800\", letterSpacing: 0.7 },·
+      chipRow: { paddingVertical: Spacing.xs, paddingRight: Spacing.sm },·
+      chip: {·
+        minHeight: 32,·
+        justifyContent: \"center\",·
+        paddingHorizontal: Spacing.md,·
+        borderWidth: 1,·
+        borderRadius: BorderRadius.full,·
+        marginRight: Spacing.sm,·
+      },·
+      resultsHeader: {·
+        flexDirection: \"row\",·
+        alignItems: \"center\",·
+        justifyContent: \"space-between\",·
+      },·
+      resultPill: {·
+        borderRadius: BorderRadius.full,·
+        paddingHorizontal: 12,·
+        paddingVertical: 6,·
+      },·
+      stateCard: {·
+        minHeight: 170,·
+        borderWidth: 1,·
+        borderRadius: BorderRadius.lg,·
+        padding: Spacing.xl,·
+        alignItems: \"center\",·
+        justifyContent: \"center\",·
+        gap: Spacing.sm,·
+      },·
+      emptyIcon: {·
+        width: 52,·
+        height: 52,·
+        borderRadius: 26,·
+        alignItems: \"center\",·
+        justifyContent: \"center\",·
+      },·
+      recordCard: {·
+        borderWidth: 1,·
+        borderRadius: BorderRadius.lg,·
+        padding: Spacing.md,·
+        gap: Spacing.md,·
+      },·
+      recordTop: {·
+        flexDirection: \"row\",·
+        alignItems: \"center\",·
+        gap: Spacing.sm,·
+      },·
+      avatar: {·
+        width: 38,·
+        height: 38,·
+        borderRadius: 19,·
+        alignItems: \"center\",·
+        justifyContent: \"center\",·
+      },·
+      statusBadge: {·
+        maxWidth: 110,·
+        borderRadius: BorderRadius.full,·
+        paddingHorizontal: Spacing.sm,·
+        paddingVertical: 5,·
+      },·
+      timeRow: {·
+        flexDirection: \"row\",·
+        borderTopWidth: 1,·
+        paddingTop: Spacing.md,·
+      },·
+      timeCell: { flex: 1, gap: 3 },·
+      timeDivider: { width: 1, marginHorizontal: Spacing.sm },·
+      timeValue: { fontWeight: \"700\" },·
+      flagsRow: { flexDirection: \"row\", flexWrap: \"wrap\", gap: Spacing.xs },·
+      flag: {·
+        flexDirection: \"row\",·
+        alignItems: \"center\",·
+        gap: 4,·
+        paddingHorizontal: Spacing.sm,·
+        paddingVertical: 4,·
+        borderRadius: BorderRadius.full,·
+      },·
+      preview: {·
+        flexDirection: \"row\",·
+        alignItems: \"flex-start\",·
+        gap: Spacing.sm,·
+        padding: Spacing.md,·
+        borderRadius: BorderRadius.md,·
+      },·
+      exportPanel: {·
+        borderWidth: 1,·
+        borderRadius: BorderRadius.lg,·
+        padding: Spacing.lg,·
+        gap: Spacing.md,·
+      },·
+      exportCopy: { gap: 3 },·
+      export: {·
+        minHeight: 46,·
+        borderRadius: BorderRadius.md,·
+        flexDirection: \"row\",·
+        alignItems: \"center\",·
+        justifyContent: \"center\",·
+        gap: Spacing.sm,·
+      },·
+    });·
+    "
+
+    [0m [90m 55 |[39m     [36mconst[39m screen [33m=[39m read([32m"screens/admin/AdvancedAttendanceReportScreen.tsx"[39m)[33m;[39m
+     [90m 56 |[39m     [90m// expect(service).toContain('"rpc_admin_attendance_report_v5"');[39m
+    [31m[1m>[22m[39m[90m 57 |[39m     expect(screen)[33m.[39mtoContain([32m"parseAttendanceReportQuery"[39m)[33m;[39m
+     [90m    |[39m                    [31m[1m^[22m[39m
+     [90m 58 |[39m     expect(screen)[33m.[39mtoContain([32m"Run smart report"[39m)[33m;[39m
+     [90m 59 |[39m     expect(screen)[33m.[39mtoContain(
+     [90m 60 |[39m       [32m"Marketing team from 3 Aug to 16 Aug who were late"[39m[33m,[39m[0m
+
+      at Object.toContain (__tests__/enterpriseAttendanceReporting.test.ts:57:20)
+
+FAIL __tests__/otpSecurityAndIdempotency.test.ts
+  ● OTP Security, Idempotency & Architecture › enforces idempotency and request deduplication in Edge Function & Migration
+
+    expect(received).toContain(expected) // indexOf
+
+    Expected substring: "requestId"
+    Received string:    "import { createClient } from \"npm:@supabase/supabase-js@2.39.0\";···
+    const cors = {·
+      \"Access-Control-Allow-Origin\": \"*\",·
+      \"Access-Control-Allow-Headers\":·
+        \"authorization, x-client-info, apikey, content-type\",·
+    };·
+    const reply = (body: unknown, status = 200) =>·
+      new Response(JSON.stringify(body), {·
+        status,·
+        headers: { ...cors, \"Content-Type\": \"application/json\" },·
+      });·
+    const hex = (bytes: Uint8Array) =>·
+      Array.from(bytes)·
+        .map((b) => b.toString(16).padStart(2, \"0\"))·
+        .join(\"\");·
+    const normalizePhone = (value: unknown) => {·
+      const digits = String(value ?? \"\").replace(/\\D/g, \"\");·
+      return digits.length === 12 && digits.startsWith(\"91\")·
+        ? digits.slice(2)·
+        : digits;·
+    };·
+    const SYSTEM_ADMIN_PHONE = \"9999999999\";·
+    async function hashOtp(phone: string, otp: string, salt: string) {·
+      const input = new TextEncoder().encode(`${phone}:${otp}:${salt}`);·
+      return hex(new Uint8Array(await crypto.subtle.digest(\"SHA-256\", input)));·
+    }···
+    async function createAuthSession(db: any, profile: any, phone: string) {·
+      const authEmail = `employee-${profile.id}@auth.realtyhrm.invalid`;·
+      const { data: existingAuth } = await db.auth.admin.getUserById(profile.id);·
+      if (!existingAuth.user) {·
+        const { error: createError } = await db.auth.admin.createUser({·
+          id: profile.id,·
+          email: authEmail,·
+          email_confirm: true,·
+          user_metadata: { profile_id: profile.id, phone },·
+        });·
+        if (createError) throw createError;·
+      }·
+      const email = existingAuth.user?.email || authEmail;·
+      const { data: link, error: linkError } = await db.auth.admin.generateLink({·
+        type: \"magiclink\",·
+        email,·
+      });·
+      if (linkError || !link?.properties?.hashed_token)·
+        throw linkError || new Error(\"Unable to create secure session\");·
+      return {·
+        email,·
+        token_hash: link.properties.hashed_token,·
+        type: \"magiclink\",·
+      };·
+    }···
+    Deno.serve(async (req) => {·
+      if (req.method === \"OPTIONS\") return new Response(null, { headers: cors });·
+      if (req.method !== \"POST\")·
+        return reply({ success: false, error: \"METHOD_NOT_ALLOWED\" }, 405);·
+      try {·
+        const body = await req.json();·
+        if (body?.action === \"version\") {·
+          return reply({·
+            success: true,·
+            function: \"otp-auth\",·
+            version: \"20260731.1\",·
+            requiredBackendSchemaVersion: \"20260810000000\",·
+          });·
+        }·
+        const url = Deno.env.get(\"SUPABASE_URL\");·
+        const roleKey = Deno.env.get(\"SUPABASE_SERVICE_ROLE_KEY\");·
+        const configuredSmsKey = Deno.env.get(\"SMS_OTP_API_KEY\");·
+        if (!url || !roleKey)·
+          throw new Error(\"Supabase server secrets are not configured\");·
+        const db = createClient(url, roleKey, { auth: { persistSession: false } });·
+        const smsKey = configuredSmsKey;·
+        const action = String(body.action ?? \"\");·
+        const phone = normalizePhone(body.phone);·
+        const phoneCandidates = [phone, `91${phone}`, `+91${phone}`];·
+        const ip =·
+          req.headers.get(\"x-forwarded-for\")?.split(\",\")[0]?.trim() ?? null;·
+        if (!/^\\d{10}$/.test(phone))·
+          return reply(·
+            {·
+              success: false,·
+              error: \"INVALID_PHONE\",·
+              message: \"Enter a valid 10-digit phone number.\",·
+            },·
+            400,·
+          );···
+        if (action === \"request\") {·
+          const since = new Date(Date.now() - 10 * 60_000).toISOString();·
+          const { count } = await db·
+            .from(\"otp_login_challenges\")·
+            .select(\"id\", { count: \"exact\", head: true })·
+            .eq(\"phone\", phone)·
+            .gte(\"created_at\", since);·
+          if ((count ?? 0) >= 3)·
+            return reply(·
+              {·
+                success: false,·
+                error: \"RATE_LIMITED\",·
+                message: \"Too many OTP requests. Try again in 10 minutes.\",·
+              },·
+              429,·
+            );·
+          const { data: profile } = await db·
+            .from(\"profiles\")·
+            .select(\"id,role\")·
+            .in(\"phone\", phoneCandidates)·
+            .eq(\"is_active\", true)·
+            .maybeSingle();·
+          if (!profile)·
+            return reply({·
+              success: true,·
+              message: \"If this number is registered, an OTP has been sent.\",·
+            });···
+          const isSystemAdmin = phone === SYSTEM_ADMIN_PHONE;·
+          if (isSystemAdmin && profile.role !== \"SYSTEM_ADMIN\")·
+            return reply(·
+              {·
+                success: false,·
+                error: \"SYSTEM_ADMIN_NOT_CONFIGURED\",·
+                message: \"The system administrator account is not configured.\",·
+              },·
+              403,·
+            );·
+          if (isSystemAdmin) {·
+            const { data: credential, error: credentialError } = await db·
+              .from(\"system_admin_login_credentials\")·
+              .select(\"profile_id\")·
+              .eq(\"profile_id\", profile.id)·
+              .eq(\"phone\", phone)·
+              .eq(\"enabled\", true)·
+              .maybeSingle();·
+            if (credentialError) throw credentialError;·
+            if (!credential)·
+              return reply(·
+                {·
+                  success: false,·
+                  error: \"SYSTEM_ADMIN_OTP_NOT_CONFIGURED\",·
+                  message: \"The system administrator OTP is not configured.\",·
+                },·
+                503,·
+              );·
+          }·
+          if (!isSystemAdmin && !smsKey)·
+            return reply(·
+              {·
+                success: false,·
+                error: \"SMS_NOT_CONFIGURED\",·
+                message: \"SMS OTP is not configured.\",·
+              },·
+              503,·
+            );···
+          const otp = (·
+            crypto.getRandomValues(new Uint32Array(1))[0] % 1_000_000·
+          )·
+            .toString()·
+            .padStart(6, \"0\");·
+          const salt = hex(crypto.getRandomValues(new Uint8Array(16)));·
+          const otpHash = await hashOtp(phone, otp, salt);·
+          const { error: insertError } = await db·
+            .from(\"otp_login_challenges\")·
+            .insert({·
+              phone,·
+              otp_hash: otpHash,·
+              salt,·
+              requested_ip: ip,·
+              expires_at: new Date(Date.now() + 5 * 60_000).toISOString(),·
+            });·
+          if (insertError) throw insertError;·
+          if (isSystemAdmin)·
+            return reply({·
+              success: true,·
+              message: \"Enter the administrator OTP.\",·
+            });···
+          const sms = await fetch(\"https://smsapi.edumarcsms.com/api/v1/sendsms\", {·
+            method: \"POST\",·
+            headers: { \"Content-Type\": \"application/json\", apikey: smsKey },·
+            body: JSON.stringify({·
+              number: [phone],·
+              message: `Your verification code is : ${otp} Regards BOP REALTY`,·
+              senderId: \"REABOP\",·
+              templateId: \"1607100000000223009\",·
+            }),·
+          });·
+          if (!sms.ok) {·
+            await db·
+              .from(\"otp_login_challenges\")·
+              .delete()·
+              .eq(\"phone\", phone)·
+              .eq(\"otp_hash\", otpHash);·
+            return reply(·
+              {·
+                success: false,·
+                error: \"SMS_FAILED\",·
+                message: \"OTP delivery failed. Please try again.\",·
+              },·
+              502,·
+            );·
+          }·
+          return reply({ success: true, message: \"OTP sent.\" });·
+        }···
+        if (action === \"verify\") {·
+          const otp = String(body.otp ?? \"\").trim();·
+          if (!/^\\d{6}$/.test(otp))·
+            return reply(·
+              {·
+                success: false,·
+                error: \"INVALID_OTP\",·
+                message: \"Enter the 6-digit OTP.\",·
+              },·
+              400,·
+            );·
+          const { data: challenge } = await db·
+            .from(\"otp_login_challenges\")·
+            .select(\"*\")·
+            .eq(\"phone\", phone)·
+            .is(\"consumed_at\", null)·
+            .gt(\"expires_at\", new Date().toISOString())·
+            .order(\"created_at\", { ascending: false })·
+            .limit(1)·
+            .maybeSingle();·
+          if (!challenge || challenge.attempts >= 5)·
+            return reply(·
+              {·
+                success: false,·
+                error: \"OTP_EXPIRED\",·
+                message: \"OTP expired or locked. Request a new code.\",·
+              },·
+              401,·
+            );·
+          const isSystemAdmin = phone === SYSTEM_ADMIN_PHONE;·
+          let systemAdminCredential: any = null;·
+          let expectedOtpHash = challenge.otp_hash;·
+          let suppliedOtpHash = await hashOtp(phone, otp, challenge.salt);·
+          if (isSystemAdmin) {·
+            const { data: credential, error: credentialError } = await db·
+              .from(\"system_admin_login_credentials\")·
+              .select(\"profile_id,otp_hash,salt\")·
+              .eq(\"phone\", phone)·
+              .eq(\"enabled\", true)·
+              .maybeSingle();·
+            if (credentialError) throw credentialError;·
+            if (!credential)·
+              return reply(·
+                {·
+                  success: false,·
+                  error: \"SYSTEM_ADMIN_OTP_NOT_CONFIGURED\",·
+                  message: \"The system administrator OTP is not configured.\",·
+                },·
+                503,·
+              );·
+            systemAdminCredential = credential;·
+            expectedOtpHash = credential.otp_hash;·
+            suppliedOtpHash = await hashOtp(phone, otp, credential.salt);·
+          }·
+          if (suppliedOtpHash !== expectedOtpHash) {·
+            await db·
+              .from(\"otp_login_challenges\")·
+              .update({ attempts: challenge.attempts + 1 })·
+              .eq(\"id\", challenge.id);·
+            return reply(·
+              { success: false, error: \"INCORRECT_OTP\", message: \"Incorrect OTP.\" },·
+              401,·
+            );·
+          }·
+          await db·
+            .from(\"otp_login_challenges\")·
+            .update({ consumed_at: new Date().toISOString() })·
+            .eq(\"id\", challenge.id);·
+          const { data: profile } = await db·
+            .from(\"profiles\")·
+            .select(\"id,name,email,phone,role,avatar,is_active,created_at\")·
+            .in(\"phone\", phoneCandidates)·
+            .eq(\"is_active\", true)·
+            .maybeSingle();·
+          if (!profile)·
+            return reply(·
+              {·
+                success: false,·
+                error: \"USER_NOT_FOUND\",·
+                message: \"User not found.\",·
+              },·
+              404,·
+            );·
+          if (·
+            isSystemAdmin &&·
+            (profile.id !== systemAdminCredential.profile_id ||·
+              profile.role !== \"SYSTEM_ADMIN\")·
+          )·
+            return reply(·
+              {·
+                success: false,·
+                error: \"SYSTEM_ADMIN_NOT_CONFIGURED\",·
+                message: \"The system administrator account is not configured.\",·
+              },·
+              403,·
+            );···
+          return reply({·
+            success: true,·
+            profile,·
+            auth: await createAuthSession(db, profile, phone),·
+          });·
+        }·
+        return reply({ success: false, error: \"INVALID_ACTION\" }, 400);·
+      } catch (error) {·
+        console.error(\"otp-auth error\", error);·
+        return reply(·
+          {·
+            success: false,·
+            error: \"SERVER_ERROR\",·
+            message: \"OTP service is temporarily unavailable.\",·
+          },·
+          500,·
+        );·
+      }·
+    });·
+    "
+
+    [0m [90m 32 |[39m     expect(migration)[33m.[39mtoContain([32m"ADD COLUMN IF NOT EXISTS resend_count INTEGER"[39m)[33m;[39m
+     [90m 33 |[39m     expect(migration)[33m.[39mtoContain([32m"idx_otp_request_id"[39m)[33m;[39m
+    [31m[1m>[22m[39m[90m 34 |[39m     expect(edgeFunction)[33m.[39mtoContain([32m"requestId"[39m)[33m;[39m
+     [90m    |[39m                          [31m[1m^[22m[39m
+     [90m 35 |[39m     expect(edgeFunction)[33m.[39mtoContain([32m".eq(\"request_id\", requestId)"[39m)[33m;[39m
+     [90m 36 |[39m     expect(edgeFunction)[33m.[39mtoContain([32m"retry_after"[39m)[33m;[39m
+     [90m 37 |[39m     expect(edgeFunction)[33m.[39mtoContain([32m"challenge_id: insertedChallenge.id"[39m)[33m;[39m[0m
+
+      at Object.toContain (__tests__/otpSecurityAndIdempotency.test.ts:34:26)
+
+  ● OTP Security, Idempotency & Architecture › wires request_id, challenge_id, and retry_after through AuthContext and LoginScreen
+
+    expect(received).toContain(expected) // indexOf
+
+    Expected substring: "request_id: requestId"
+    Received string:    "import React, {
+      createContext,
+      ReactNode,
+      useCallback,
+      useContext,
+      useEffect,
+      useRef,
+      useState,
+    } from \"react\";
+    import { persistentAuthStorage } from \"@/utils/secureStorage\";
+    import { AppState, Platform } from \"react-native\";
+    import type { Session } from \"@supabase/supabase-js\";
+    import { supabase, supabaseAuthStorageKey } from \"@/lib/supabase\";
+    import { firstRpcRow } from \"@/utils/supabaseRpc\";
+    import {
+      canAccessHRPanelRole,
+      isAdminRole,
+      isHRRole,
+      normalizeUserRole,
+    } from \"@/utils/userRole\";
+    import { DeviceSessionService } from \"@/services/device-session.service\";
+    import { stopNativeTracking } from \"@/services/location/backgroundLocationTask\";
+    import { clearOfflineLocationQueue } from \"@/services/location/secureQueue\";
+    import { CurrentLocationVisitService } from \"@/services/current-location-visit.service\";
+    import { getFunctionErrorMessage } from \"@/utils/functionError\";
+    import { deactivateCurrentDevicePushToken } from \"@/services/location/notification.service\";·
+    export type UserRole =
+      | \"SYSTEM_ADMIN\"
+      | \"ADMIN\"
+      | \"HR\"
+      | \"HRD\"
+      | \"BUSINESS_HEAD\"
+      | \"TEAM_HEAD\"
+      | \"TEAM_LEADER\"
+      | \"VP_SALES\"
+      | \"SALES_MANAGER\"
+      | \"GM_SALES\"
+      | \"AGM_SALES\"
+      | \"HEAD_BUSINESS_DEVELOPMENT\"
+      | \"BDM\"
+      | \"BDM_SALES\"
+      | \"SENIOR_BDE\"
+      | \"BDE\"
+      | \"SALES_EXECUTIVE\"
+      | \"ASSOCIATE_BUSINESS_HEAD\"
+      | \"ASSOCIATE_TEAM_HEAD\"
+      | \"ASSOCIATE_SENIOR_BDM\"
+      | \"ASSOCIATE_BDM\"
+      | \"ASSOCIATE_BDE\"
+      | \"ASSOCIATE_SALES_EXECUTIVE\"
+      | \"ASSOCIATE_MANAGER\"
+      | \"ASSOCIATE_SR_MANAGER\"
+      | \"ASSOCIATE_GM_SALES\"
+      | \"ASSOCIATE_AGM_SALES\"
+      | \"AGENT\"
+      | \"CO-ORDINATOR\"
+      | \"TELECALLER\"
+      | \"SALES\"
+      | \"DEPUTY_GENERAL_MANAGER\"
+      | \"SENIOR_ASSOCIATE_BDM\"
+      | \"VIDEO_EDITOR\"
+      | \"WEB_DEVELOPER\"
+      | \"DIGITAL_MARKETING_MANAGER\"
+      | \"ASSOCIATE_PARTNER\";·
+    export interface User {
+      id: string;
+      name: string;
+      email: string | null;
+      phone?: string | null;
+      role: UserRole;
+      avatar?: string | null;
+      status: \"ACTIVE\" | \"INACTIVE\" | \"SUSPENDED\";
+      reports_to?: string | null;
+      created_at: string;
+    }·
+    interface AuthContextType {
+      user: User | null;
+      isLoading: boolean;
+      isAuthenticated: boolean;
+      authState: \"loading\" | \"authenticated\" | \"unauthenticated\";
+      requestOTP: (phone: string) => Promise<{ success: boolean; error?: string }>;
+      verifyOTP: (
+        phone: string,
+        otp: string,
+      ) => Promise<{ success: boolean; error?: string }>;
+      logout: () => Promise<void>;
+      updateUser: (data: Partial<User>, extra?: { home_address?: string }) => Promise<void>;
+      isDevMode: boolean;
+      isAdmin: boolean;
+      isHR: boolean;
+      /** True for HR, HRD, SYSTEM_ADMIN, ADMIN - full panel rights. */
+      isHRD: boolean;
+    }·
+    const AuthContext = createContext<AuthContextType | undefined>(undefined);·
+    // Never version-bump this key: doing so forces every employee to log in again.
+    const STORAGE_KEY = \"@hrms_auth_user_v3\";
+    const AUTH_METADATA_KEY = \"@hrms_auth_metadata_v1\";
+    const LEGACY_STORAGE_KEYS = [
+      \"@hrms_auth_user_v2\",
+      \"@hrms_auth_user_v1\",
+      \"@hrms_auth_user\",
+    ];·
+    interface StoredAuthMetadata {
+      user_id: string;
+      phone: string | null;
+      is_logged_in: boolean;
+      expires_at: number | null;
+      last_successful_authentication_at: string;
+      last_session_refresh_at: string;
+    }·
+    function profileToUser(profile: any): User {
+      const normalizedRole = normalizeUserRole(profile.role) || \"SALES_EXECUTIVE\";
+      return {
+        id: profile.id,
+        name: profile.name,
+        email: profile.email,
+        phone: profile.phone,
+        role: normalizedRole as UserRole,
+        avatar: profile.avatar ?? null,
+        status: profile.is_active ? \"ACTIVE\" : \"INACTIVE\",
+        reports_to: profile.reports_to ?? null,
+        created_at: profile.created_at,
+      };
+    }·
+    function isStoredUser(value: unknown): value is User {
+      const candidate = value as Partial<User> | null;
+      return !!candidate?.id && !!candidate?.name && !!candidate?.role;
+    }·
+    async function readStoredUser(): Promise<User | null> {
+      for (const key of [STORAGE_KEY, ...LEGACY_STORAGE_KEYS]) {
+        try {
+          const raw = await persistentAuthStorage.getItem(key);
+          if (!raw) continue;
+          const parsed: unknown = JSON.parse(raw);
+          if (!isStoredUser(parsed)) continue;
+          if (key !== STORAGE_KEY) {
+            await persistentAuthStorage.setItem(
+              STORAGE_KEY,
+              JSON.stringify(parsed),
+            );
+            await persistentAuthStorage.removeItem(key);
+          }
+          return parsed;
+        } catch {
+          // A damaged legacy value must not prevent secure session recovery.
+        }
+      }
+      return null;
+    }·
+    async function readStoredAuthMetadata(): Promise<StoredAuthMetadata | null> {
+      try {
+        const raw = await persistentAuthStorage.getItem(AUTH_METADATA_KEY);
+        if (!raw) return null;
+        const value = JSON.parse(raw) as Partial<StoredAuthMetadata>;
+        if (!value.user_id || value.is_logged_in !== true) return null;
+        return value as StoredAuthMetadata;
+      } catch {
+        return null;
+      }
+    }·
+    async function persistSessionMetadata(
+      session: Session,
+      user?: User | null,
+      successfulAuthenticationAt?: string,
+    ) {
+      const previousRaw = await persistentAuthStorage.getItem(AUTH_METADATA_KEY);
+      let previous: { last_successful_authentication_at?: string } | null = null;
+      try {
+        previous = previousRaw ? JSON.parse(previousRaw) : null;
+      } catch {
+        previous = null;
+      }
+      await persistentAuthStorage.setItem(
+        AUTH_METADATA_KEY,
+        JSON.stringify({
+          user_id: session.user.id,
+          phone:
+            user?.phone ??
+            session.user.phone ??
+            session.user.user_metadata?.phone ??
+            null,
+          is_logged_in: true,
+          expires_at: session.expires_at ?? null,
+          last_successful_authentication_at:
+            successfulAuthenticationAt ??
+            previous?.last_successful_authentication_at ??
+            new Date().toISOString(),
+          last_session_refresh_at: new Date().toISOString(),
+        }),
+      );
+    }·
+    async function clearPersistedAuthentication() {
+      await Promise.all([
+        persistentAuthStorage.removeItem(supabaseAuthStorageKey),
+        persistentAuthStorage.removeItem(STORAGE_KEY),
+        persistentAuthStorage.removeItem(AUTH_METADATA_KEY),
+        ...LEGACY_STORAGE_KEYS.map((key) => persistentAuthStorage.removeItem(key)),
+      ]);
+    }·
+    export function AuthProvider({ children }: { children: ReactNode }) {
+      const [user, setUser] = useState<User | null>(null);
+      const [isLoading, setIsLoading] = useState(true);
+      const userRef = useRef<User | null>(null);
+      const mountedRef = useRef(true);
+      const logoutRequestedRef = useRef(false);·
+      const applyUser = useCallback((nextUser: User | null) => {
+        userRef.current = nextUser;
+        if (mountedRef.current) setUser(nextUser);
+      }, []);·
+      useEffect(() => {
+        mountedRef.current = true;
+        let disposed = false;·
+        let profileRestoreInFlight: Promise<boolean> | null = null;
+        let lastProfileValidationAt = 0;·
+        const invalidateSession = async () => {
+          logoutRequestedRef.current = true;
+          try {
+            await deactivateCurrentDevicePushToken().catch(() => undefined);
+            await supabase.auth.signOut({ scope: \"local\" }).catch(() => undefined);
+            await clearPersistedAuthentication();
+          } finally {
+            applyUser(null);
+            logoutRequestedRef.current = false;
+          }
+        };·
+        const restoreProfile = (session: Session, cached?: User | null) => {
+          if (profileRestoreInFlight) return profileRestoreInFlight;
+          profileRestoreInFlight = (async () => {
+            const usableCache = cached?.id === session.user.id ? cached : null;·
+            // A locally restored Supabase session is sufficient to open the app.
+            // Server profile/device validation continues in the background and can
+            // revoke access only when the server explicitly confirms it.
+            if (usableCache) {
+              applyUser(usableCache);
+              if (mountedRef.current) setIsLoading(false);
+            }
+            await persistSessionMetadata(session, usableCache).catch((error) => {
+              console.warn(\"Session metadata persistence deferred:\", error);
+            });·
+            if (usableCache && Date.now() - lastProfileValidationAt < 30_000) {
+              return true;
+            }·
+            const { data, error } = await supabase.rpc(\"rpc_get_my_profile_v2\");
+            const profile = firstRpcRow<any>(data);
+            if (disposed || error || !profile) return !!usableCache;·
+            if (!profile.is_active) {
+              await invalidateSession();
+              return false;
+            }·
+            const fresh = profileToUser(profile);
+            lastProfileValidationAt = Date.now();
+            try {
+              const deviceSession = await DeviceSessionService.registerCurrent();
+              if (deviceSession.revoked) {
+                await invalidateSession();
+                return false;
+              }
+            } catch (error) {
+              // Network, server, or heartbeat failures never invalidate a session.
+              console.warn(\"Device session validation deferred:\", error);
+            }·
+            applyUser(fresh);
+            await Promise.all([
+              persistentAuthStorage.setItem(STORAGE_KEY, JSON.stringify(fresh)),
+              persistSessionMetadata(session, fresh),
+            ]);
+            return true;
+          })().finally(() => {
+            profileRestoreInFlight = null;
+          });
+          return profileRestoreInFlight;
+        };·
+        const recoverSession = async (showLoginWhenMissing = false) => {
+          const cached = userRef.current ?? (await readStoredUser());
+          try {
+            const { data, error } = await supabase.auth.getSession();
+            if (disposed) return;
+            if (data.session) {
+              await restoreProfile(data.session, cached);
+            } else if (error && cached) {
+              // An offline/temporary refresh failure must keep the restored shell.
+              applyUser(cached);
+            } else if (showLoginWhenMissing && !error) {
+              await clearPersistedAuthentication();
+              applyUser(null);
+            }
+          } catch (error) {
+            // Temporary connectivity/startup errors must not log the employee out.
+            console.warn(\"Session recovery deferred:\", error);
+          }
+        };·
+        const bootstrap = async () => {
+          const [cached, metadata] = await Promise.all([
+            readStoredUser(),
+            readStoredAuthMetadata(),
+          ]);
+          if (
+            !disposed &&
+            cached &&
+            metadata?.is_logged_in &&
+            metadata.user_id === cached.id
+          ) {
+            // Render the previously authenticated application shell immediately.
+            // Token recovery and server validation continue without a login flash.
+            applyUser(cached);
+            setIsLoading(false);
+          }
+          try {
+            const { data, error } = await supabase.auth.getSession();
+            if (disposed) return;
+            if (data.session) {
+              const restored = await restoreProfile(data.session, cached);
+              if (!restored && !cached) applyUser(null);
+            } else if (error && cached) {
+              applyUser(cached);
+            } else {
+              await clearPersistedAuthentication();
+              applyUser(null);
+            }
+          } catch (error) {
+            if (cached) applyUser(cached);
+            console.warn(\"Auth startup recovery deferred:\", error);
+          } finally {
+            if (!disposed) setIsLoading(false);
+          }
+        };·
+        const { data: authListener } = supabase.auth.onAuthStateChange(
+          (event, session) => {
+            if (disposed) return;
+            if (event === \"INITIAL_SESSION\") return;
+            if (session && event === \"TOKEN_REFRESHED\") {
+              void persistSessionMetadata(session, userRef.current).catch(
+                () => undefined,
+              );
+            } else if (session) {
+              // Keep the callback synchronous to avoid holding Supabase's auth
+              // lock while querying the employee profile.
+              setTimeout(() => {
+                void restoreProfile(session, userRef.current);
+              }, 0);
+            } else if (event === \"SIGNED_OUT\") {
+              // The explicit logout flow verifies persisted auth before it changes
+              // navigation state. Unexpected sign-outs are rechecked after races
+              // settle.
+              if (!logoutRequestedRef.current) {
+                // Confirm a session is genuinely gone after refresh races settle.
+                setTimeout(() => void recoverSession(true), 250);
+              }
+            }
+          },
+        );·
+        let appStateSubscription: { remove: () => void } | undefined;
+        let visibilityHandler: (() => void) | undefined;
+        let onlineHandler: (() => void) | undefined;
+        const deviceSessionHeartbeat = setInterval(
+          () => {
+            if (!userRef.current) return;
+            void DeviceSessionService.registerCurrent()
+              .then(async (result) => {
+                if (!result.revoked || disposed) return;
+                await invalidateSession();
+              })
+              .catch(() => undefined);
+          },
+          5 * 60 * 1000,
+        );·
+        if (Platform.OS !== \"web\") {
+          if (AppState.currentState === \"active\") supabase.auth.startAutoRefresh();
+          appStateSubscription = AppState.addEventListener(\"change\", (state) => {
+            if (state === \"active\") {
+              supabase.auth.startAutoRefresh();
+              void recoverSession();
+            } else {
+              supabase.auth.stopAutoRefresh();
+            }
+          });
+        } else if (typeof document !== \"undefined\") {
+          visibilityHandler = () => {
+            if (document.visibilityState === \"visible\") void recoverSession();
+          };
+          onlineHandler = () => void recoverSession();
+          document.addEventListener(\"visibilitychange\", visibilityHandler);
+          window.addEventListener(\"online\", onlineHandler);
+        }·
+        void bootstrap();·
+        return () => {
+          disposed = true;
+          mountedRef.current = false;
+          authListener.subscription.unsubscribe();
+          clearInterval(deviceSessionHeartbeat);
+          appStateSubscription?.remove();
+          if (Platform.OS !== \"web\") supabase.auth.stopAutoRefresh();
+          if (visibilityHandler) {
+            document.removeEventListener(\"visibilitychange\", visibilityHandler);
+          }
+          if (onlineHandler) window.removeEventListener(\"online\", onlineHandler);
+        };
+      }, [applyUser]);·
+      const requestOTP = async (
+        phone: string,
+      ): Promise<{ success: boolean; error?: string }> => {
+        try {
+          const normalizedPhone = phone.replace(/\\D/g, \"\").slice(-10);
+          const { data, error } = await supabase.functions.invoke(\"otp-auth\", {
+            body: { action: \"request\", phone: normalizedPhone },
+          });
+          if (error || !data?.success) {
+            return {
+              success: false,
+              error:
+                data?.message ||
+                (await getFunctionErrorMessage(error, \"Unable to send OTP. Please try again.\")),
+            };
+          }
+          return { success: true };
+        } catch (error: any) {
+          return {
+            success: false,
+            error: await getFunctionErrorMessage(
+              error,
+              \"Unable to send OTP. Please try again.\",
+            ),
+          };
+        }
+      };·
+      const verifyOTP = async (
+        phone: string,
+        otp: string,
+      ): Promise<{ success: boolean; error?: string }> => {
+        try {
+          const normalizedPhone = phone.replace(/\\D/g, \"\").slice(-10);
+          const { data, error } = await supabase.functions.invoke(\"otp-auth\", {
+            body: { action: \"verify\", phone: normalizedPhone, otp: otp.trim() },
+          });
+          if (error || !data?.success || !data?.auth?.token_hash) {
+            return {
+              success: false,
+              error:
+                data?.message ||
+                (await getFunctionErrorMessage(error, \"Invalid or expired OTP.\")),
+            };
+          }·
+          const { data: sessionData, error: sessionError } =
+            await supabase.auth.verifyOtp({
+              token_hash: data.auth.token_hash,
+              type: \"magiclink\",
+            });
+          if (sessionError || !sessionData.session) {
+            return {
+              success: false,
+              error: \"Unable to establish a secure session. Please try again.\",
+            };
+          }·
+          const userData = profileToUser(data.profile);
+          applyUser(userData);
+          await persistentAuthStorage.setItem(
+            STORAGE_KEY,
+            JSON.stringify(userData),
+          );
+          await persistSessionMetadata(
+            sessionData.session,
+            userData,
+            new Date().toISOString(),
+          );
+          return { success: true };
+        } catch (error: any) {
+          return {
+            success: false,
+            error: await getFunctionErrorMessage(error, \"Invalid or expired OTP.\"),
+          };
+        }
+      };·
+      const logout = async () => {
+        logoutRequestedRef.current = true;
+        let cleanupError: unknown = null;
+        try {
+          await DeviceSessionService.closeCurrent().catch(() => undefined);
+          await deactivateCurrentDevicePushToken().catch(() => undefined);
+          await Promise.all([
+            stopNativeTracking().catch(() => undefined),
+            clearOfflineLocationQueue().catch(() => undefined),
+            CurrentLocationVisitService.clearQueueForLogout().catch(
+              () => undefined,
+            ),
+          ]);
+          await supabase.removeAllChannels();
+          const { error: signOutError } = await supabase.auth.signOut({
+            scope: \"local\",
+          });
+          if (signOutError) {
+            // Manual logout must still remove the local credential when the auth
+            // provider cannot be reached. The stable storage key is cleared below.
+            console.warn(\"Provider sign-out was deferred:\", signOutError);
+          }
+        } catch (error) {
+          console.error(\"Logout failed:\", error);
+          cleanupError = error;
+        } finally {
+          try {
+            await clearPersistedAuthentication();
+          } catch (error) {
+            cleanupError = cleanupError ?? error;
+          }
+          applyUser(null);
+          logoutRequestedRef.current = false;
+        }
+        if (cleanupError) throw cleanupError;
+      };·
+      const updateUser = async (
+        data: Partial<User>,
+        extra?: { home_address?: string },
+      ) => {
+        if (!user) throw new Error(\"An authenticated profile is required.\");
+        const previous = user;
+        const updated = { ...previous, ...data };
+        const { data: responseData, error } = await supabase.rpc(
+          \"rpc_update_my_profile\",
+          {
+            p_values: {
+              name: updated.name,
+              ...(updated.avatar ? { avatar: updated.avatar } : {}),
+              ...(extra?.home_address ? { home_address: extra.home_address } : {}),
+            },
+          },
+        );
+        const response = firstRpcRow<any>(responseData);
+        if (error || response?.success !== true) {
+          throw new Error(
+            error?.message || \"Server did not confirm the profile update.\",
+          );
+        }
+        applyUser(updated);
+        await persistentAuthStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+      };·
+      return (
+        <AuthContext.Provider
+          value={{
+            user,
+            isLoading,
+            isAuthenticated: !!user,
+            authState: isLoading
+              ? \"loading\"
+              : user
+                ? \"authenticated\"
+                : \"unauthenticated\",
+            requestOTP,
+            verifyOTP,
+            logout,
+            updateUser,
+            isDevMode: false,
+            isAdmin: isAdminRole(user?.role),
+            isHR: isHRRole(user?.role),
+            isHRD: canAccessHRPanelRole(user?.role),
+          }}
+        >
+          {children}
+        </AuthContext.Provider>
+      );
+    }·
+    export function useAuth() {
+      const context = useContext(AuthContext);
+      if (!context) throw new Error(\"useAuth must be used inside AuthProvider\");
+      return context;
+    }·
+    /** True for SYSTEM_ADMIN, ADMIN, HR, HRD. */
+    export function useCanAccessHRPanel() {
+      const { isAdmin, isHR } = useAuth();
+      return isAdmin || isHR;
+    }
+    "
+
+    [0m [90m 47 |[39m
+     [90m 48 |[39m   it([32m"wires request_id, challenge_id, and retry_after through AuthContext and LoginScreen"[39m[33m,[39m () [33m=>[39m {
+    [31m[1m>[22m[39m[90m 49 |[39m     expect(authContext)[33m.[39mtoContain([32m"request_id: requestId"[39m)[33m;[39m
+     [90m    |[39m                         [31m[1m^[22m[39m
+     [90m 50 |[39m     expect(authContext)[33m.[39mtoContain([32m"challenge_id: challengeId"[39m)[33m;[39m
+     [90m 51 |[39m     expect(authContext)[33m.[39mtoContain([32m"challenge_id: data?.challenge_id"[39m)[33m;[39m
+     [90m 52 |[39m     expect(authContext)[33m.[39mtoContain([32m"retry_after: data?.retry_after"[39m)[33m;[39m[0m
+
+      at Object.toContain (__tests__/otpSecurityAndIdempotency.test.ts:49:25)
+
+
+Test Suites: 2 failed, 50 passed, 52 total
+Tests:       3 failed, 334 passed, 337 total
+Snapshots:   0 total
+Time:        17.873 s, estimated 34 s
+exit=1

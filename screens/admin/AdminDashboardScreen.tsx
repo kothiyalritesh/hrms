@@ -475,6 +475,20 @@ export default function AdminDashboardScreen({ navigation }: Props) {
             accent="#3B82F6"
             onPress={() => navigation.navigate("CheckInLogs")}
           />)}
+          {canOpenScreen("LocationMonitor") && (<ActionCard
+            icon="crosshair"
+            label="Location Monitor"
+            desc="Inside / outside radius, last location, call"
+            accent="#0EA5E9"
+            onPress={() => navigation.navigate("LocationMonitor")}
+          />)}
+          {canOpenScreen("OfficeExitReviews") && (<ActionCard
+            icon="log-out"
+            label="Office Exits"
+            desc="Review reasons for leaving the office"
+            accent="#DC2626"
+            onPress={() => navigation.navigate("OfficeExitReviews")}
+          />)}
           {canOpenScreen("SuspiciousAttendance") && (<ActionCard
             icon="alert-triangle"
             label="Suspicious Attendance"

@@ -14,6 +14,7 @@ import {
 import { reportDeviceHealth } from "@/services/location/deviceHealth";
 import { refreshRouteProgress } from "@/services/location/route.service";
 import {
+  handleOfficeRelation,
   notifyJourneyEvent,
   notifyLocationProblem,
 } from "@/services/location/notification.service";
@@ -202,14 +203,14 @@ async function submitLocationToServer(
     const attendanceClosed = result?.tracking_session_status === "STOPPED";
     // Online again: send what was queued while offline.
     if (!attendanceClosed) void drainOfflineQueue().catch(() => undefined);
-    return { uploaded: true, attendanceClosed };
+    return { uploaded: true, attendanceClosed, relation: result?.relation ?? null };
   }
 
   if (
     error.message?.includes("NO_OPEN_ATTENDANCE") ||
     error.message?.includes("ATTENDANCE_CLOSED")
   ) {
-    return { uploaded: false, attendanceClosed: true };
+    return { uploaded: false, attendanceClosed: true, relation: null };
   }
   await enqueueOfflinePing({
     config: {
@@ -220,7 +221,7 @@ async function submitLocationToServer(
     location,
     qualityStatus,
   });
-  return { uploaded: false, attendanceClosed: false };
+  return { uploaded: false, attendanceClosed: false, relation: null };
 }
 
 async function processLocation(locationObject: Location.LocationObject) {
@@ -323,6 +324,11 @@ async function processLocation(locationObject: Location.LocationObject) {
   if (result.attendanceClosed) {
     await stopNativeTracking();
     return;
+  }
+  // Office mode: the phone itself alerts (sound + vibration) when the server
+  // says the employee has left the office area; push may not reach every phone.
+  if (!config.destination && config.attendanceId && result.relation) {
+    await handleOfficeRelation(config.attendanceId, result.relation).catch(() => undefined);
   }
   // Any real (non-mocked) fix proves the service is alive, even an indoor
   // LOW_ACCURACY one; only RELIABLE fixes count as a successful location.

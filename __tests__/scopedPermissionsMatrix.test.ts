@@ -248,9 +248,14 @@ describe("Multi-Dimensional Scoped Permissions Matrix", () => {
       expect(migrationSql).toContain("p_permission");
     });
 
-    test("compiled deploy SQL contains the multidimensional permissions migration", () => {
-      expect(deploySql).toContain("20260909010000_multidimensional_permission_scopes.sql");
-      expect(deploySql).toContain("with recursive sub_team");
+    // Disposition 2026-10-19: production is deployed from the ordered
+    // supabase/migrations folder. The 2026-09-08 "deploy_all" bundle predates
+    // this migration and later replacements; re-running it would roll newer
+    // functions back, so it is marked historical instead of regenerated.
+    test("the multidimensional permissions migration ships in the ordered migrations folder", () => {
+      const migrations = fs.readdirSync(path.resolve(__dirname, "..", "supabase", "migrations"));
+      expect(migrations).toContain("20260909010000_multidimensional_permission_scopes.sql");
+      expect(deploySql).toContain("HISTORICAL BUNDLE - DO NOT RUN");
     });
   });
 
@@ -258,14 +263,23 @@ describe("Multi-Dimensional Scoped Permissions Matrix", () => {
     const adminDashboardTsx = read("screens/admin/AdminDashboardScreen.tsx");
     const adminStackTsx = read("navigation/AdminStackNavigator.tsx");
     const permissionsManagerTsx = read("screens/admin/PermissionsManagerScreen.tsx");
+    const permissionCatalogTs = read("constants/permissionCatalog.ts");
 
-    test("AdminDashboardScreen gates Permissions Manager option strictly behind isAdmin", () => {
-      expect(adminDashboardTsx).toContain("isAdmin ? (");
+    // Disposition 2026-10-19: since the permission engine v2
+    // (20261007100000) the Permissions Manager is opened by the
+    // permissions.view / permissions.assign keys (admins hold them; others only
+    // by explicit grant), checked by the route guard and by the server.
+    test("AdminDashboardScreen shows Permissions Manager only to holders of its permission", () => {
+      expect(adminDashboardTsx).toContain('canOpenScreen("PermissionsManager") && (<ActionCard');
       expect(adminDashboardTsx).toContain('label="Permissions Manager"');
+      expect(permissionCatalogTs).toContain('PermissionsManager: ["permissions.view", "permissions.assign"]');
     });
 
-    test("AdminStackNavigator conditionally registers PermissionsManager route strictly when isAdmin", () => {
-      expect(adminStackTsx).toContain("{isAdmin && (");
+    test("AdminStackNavigator guards the PermissionsManager route with its permission", () => {
+      expect(adminStackTsx).toContain(
+        'lazyScreen(() => import("@/screens/admin/PermissionsManagerScreen"), SCREEN_PERMISSIONS.PermissionsManager)',
+      );
+      expect(adminStackTsx).toContain("return permission ? withPermissionGuard(DeferredScreen, permission) : DeferredScreen;");
       expect(adminStackTsx).toContain('name="PermissionsManager"');
     });
 

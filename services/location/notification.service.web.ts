@@ -43,6 +43,10 @@ export async function notifyJourneyEvent(
   return null;
 }
 
+export async function handleOfficeRelation(_attendanceId: string, _relation: unknown) {
+  return null;
+}
+
 export async function notifyLocationProblem(
   _type:
     | "gps_off"

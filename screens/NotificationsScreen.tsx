@@ -14,6 +14,11 @@ import { EventService } from "@/services/event.service";
 import { getBusinessDateIST } from "@/utils/businessDate";
 import { PaginationControls } from "@/components/PaginationControls";
 import { DashboardSummaryService } from "@/services/dashboard-summary.service";
+import {
+  isOfficeExitNotification,
+  officeExitEventIdFrom,
+  requestOfficeExitPrompt,
+} from "@/services/location/officeExitPrompt";
 
 const PAGE_SIZE = 50;
 
@@ -298,6 +303,11 @@ export default function NotificationsScreen() {
         setNotifications((prev) => prev.map((n) => n.id === notif.id ? { ...n, read: true } : n));
         setUnreadTotal((current) => Math.max(0, current - 1));
       }
+    }
+    // "Tell us why you left the office": open the reason form directly.
+    if (isOfficeExitNotification({ type: notif.type, deep_link: notif.deep_link })) {
+      requestOfficeExitPrompt(officeExitEventIdFrom({ deep_link: notif.deep_link }));
+      return;
     }
     if (notif.event_id) {
       navigation.getParent()?.navigate("TasksTab", {

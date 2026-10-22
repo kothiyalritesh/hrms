@@ -125,6 +125,25 @@ function toISTTimestamp(value: string) {
     : `${normalized}+05:30`;
 }
 
+// Supabase client errors are plain objects ({ code, message, details, hint });
+// String(error) gave "[object Object]" and hid every database failure.
+function describeError(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === "object") {
+    const e = error as Record<string, unknown>;
+    const parts = [e.code, e.message, e.details, e.hint]
+      .filter((value) => value != null && String(value).trim() !== "")
+      .map(String);
+    if (parts.length) return parts.join(" | ");
+    try {
+      return JSON.stringify(error);
+    } catch {
+      // fall through
+    }
+  }
+  return String(error);
+}
+
 function extractLogs(body: any): SmartOfficeLog[] {
   if (Array.isArray(body)) return body;
   if (Array.isArray(body?.records)) return body.records;
@@ -132,6 +151,10 @@ function extractLogs(body: any): SmartOfficeLog[] {
   return [];
 }
 
+// Active employees only: the database refuses punches of a deactivated
+// employee (ACTIVE_MAPPED_EMPLOYEE_REQUIRED) and the batch is one
+// transaction, so a single person who left but still punches blocked every
+// other punch. Their punches are kept as raw / unmatched instead.
 async function fetchAllMappedProfiles(admin: any) {
   const rows: any[] = [];
   const pageSize = 1000;
@@ -139,6 +162,7 @@ async function fetchAllMappedProfiles(admin: any) {
     const { data, error } = await admin
       .from("profiles")
       .select("id,smartoffice_employee_code")
+      .eq("is_active", true)
       .not("smartoffice_employee_code", "is", null)
       .order("id")
       .range(from, from + pageSize - 1);
@@ -449,6 +473,8 @@ Deno.serve(async (request) => {
     );
   }
 
+  // Which part of the sync failed, reported with the error.
+  let step = "SMARTOFFICE_FETCH";
   try {
     const exclusiveEnd = new Date(`${toDate}T00:00:00Z`);
     exclusiveEnd.setUTCDate(exclusiveEnd.getUTCDate() + 1);
@@ -472,6 +498,7 @@ Deno.serve(async (request) => {
     }
     const logs = extractLogs(body);
 
+    step = "LOAD_EMPLOYEE_CODES";
     const employees = await fetchAllMappedProfiles(admin);
 
     const profileIdsByCode = new Map<string, string[]>();
@@ -550,6 +577,7 @@ Deno.serve(async (request) => {
     }
 
     let rawIngestResult: any = null;
+    step = "INGEST_RAW_PUNCHES (ingest_biometric_punches)";
     if (rawPunchRows.length) {
       const { data, error } = await admin.rpc("ingest_biometric_punches", {
         p_punches: rawPunchRows,
@@ -565,6 +593,7 @@ Deno.serve(async (request) => {
     }
 
     let batchResult: any = null;
+    step = "APPLY_BATCH (apply_biometric_import_batch_v4)";
     if (deviceRows.length) {
       const serializedRows = JSON.stringify(deviceRows);
       const digest = await crypto.subtle.digest(
@@ -650,6 +679,7 @@ Deno.serve(async (request) => {
           summariesUpdated: 0,
           rawPunchIngest: rawIngestResult,
         };
+    step = "SAVE_RESULT";
     if (deviceRows.length) {
       const { error: batchResultError } = await admin
         .from("biometric_import_batches")
@@ -684,7 +714,8 @@ Deno.serve(async (request) => {
       .eq("singleton", true);
     return Response.json(result, { headers: CORS_HEADERS });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = `${step}: ${describeError(error)}`;
+    console.error("[biometric-attendance-sync]", message);
     await admin
       .from("biometric_sync_requests")
       .update({

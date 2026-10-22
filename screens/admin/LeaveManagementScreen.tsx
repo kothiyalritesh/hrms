@@ -28,6 +28,7 @@ import { BusinessClockService } from "@/services/business-clock.service";
 interface LeaveRequest {
   id: string;
   employee_name: string;
+  user_id: string;
   type: string;
   start_date: string;
   end_date: string;
@@ -53,9 +54,12 @@ export default function LeaveManagementScreen() {
   const { theme } = useTheme();
   const { user } = useAuth();
   const { hasPermission } = usePermissions();
-  // Approve / reject / comp-off: admins, or leave.approve for employees in scope
-  // (the server re-checks the scope for every request).
-  const isHRD = hasPermission("leave.approve");
+  // View: leave.view (Approve includes it). Approve / reject: leave.approve.
+  // Comp-off credit: leave.balance.manage (the key its RPC checks). The server
+  // re-checks the scope of every request and blocks acting on your own.
+  const canView = hasPermission("leave.view");
+  const canApprove = hasPermission("leave.approve");
+  const canCompOff = hasPermission("leave.balance.manage");
 
   const [leaves, setLeaves] = useState<LeaveRequest[]>([]);
   const [loading, setLoading] = useState(true);
@@ -113,6 +117,7 @@ export default function LeaveManagementScreen() {
       rows.map((l: any) => ({
         id: l.id,
         employee_name: nameMap[l.user_id] || "Unknown",
+        user_id: l.user_id,
         type: l.leave_type,
         start_date: l.start_date,
         end_date: l.end_date,
@@ -223,7 +228,7 @@ export default function LeaveManagementScreen() {
     }
   };
 
-  if (!isHRD) {
+  if (!canView) {
     return (
       <View
         style={[
@@ -234,7 +239,7 @@ export default function LeaveManagementScreen() {
         <Feather name="lock" size={40} color={theme.textSecondary} />
         <Spacer height={Spacing.md} />
         <ThemedText style={{ color: theme.textSecondary, textAlign: "center" }}>
-          Only HRD and Admin can manage leaves.
+          You need the View leave permission to open this screen.
         </ThemedText>
       </View>
     );
@@ -304,7 +309,7 @@ export default function LeaveManagementScreen() {
           </View>
         ) : null}
 
-        {item.status === "pending" && (
+        {item.status === "pending" && canApprove && item.user_id !== user?.id && (
           <View style={styles.actions}>
             <TouchableOpacity
               style={[
@@ -694,18 +699,20 @@ export default function LeaveManagementScreen() {
             </Pressable>
           ))}
         </View>
-        <TouchableOpacity
-          style={[styles.compOffBtn, { backgroundColor: theme.primary }]}
-          onPress={openCompOffModal}
-        >
-          <Feather name="plus" size={14} color="#fff" />
-          <ThemedText
-            type="caption"
-            style={{ color: "#fff", fontWeight: "600" }}
+        {canCompOff ? (
+          <TouchableOpacity
+            style={[styles.compOffBtn, { backgroundColor: theme.primary }]}
+            onPress={openCompOffModal}
           >
-            Comp Off
-          </ThemedText>
-        </TouchableOpacity>
+            <Feather name="plus" size={14} color="#fff" />
+            <ThemedText
+              type="caption"
+              style={{ color: "#fff", fontWeight: "600" }}
+            >
+              Comp Off
+            </ThemedText>
+          </TouchableOpacity>
+        ) : null}
       </View>
 
       {loading ? (

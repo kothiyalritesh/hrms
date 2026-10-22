@@ -64,7 +64,9 @@ describe("enterprise attendance reporting v4", () => {
 
   it("pins the release contract to the reporting migration", () => {
     const release = JSON.parse(read("release.config.json"));
-    expect(release.requiredBackendSchemaVersion).toBe("20260810000000");
+    // Disposition 2026-10-19: the release may require a newer schema than the
+    // reporting migration, never an older one.
+    expect(Number(release.requiredBackendSchemaVersion)).toBeGreaterThanOrEqual(20260810000000);
     expect(correction).toContain(
       "'attendance_reporting_contract', 'enterprise-v5|source-complete|effective-dated'",
     );

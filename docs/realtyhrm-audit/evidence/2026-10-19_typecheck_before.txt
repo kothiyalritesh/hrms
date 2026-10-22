@@ -1,0 +1,13 @@
+# npm run typecheck — 2026-10-19T07:49:07Z
+commit: bcb28f3
+uncommitted files: 0
+---
+
+> my-app@1.2.0 typecheck
+> tsc --noEmit
+
+scratch.tsx(1,62): error TS1128: Declaration or statement expected.
+scratch.tsx(1,63): error TS1128: Declaration or statement expected.
+scratch.tsx(1,65): error TS1128: Declaration or statement expected.
+scratch.tsx(407,11): error TS1005: '}' expected.
+exit=2

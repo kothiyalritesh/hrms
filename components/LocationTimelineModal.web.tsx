@@ -18,6 +18,7 @@ import {
 } from "@/utils/googleAdvancedMarkers";
 import { parseDatabaseTimestamp } from "@/utils/businessDate";
 import LocationDayStory, { LocationStory } from "@/components/LocationDayStory";
+import BiometricPunchList, { BiometricPunch } from "@/components/BiometricPunchList";
 
 export interface PingPoint {
   latitude: number | null;
@@ -40,6 +41,8 @@ interface Props {
   onClose: () => void;
   /** The day as stays / trips / gaps (rpc_location_timeline). */
   story?: LocationStory | null;
+  /** Biometric device punches of the day (biometric-only staff have no GPS). */
+  punches?: BiometricPunch[];
 }
 
 function toIST(recorded_at: string) {
@@ -208,6 +211,7 @@ export default function LocationTimelineModal({
   loading,
   onClose,
   story,
+  punches = [],
 }: Props) {
   const { theme } = useTheme();
 
@@ -226,7 +230,7 @@ export default function LocationTimelineModal({
                 📍 {employeeName}
               </ThemedText>
               <ThemedText style={{ color: theme.textSecondary, fontSize: 12 }}>
-                Location timeline — {date}
+                Timeline — {date}
               </ThemedText>
             </View>
             <TouchableOpacity onPress={onClose}>
@@ -245,15 +249,20 @@ export default function LocationTimelineModal({
               Loading...
             </ThemedText>
           ) : pings.length === 0 && !story?.events?.length ? (
+            punches.length > 0 ? (
+              <BiometricPunchList punches={punches} />
+            ) : (
             <View style={{ alignItems: "center", paddingTop: 40 }}>
               <Feather name="map-pin" size={32} color={theme.textSecondary} />
               <Spacer height={12} />
               <ThemedText style={{ color: theme.textSecondary }}>
-                No location pings for this day
+                No location pings or biometric punches for this day
               </ThemedText>
             </View>
+            )
           ) : (
             <>
+              <BiometricPunchList punches={punches} />
               {/* @ts-ignore */}
               <GoogleMapView pings={pings} />
               {story ? (

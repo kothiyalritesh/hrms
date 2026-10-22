@@ -26,6 +26,7 @@ import PushRegistration from "@/components/PushRegistration";
 import { BrowserNotificationWatcher } from "@/components/NotificationAlerts";
 import WebForegroundTracker from "@/components/WebForegroundTracker";
 import PingRequestResponder from "@/components/PingRequestResponder";
+import OfficeExitReasonHost from "@/components/OfficeExitReasonHost";
 import ReleaseUpdateNotice from "@/components/ReleaseUpdateNotice";
 import WebAlertHost from "@/components/WebAlertHost";
 import { nativeBridge } from "@/services/nativeBridge/client";
@@ -359,6 +360,8 @@ const linking = {
               ActivityAnalysis: "activity-analysis",
               FieldVisitAdmin: "field-visits",
               LiveTracking: "live-tracking",
+              OfficeExitReviews: "office-exits",
+              LocationMonitor: "location-monitor",
               TeamHierarchy: "teams",
               TicketManagement: "tickets",
               EventManagement: "events",
@@ -377,7 +380,7 @@ const linking = {
               SiteVisitObserver: "site-visit-observer",
               ComplianceScores: "compliance-scores",
               PermissionsManager: "permissions",
-              EmployeeBirthdayManagement: "birthdays",
+              EmployeeBirthdayManagement: "birthday-management",
               InTransit: "in-transit",
               AnonymousFeedback: "feedback",
             },
@@ -429,6 +432,7 @@ function FullHrmsApp() {
                 <BrowserNotificationWatcher />
                 <WebForegroundTracker />
                 <PingRequestResponder />
+                <OfficeExitReasonHost />
                 <WebAppShell />
                 <ReleaseUpdateNotice />
                 <NavigationContainer

@@ -3,7 +3,7 @@ import { View, FlatList, StyleSheet, Platform, ActivityIndicator } from "react-n
 import Feather from "@expo/vector-icons/Feather";
 import { useNavigation } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
-import { useAuth } from "@/contexts/AuthContext";
+import { usePermissions } from "@/hooks/usePermissions";
 import { supabase } from "@/lib/supabase";
 import { ThemedText } from "@/components/ThemedText";
 import { PageHeader } from "@/components/PageHeader";
@@ -53,12 +53,18 @@ function BirthdayCard({ item }: { item: Birthday }) {
 export default function UpcomingBirthdaysScreen() {
   const { theme } = useTheme();
     const navigation = useNavigation<NativeStackNavigationProp<any>>();
-  const { user } = useAuth();
-  const isHRAdmin = ["SYSTEM_ADMIN", "ADMIN", "HR", "HRD"].includes(user?.role?.toUpperCase() || "");
+  // Only people allowed to see others' birthdays (View birthdays, or full data
+  // access); the server returns only the people in their scope.
+  const { canOpenScreen, loading: permissionsLoading } = usePermissions();
+  const allowed = canOpenScreen("UpcomingBirthdays");
   const [birthdays, setBirthdays] = useState<Birthday[]>([]);
   const [loading,   setLoading]   = useState(true);
 
   useEffect(() => {
+    if (!allowed) {
+      setLoading(false);
+      return;
+    }
     supabase
       .from("upcoming_birthdays_30_days")
       .select("*")
@@ -66,7 +72,19 @@ export default function UpcomingBirthdaysScreen() {
         if (!error) setBirthdays(data || []);
         setLoading(false);
       });
-  }, []);
+  }, [allowed]);
+
+  if (!allowed && !permissionsLoading) {
+    return (
+      <View style={[styles.centered, { flex: 1, backgroundColor: theme.backgroundRoot }]}>
+        <Feather name="lock" size={40} color={theme.textSecondary} />
+        <Spacer height={Spacing.md} />
+        <ThemedText type="body" style={{ color: theme.textSecondary, textAlign: "center" }}>
+          Birthdays are visible to HR, administrators and people given the View birthdays permission.
+        </ThemedText>
+      </View>
+    );
+  }
 
   const today   = birthdays.filter((b) => daysUntil(b.next_birthday) === 0);
   const upcoming= birthdays.filter((b) => daysUntil(b.next_birthday) > 0);

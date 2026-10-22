@@ -7,7 +7,7 @@ const MAX_BATCH = 300;
 // sends never deliver one notification twice.
 const SEND_CONCURRENCY = 10;
 const BACKEND_SCHEMA_VERSION = "20260810000000";
-const FUNCTION_VERSION = "20260810.1";
+const FUNCTION_VERSION = "20261014.1";
 
 type OutboxRow = {
   id: string;

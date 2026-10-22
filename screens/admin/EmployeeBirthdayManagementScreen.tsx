@@ -3,6 +3,7 @@ import { View, FlatList, StyleSheet, TouchableOpacity, ActivityIndicator, TextIn
 import Feather from "@expo/vector-icons/Feather";
 import { useFocusEffect } from "@react-navigation/native";
 import { supabase } from "@/lib/supabase";
+import { PermissionsApi } from "@/services/permissions.service";
 import { ThemedText } from "@/components/ThemedText";
 import { useTheme } from "@/hooks/useTheme";
 import Spacer from "@/components/Spacer";
@@ -72,10 +73,17 @@ export default function EmployeeBirthdayManagementScreen() {
     setSavingId(selectedEmp.id);
     setSelectedEmp(null);
     
-    const { error } = await supabase.from("profiles").update({ date_of_birth: dateStr }).eq("id", selectedEmp.id);
+    // Saved through the server (birthdays.manage); direct profile updates are not allowed.
+    let error: string | null = null;
+    try {
+      const res = await PermissionsApi.setBirthday(selectedEmp.id, dateStr);
+      if (res?.success === false) error = res.message ?? "Not allowed.";
+    } catch (e: any) {
+      error = e?.message ?? "Could not save birthday.";
+    }
     
     if (error) {
-      Alert.alert("Error", "Could not save birthday.");
+      Alert.alert("Could not save birthday", error);
     } else {
       setEmployees(prev => prev.map(e => e.id === selectedEmp.id ? { ...e, date_of_birth: dateStr } : e));
     }
@@ -105,9 +113,8 @@ export default function EmployeeBirthdayManagementScreen() {
         throw new Error("CSV must contain 'Name' and 'Date of Birth' columns.");
       }
       
-      let updatedCount = 0;
+      const rows: { name: string; phone: string | null; date_of_birth: string }[] = [];
       
-      // Batch processing
       for (let i = 1; i < lines.length; i++) {
         const cols = lines[i].split(",");
         const name = cols[nameIdx]?.trim();
@@ -125,15 +132,21 @@ export default function EmployeeBirthdayManagementScreen() {
         }
         if (!dateStr || isNaN(new Date(dateStr).getTime())) continue;
         
-        // Find employee
-        let q = supabase.from("profiles").update({ date_of_birth: dateStr }).ilike("name", name);
-        if (phone) q = q.eq("phone", phone);
-        
-        const { error, count } = await q;
-        if (!error) updatedCount++;
+        rows.push({ name, phone: phone || null, date_of_birth: dateStr });
       }
       
-      Alert.alert("Import Complete", `Updated ${updatedCount} employee records.`);
+      // The server matches each row to exactly one employee (name, plus phone
+      // when given) and skips ambiguous or unknown names.
+      const result = await PermissionsApi.importBirthdays(rows);
+      const skipped = result.skipped ?? [];
+      Alert.alert(
+        "Import Complete",
+        `Updated ${result.updated} employee records.` +
+          (skipped.length
+            ? `
+Skipped ${skipped.length}: ` + skipped.slice(0, 8).map((r) => `${r.name} (${r.reason})`).join(", ") + (skipped.length > 8 ? "…" : "")
+            : ""),
+      );
       loadData();
     } catch (e: any) {
       Alert.alert("Import Error", e.message);

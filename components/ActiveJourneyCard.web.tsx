@@ -44,23 +44,7 @@ export default function ActiveJourneyCard({
       return;
     }
     let disposed = false;
-      let activeWatchId: number | undefined = undefined;
-
-    // Decode Google encoded polyline format
-    function decodePolyline(encoded: string): Array<{ lat: number; lng: number }> {
-      const points: Array<{ lat: number; lng: number }> = [];
-      let index = 0, lat = 0, lng = 0;
-      while (index < encoded.length) {
-        let b, shift = 0, result = 0;
-        do { b = encoded.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
-        lat += result & 1 ? ~(result >> 1) : result >> 1;
-        shift = 0; result = 0;
-        do { b = encoded.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
-        lng += result & 1 ? ~(result >> 1) : result >> 1;
-        points.push({ lat: lat / 1e5, lng: lng / 1e5 });
-      }
-      return points;
-    }
+    let activeWatchId: number | undefined = undefined;
 
     void loadGoogleMaps()
       .then(async (maps) => {
@@ -125,49 +109,36 @@ export default function ActiveJourneyCard({
 
             if (!routeDrawn) {
               routeDrawn = true;
-              // Use Routes API (replaces deprecated DirectionsService/DirectionsRenderer)
-              const routesApiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
-              fetch(
-                `https://routes.googleapis.com/directions/v2:computeRoutes`,
-                {
-                  method: "POST",
-                  headers: {
-                    "Content-Type": "application/json",
-                    "X-Goog-Api-Key": routesApiKey,
-                    "X-Goog-FieldMask": "routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline",
-                  },
-                  body: JSON.stringify({
-                    origin: { location: { latLng: { latitude: origin.lat, longitude: origin.lng } } },
-                    destination: { location: { latLng: { latitude: destination.lat, longitude: destination.lng } } },
-                    travelMode: "DRIVE",
-                  }),
-                },
-              )
-                .then((r) => r.json())
-                .then((data) => {
+              // Maps JavaScript DirectionsService (Directions API). The newer
+              // Routes API is not enabled for this project's key (403
+              // API_KEY_SERVICE_BLOCKED, checked 2026-10-14), so the route
+              // never drew. Straight line if Google returns no route.
+              const directions = new maps.DirectionsService();
+              directions.route(
+                { origin, destination, travelMode: maps.TravelMode.DRIVING },
+                (result: any, status: string) => {
                   if (disposed) return;
-                  const route = data?.routes?.[0];
-                  if (route?.polyline?.encodedPolyline) {
-                    const decoded = decodePolyline(route.polyline.encodedPolyline);
+                  const route = result?.routes?.[0];
+                  const path = route?.overview_path;
+                  if (status === "OK" && Array.isArray(path) && path.length > 1) {
                     new maps.Polyline({
                       map,
-                      path: decoded,
+                      path,
                       strokeColor: "#6D1B6D",
                       strokeWeight: 5,
                     });
                     const bounds = new maps.LatLngBounds();
-                    for (const p of decoded) bounds.extend(p);
+                    for (const point of path) bounds.extend(point);
                     map.fitBounds(bounds, 48);
-                    if (route.distanceMeters) {
-                      const km = route.distanceMeters / 1000;
-                      setDistanceText((km < 1 ? `${route.distanceMeters} m` : `${km.toFixed(1)} km`) + " away");
+                    const metres = Number(route?.legs?.[0]?.distance?.value);
+                    if (Number.isFinite(metres) && metres > 0) {
+                      setDistanceText((metres < 1000 ? `${Math.round(metres)} m` : `${(metres / 1000).toFixed(1)} km`) + " away");
                     }
                     return;
                   }
-                  // Fallback: straight-line polyline
                   drawFallbackPolyline();
-                })
-                .catch(() => { if (!disposed) drawFallbackPolyline(); });
+                },
+              );
 
               function drawFallbackPolyline() {
                 const bounds = new maps.LatLngBounds();

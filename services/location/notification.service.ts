@@ -6,6 +6,11 @@ import { Linking, Platform } from "react-native";
 import { supabase } from "@/lib/supabase";
 import { secureStorage } from "@/utils/secureStorage";
 import {
+  isOfficeExitNotification,
+  officeExitEventIdFrom,
+  requestOfficeExitPrompt,
+} from "@/services/location/officeExitPrompt";
+import {
   Destination,
   JourneyEventType,
   RouteProgress,
@@ -21,6 +26,9 @@ export const FIELD_VISIT_NOTIFICATION_CHANNEL_ID = "hrms_field_visits";
 export const LEAVE_NOTIFICATION_CHANNEL_ID = "hrms_leave";
 export const TASK_NOTIFICATION_CHANNEL_ID = "hrms_tasks";
 export const ANNOUNCEMENT_NOTIFICATION_CHANNEL_ID = "hrms_announcements";
+// Alarm-style alert raised by the phone itself when the employee leaves the
+// office area (does not depend on push delivery).
+export const OFFICE_ALERT_CHANNEL_ID = "hrms_office_alerts";
 export const VISIT_NOTIFICATION_CATEGORY = "hrms_visit_actions";
 export const PERMISSION_NOTIFICATION_CATEGORY = "hrms_permission_actions";
 export const EVENT_NOTIFICATION_CATEGORY = "hrms_event_actions";
@@ -31,6 +39,16 @@ export const ANNOUNCEMENT_NOTIFICATION_CATEGORY = "hrms_announcement_actions";
 const DEVICE_ID_KEY = "@hrms_device_registration_id_v1";
 const ARRIVAL_SOUND = "arrival_ping.wav";
 const PROBLEM_DEDUPE_WINDOW_MS = 30 * 60 * 1000;
+const OFFICE_ALERT_STATE_KEY = "@hrms_office_alert_state_v1";
+// The last tapped office alert; Android replays the last response on every
+// launch, which must not reopen the form.
+const OFFICE_PROMPT_HANDLED_KEY = "@hrms_office_prompt_handled_v1";
+const OFFICE_ALERT_COOLDOWN_MS = 20 * 60 * 1000;
+const OFFICE_ALERT_VIBRATION = [0, 500, 250, 500, 250, 700];
+// The server asks for a reason after 10 minutes outside; the phone checks for
+// that request at most every 3 minutes while outside and rings once per event.
+const OFFICE_REASON_AFTER_MS = 10 * 60 * 1000;
+const OFFICE_REASON_CHECK_EVERY_MS = 3 * 60 * 1000;
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -73,6 +91,16 @@ export async function initializeNotificationInfrastructure() {
         sound: "default",
         enableVibrate: true,
         vibrationPattern: [0, 300, 200, 300],
+        showBadge: true,
+        lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+      }),
+      Notifications.setNotificationChannelAsync(OFFICE_ALERT_CHANNEL_ID, {
+        name: "Office Area Alerts",
+        description: "You left the office area during working hours",
+        importance: Notifications.AndroidImportance.MAX,
+        sound: "default",
+        enableVibrate: true,
+        vibrationPattern: OFFICE_ALERT_VIBRATION,
         showBadge: true,
         lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
       }),
@@ -310,7 +338,10 @@ async function scheduleDeviceNotification(params: {
       vibrate:
         params.channelId === ARRIVAL_CHANNEL_ID
           ? [0, 250, 150, 350]
-          : [0, 300, 200, 300],
+          : params.channelId === OFFICE_ALERT_CHANNEL_ID
+            ? OFFICE_ALERT_VIBRATION
+            : [0, 300, 200, 300],
+      priority: Notifications.AndroidNotificationPriority.MAX,
       categoryIdentifier: params.categoryIdentifier,
       color: "#6D1B6D",
     },
@@ -374,6 +405,106 @@ export async function notifyJourneyEvent(
   });
 }
 
+type OfficeAlertState = {
+  attendanceId?: string;
+  state?: "INSIDE" | "OUTSIDE";
+  alertAt?: number;
+  outsideSince?: number;
+  notificationId?: string | null;
+  reasonCheckedAt?: number;
+  reasonEventId?: string | null;
+};
+
+async function remindPendingReason(saved: OfficeAlertState, save: (next: OfficeAlertState) => Promise<void>) {
+  const now = Date.now();
+  if (!saved.outsideSince || now - saved.outsideSince < OFFICE_REASON_AFTER_MS) return null;
+  if (saved.reasonCheckedAt && now - saved.reasonCheckedAt < OFFICE_REASON_CHECK_EVERY_MS) return null;
+  let eventId: string | null = null;
+  try {
+    const result = await supabase.rpc("rpc_my_pending_geofence_reason");
+    const id = (result?.data as { id?: unknown } | null)?.id;
+    eventId = result?.error || !id ? null : String(id);
+  } catch {
+    eventId = null;
+  }
+  if (!eventId || eventId === saved.reasonEventId) {
+    await save({ ...saved, reasonCheckedAt: now });
+    return null;
+  }
+  const notificationId = await scheduleDeviceNotification({
+    title: "Please tell us why you left the office",
+    body: "You have been outside the office for over 10 minutes. Tap here to submit the reason.",
+    channelId: OFFICE_ALERT_CHANNEL_ID,
+    sound: "default",
+    categoryIdentifier: PERMISSION_NOTIFICATION_CATEGORY,
+    data: { type: "geofence_reason_required", geofenceEventId: eventId, deepLink: "re-hrms://" },
+  });
+  await save({ ...saved, reasonCheckedAt: now, reasonEventId: eventId });
+  return notificationId;
+}
+
+/**
+ * Called with the server's office relation for each accepted location point
+ * (record_location_ping). On the change into OUTSIDE (server rule: beyond the
+ * radius + 150 m after GPS accuracy) the phone raises its own alert with sound
+ * and vibration; NEAR keeps the previous state, so GPS jitter at the edge does
+ * not alert. At most one alert per 20 minutes; it is removed on return.
+ */
+export async function handleOfficeRelation(
+  attendanceId: string,
+  relation: { state?: string | null; distance_m?: number | null; radius_m?: number | null } | null | undefined,
+) {
+  if (Platform.OS === "web") return null;
+  const state = relation?.state;
+  if (state !== "INSIDE" && state !== "OUTSIDE") return null;
+  let saved: OfficeAlertState = {};
+  try {
+    saved = JSON.parse((await secureStorage.getItem(OFFICE_ALERT_STATE_KEY)) ?? "{}") ?? {};
+  } catch {
+    saved = {};
+  }
+  if (saved.attendanceId !== attendanceId) saved = { attendanceId };
+  const save = (next: OfficeAlertState) =>
+    secureStorage.setItem(OFFICE_ALERT_STATE_KEY, JSON.stringify({ ...next, attendanceId }));
+
+  if (state === "INSIDE") {
+    if (saved.notificationId) {
+      await Notifications.dismissNotificationAsync(saved.notificationId).catch(() => undefined);
+    }
+    if (saved.state !== "INSIDE" || saved.notificationId) {
+      await save({ ...saved, state: "INSIDE", notificationId: null });
+    }
+    return null;
+  }
+
+  if (saved.state === "OUTSIDE") return remindPendingReason(saved, save);
+  if (saved.alertAt && Date.now() - saved.alertAt < OFFICE_ALERT_COOLDOWN_MS) {
+    await save({ ...saved, state: "OUTSIDE", outsideSince: Date.now() });
+    return null;
+  }
+  const distance = Number(relation?.distance_m);
+  const radius = Number(relation?.radius_m);
+  const notificationId = await scheduleDeviceNotification({
+    title: "You have left the office area",
+    body:
+      Number.isFinite(distance) && Number.isFinite(radius)
+        ? `You are about ${Math.round(distance)} m from the office (allowed ${Math.round(radius)} m). If this is for work, tap here to give the reason.`
+        : "You are outside the office area. If this is for work, tap here to give the reason.",
+    channelId: OFFICE_ALERT_CHANNEL_ID,
+    sound: "default",
+    categoryIdentifier: PERMISSION_NOTIFICATION_CATEGORY,
+    data: { type: "office_exit", deepLink: "re-hrms://" },
+  });
+  await save({
+    ...saved,
+    state: "OUTSIDE",
+    alertAt: Date.now(),
+    outsideSince: Date.now(),
+    notificationId: notificationId ?? null,
+  });
+  return notificationId;
+}
+
 export async function notifyLocationProblem(
   type:
     | "gps_off"
@@ -430,6 +561,14 @@ export async function handleNotificationResponse(
     string,
     unknown
   >;
+  // Office exit (local alert or server push): open the reason form itself.
+  if (isOfficeExitNotification(data)) {
+    const responseId = `${response.notification.request.identifier}:${response.actionIdentifier}`;
+    if ((await secureStorage.getItem(OFFICE_PROMPT_HANDLED_KEY).catch(() => null)) === responseId) return;
+    await secureStorage.setItem(OFFICE_PROMPT_HANDLED_KEY, responseId).catch(() => undefined);
+    requestOfficeExitPrompt(officeExitEventIdFrom(data));
+    return;
+  }
   const eventId = typeof data.eventId === "string" ? data.eventId : null;
   if (data.type === "event_announcement" && eventId) {
     if (response.actionIdentifier === "GOT_IT") {

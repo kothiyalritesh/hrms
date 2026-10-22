@@ -28,6 +28,8 @@ export type AdminStackParamList = {
   ActivityAnalysis: undefined;
   FieldVisitAdmin: undefined;
   LiveTracking: undefined;
+  OfficeExitReviews: undefined;
+  LocationMonitor: undefined;
   TeamHierarchy: undefined;
   TicketManagement: undefined;
   EventManagement: undefined;
@@ -83,6 +85,8 @@ const BiometricDeviceManagementScreen = lazyScreen(() => import("@/screens/admin
 const ActivityAnalysisScreen = lazyScreen(() => import("@/screens/admin/ActivityAnalysisScreen"), SCREEN_PERMISSIONS.ActivityAnalysis);
 const FieldVisitAdminScreen = lazyScreen(() => import("@/screens/admin/FieldVisitAdminScreen"), SCREEN_PERMISSIONS.FieldVisitAdmin);
 const LiveTrackingScreen = lazyScreen(() => import("@/screens/admin/LiveTrackingScreen"), SCREEN_PERMISSIONS.LiveTracking);
+const LocationMonitorScreen = lazyScreen(() => import("@/screens/admin/LocationMonitorScreen"), SCREEN_PERMISSIONS.LocationMonitor);
+const OfficeExitReviewsScreen = lazyScreen(() => import("@/screens/admin/OfficeExitReviewsScreen"), SCREEN_PERMISSIONS.OfficeExitReviews);
 const TicketManagementScreen = lazyScreen(() => import("@/screens/admin/TicketManagementScreen"), SCREEN_PERMISSIONS.TicketManagement);
 const EventManagementScreen = lazyScreen(() => import("@/screens/admin/EventManagementScreen"), SCREEN_PERMISSIONS.EventManagement);
 const CheckInLogsScreen = lazyScreen(() => import("@/screens/admin/CheckInLogsScreen"), SCREEN_PERMISSIONS.CheckInLogs);
@@ -182,6 +186,16 @@ export default function AdminStackNavigator() {
         name="LiveTracking"
         component={LiveTrackingScreen}
         options={{ headerTitle: "Live Tracking" }}
+      />
+      <Stack.Screen
+        name="OfficeExitReviews"
+        component={OfficeExitReviewsScreen}
+        options={{ headerTitle: "Office Exits" }}
+      />
+      <Stack.Screen
+        name="LocationMonitor"
+        component={LocationMonitorScreen}
+        options={{ headerTitle: "Location Monitor" }}
       />
       <Stack.Screen
         name="TeamHierarchy"
