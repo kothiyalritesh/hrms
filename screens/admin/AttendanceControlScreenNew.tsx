@@ -12,11 +12,26 @@ import { Spacing, BorderRadius, Colors } from "@/constants/theme";
 import Spacer from "@/components/Spacer";
 import { supabase } from "@/lib/supabase";
 import type { BiometricPunch } from "@/components/BiometricPunchList";
+import DayStory from "@/components/attendance/DayStory";
+import {
+  PREFETCH_MAX_DAYS,
+  dayKey,
+  dayProblems,
+  daySources,
+  daysBetween,
+  fetchDayEvents,
+  type DayEvent,
+  type DayEventMap,
+} from "@/services/attendance-day-events.service";
 import LocationTimelineModal, {
   PingPoint,
 } from "@/components/LocationTimelineModal";
 import type { LocationStory } from "@/components/LocationDayStory";
-import { biometricSyncService } from "@/services/biometric-sync-secure.service";
+import {
+  biometricSyncService,
+  describeSyncHealth,
+  type BiometricSyncHealth,
+} from "@/services/biometric-sync-secure.service";
 import { useNavigation } from "@react-navigation/native";
 import { AttendanceService } from "@/services/attendance.service";
 import { usePermissions } from "@/hooks/usePermissions";
@@ -81,6 +96,57 @@ function fmt(iso?: string) {
 
 function toIST(iso: string) {
   return parseAttendanceTimestamp(iso);
+}
+
+type DayFilter = "ALL" | "APP" | "BIO" | "SITE" | "OPEN" | "LATE" | "PROBLEMS";
+const DAY_FILTERS: { key: DayFilter; label: string }[] = [
+  { key: "ALL", label: "All present" },
+  { key: "APP", label: "App" },
+  { key: "BIO", label: "Biometric" },
+  { key: "SITE", label: "Site visit" },
+  { key: "OPEN", label: "Not checked out" },
+  { key: "LATE", label: "Late" },
+  { key: "PROBLEMS", label: "Needs attention" },
+];
+
+type DayVisit = {
+  id: string;
+  name: string;
+  checkin_time: string | null;
+  checkout_time: string | null;
+  status: string;
+  auto_close_reason: string | null;
+  departed_at: string | null;
+};
+
+/** Where a visit stands, in words (office return / next site / left / at site). */
+export function visitStateText(v: Pick<DayVisit, "status" | "checkout_time" | "auto_close_reason" | "departed_at">) {
+  if (v.status === "COMPLETED" || v.checkout_time) {
+    const at = v.checkout_time ? fmt(v.checkout_time) : "";
+    if (v.auto_close_reason === "OFFICE_RETURN_BIOMETRIC") return `ended ${at} (back at office)`;
+    if (v.auto_close_reason === "SITE_CHANGE") return `ended ${at} (moved to next site)`;
+    return `out ${at}`;
+  }
+  if (v.departed_at) return `left ${fmt(v.departed_at)}, not checked out`;
+  if (v.status === "CHECKED_IN") return "at site now";
+  return v.status.toLowerCase().replace(/_/g, " ");
+}
+
+function VisitLines({ visits, textColor }: { visits?: DayVisit[]; textColor: string }) {
+  if (!visits?.length) return null;
+  return (
+    <View style={{ gap: 3, marginTop: 6 }}>
+      {visits.map((v) => (
+        <View key={v.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+          <Feather name="map-pin" size={10} color="#8B5CF6" />
+          <ThemedText style={{ fontSize: 11, fontWeight: '700', color: '#8B5CF6' }}>Site</ThemedText>
+          <ThemedText style={{ fontSize: 11, color: textColor, flexShrink: 1 }}>
+            {v.name} · in {fmt(v.checkin_time ?? undefined)} · {visitStateText(v)}
+          </ThemedText>
+        </View>
+      ))}
+    </View>
+  );
 }
 
 function fmtDate(dateStr: string) {
@@ -270,6 +336,21 @@ export default function AttendanceControlScreenNew() {
       unsubscribe();
     };
   }, []);
+  // The server syncs every minute; show its state, not one failed run.
+  const [syncHealth, setSyncHealth] = useState<BiometricSyncHealth | null>(null);
+  const refreshSyncHealth = useCallback(async () => {
+    const health = await biometricSyncService.getHealth().catch(() => null);
+    setSyncHealth(health);
+    return health;
+  }, []);
+  useEffect(() => {
+    void refreshSyncHealth();
+    const timer = setInterval(() => void refreshSyncHealth(), 60_000);
+    return () => clearInterval(timer);
+  }, [refreshSyncHealth]);
+  const healthLine = syncHealth ? describeSyncHealth(syncHealth) : null;
+  const bannerTone = healthLine?.tone ?? (syncStatus.ok ? "ok" : "error");
+  const bannerColor = bannerTone === "ok" ? "#059669" : bannerTone === "warn" ? "#B45309" : "#EF4444";
 
   // raw first/last device punch per userId_date — used to compare vs HRMS app checkin
   const [devicePunchMap, setDevicePunchMap] = useState<Record<string, { first: string; last: string | null }>>({}); 
@@ -301,6 +382,43 @@ export default function AttendanceControlScreenNew() {
   const [timelineStory, setTimelineStory] = useState<LocationStory | null>(null);
   const [timelineLoading, setTimelineLoading] = useState(false);
   const [timelinePunches, setTimelinePunches] = useState<BiometricPunch[]>([]);
+  const [timelineEvents, setTimelineEvents] = useState<DayEvent[]>([]);
+  // Site visits per employee-day: a day can start at a site and continue with an office punch.
+  const [dayVisits, setDayVisits] = useState<Record<string, DayVisit[]>>({});
+  // Every interaction of each employee-day, from every source (one story).
+  const [dayEvents, setDayEvents] = useState<DayEventMap>({});
+  const [dayEventsLoading, setDayEventsLoading] = useState<Set<string>>(new Set());
+  const [dayFilter, setDayFilter] = useState<DayFilter>("ALL");
+
+  const matchesDayFilter = (r: AttendanceRecord) => {
+    if (dayFilter === "ALL") return true;
+    const key = dayKey(r.user_id, r.date);
+    const events = dayEvents[key] ?? [];
+    const sources = events.length ? daySources(events) : [];
+    if (dayFilter === "APP") return Boolean(r.app_checkin_time) || sources.includes("App");
+    if (dayFilter === "BIO") return Boolean(r.biometric_first_in) || (deviceAllPunches[key]?.length ?? 0) > 0;
+    if (dayFilter === "SITE") return (dayVisits[key]?.length ?? 0) > 0 || sources.includes("Site");
+    if (dayFilter === "OPEN") return !r.checkout_time;
+    if (dayFilter === "LATE") return isServerConfirmedLate(r);
+    return dayProblems(events).length > 0;
+  };
+
+  const loadDayEventsFor = useCallback(async (userId: string, date: string) => {
+    const key = dayKey(userId, date);
+    setDayEventsLoading((prev) => new Set(prev).add(key));
+    try {
+      const map = await fetchDayEvents(date, date, [userId]);
+      setDayEvents((prev) => ({ ...prev, [key]: map[key] ?? [] }));
+    } catch (eventsError) {
+      console.warn("[AttendanceControl] Day events could not be loaded:", eventsError);
+    } finally {
+      setDayEventsLoading((prev) => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
+    }
+  }, []);
 
   const openTimeline = useCallback(async (userId: string, name: string, date: string) => {
     setTimelineEmployee({ id: userId, name, date });
@@ -308,6 +426,12 @@ export default function AttendanceControlScreenNew() {
     setTimelineStory(null);
     setTimelinePunches([]);
     setTimelinePings([]);
+    setTimelineEvents([]);
+
+    // The same story as the card: every source, in time order.
+    void fetchDayEvents(date, date, [userId])
+      .then((map) => setTimelineEvents(map[dayKey(userId, date)] ?? []))
+      .catch(() => setTimelineEvents([]));
 
     // Biometric punches of the day: the timeline of biometric-only staff, and
     // next to the GPS story for App + Biometric staff.
@@ -586,6 +710,49 @@ export default function AttendanceControlScreenNew() {
     }));
     if (officeFilter) data = data.filter((r: any) => r.office_id === officeFilter);
     if (employeeFilter) data = data.filter((r: any) => r.user_id === employeeFilter);
+    // Site visits of the period (shown on every card). An open visit the
+    // employee has already left (GPS) is not "at the site".
+    const visitsByDay: Record<string, DayVisit[]> = {};
+    const leftAt = new Map<string, string>();
+    try {
+      const { data: visitRows, error: visitError } = await fetchAllPages<any>((from, to) =>
+        supabase.from("field_visits")
+          .select("id, user_id, date, location_name, project_name, checkin_time, checkout_time, status, auto_close_reason, departed_at")
+          .gte("date", s).lte("date", e)
+          .not("checkin_time", "is", null)
+          .order("checkin_time", { ascending: true }).order("id")
+          .range(from, to),
+      );
+      if (visitError) throw visitError;
+      for (const v of visitRows ?? []) {
+        if (v.status === "MISSED") continue;
+        (visitsByDay[`${v.user_id}_${v.date}`] ??= []).push({
+          id: v.id,
+          name: v.project_name || v.location_name || "Site",
+          checkin_time: v.checkin_time,
+          checkout_time: v.checkout_time,
+          status: String(v.status ?? ""),
+          auto_close_reason: v.auto_close_reason ?? null,
+          departed_at: v.departed_at ?? null,
+        });
+        if (v.status === "CHECKED_IN" && v.departed_at) leftAt.set(v.id, v.departed_at);
+      }
+    } catch (visitLoadError) {
+      console.warn("[AttendanceControl] Site visits could not be loaded:", visitLoadError);
+    }
+    setDayVisits(visitsByDay);
+    // The day stories: loaded with the list for short ranges, per card otherwise.
+    if (daysBetween(s, e) < PREFETCH_MAX_DAYS) {
+      try {
+        setDayEvents(await fetchDayEvents(s, e));
+      } catch (eventsError) {
+        console.warn("[AttendanceControl] Day events could not be loaded:", eventsError);
+        setDayEvents({});
+      }
+    } else {
+      setDayEvents({});
+    }
+    data = data.map((r: any) => (leftAt.has(r.active_field_visit_id) ? { ...r, active_site_left_at: leftAt.get(r.active_field_visit_id) } : r));
     setRecords(data);
     setOffices((offRes.data || []).filter(o => !forcedOfficeId || o.id === forcedOfficeId));
       const officeNameMap = new Map((offRes.data || []).map(o => [o.id, o.name]));
@@ -2267,6 +2434,29 @@ export default function AttendanceControlScreenNew() {
       };
       }
 
+      // ── Day Events: every interaction, every source, in time order ────
+      setExportStatus("Loading day events...");
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      const eventHeader = ["Date", "Employee", "Time (IST)", "Event", "Place", "Source", "Confirmed", "Detail"];
+      let eventRows: (string | number)[][] = [];
+      try {
+        const names = new Map(records.map((r) => [r.user_id, r.employee_name]));
+        const eventMap = daysBetween(startDate, endDate) <= 31 ? await fetchDayEvents(startDate, endDate) : {};
+        eventRows = Object.entries(eventMap)
+          .map(([key, events]) => ({ userId: key.slice(0, 36), date: key.slice(37), events }))
+          .sort((a, b) => a.date.localeCompare(b.date) || String(names.get(a.userId) ?? "").localeCompare(String(names.get(b.userId) ?? "")))
+          .flatMap(({ userId, date, events }) =>
+            events.map((ev) => [
+              date, names.get(userId) ?? userId, fmt(ev.at), ev.title, ev.place ?? "", ev.source,
+              ev.verified ? "Yes" : "No", ev.detail ?? "",
+            ]),
+          );
+      } catch (eventsError: any) {
+        eventRows = [["", "", "", `Day events could not be loaded: ${eventsError?.message ?? "error"}`, "", "", "", ""]];
+      }
+      const eventsSheet = XLSX.utils.aoa_to_sheet([eventHeader, ...eventRows]);
+      eventsSheet["!cols"] = [{ wch: 12 }, { wch: 26 }, { wch: 11 }, { wch: 36 }, { wch: 34 }, { wch: 12 }, { wch: 10 }, { wch: 40 }];
+
       // ── Workbook ──────────────────────────────────────────────────────
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, appCiSheet,     'App Check-ins');
@@ -2277,13 +2467,14 @@ export default function AttendanceControlScreenNew() {
       XLSX.utils.book_append_sheet(wb, pivotSheet,     "Daily Pivot");
       XLSX.utils.book_append_sheet(wb, locSheet,       "Location Pings (All)");
       XLSX.utils.book_append_sheet(wb, hourlySheet,    "Location Hourly Summary");
+      XLSX.utils.book_append_sheet(wb, eventsSheet,    "Day Events");
       if (combinedSheet && thSheet) {
         XLSX.utils.book_append_sheet(wb, combinedSheet, 'Combined Sheet');
         XLSX.utils.book_append_sheet(wb, thSheet, 'Team Head Wise');
       }
 
       const fileName = `Attendance_${startDate}_to_${endDate}.xlsx`;
-      setExportStatus("Starting complete 10-sheet download...");
+      setExportStatus("Starting complete 11-sheet download...");
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
       await saveExcelWorkbook(XLSX, wb, fileName);
     } catch (err: any) {
@@ -2408,11 +2599,16 @@ export default function AttendanceControlScreenNew() {
 
         {/* Biometric sync status banner */}
         <TouchableOpacity
-          style={[s.syncBanner, { backgroundColor: syncStatus.ok ? '#05966910' : '#EF444410', borderColor: syncStatus.ok ? '#059669' : '#EF4444' }]}
+          style={[s.syncBanner, { backgroundColor: bannerColor + '10', borderColor: bannerColor }]}
           onPress={async () => {
             setSyncing(true);
             try {
-              await biometricSyncService.runNow();
+              // Synced within the last minutes: the data is current, so just
+              // reload instead of starting a sync that meets the server's own.
+              const health = await refreshSyncHealth();
+              if (!health || !describeSyncHealth(health).fresh) {
+                await biometricSyncService.runNow();
+              }
               await loadData();
             } catch (error: any) {
               Alert.alert(
@@ -2421,18 +2617,21 @@ export default function AttendanceControlScreenNew() {
               );
             } finally {
               setSyncing(false);
+              void refreshSyncHealth();
             }
           }}
           disabled={syncing}
         >
-          <Feather name={syncStatus.ok ? 'check-circle' : 'alert-circle'} size={14} color={syncStatus.ok ? '#059669' : '#EF4444'} />
-          <ThemedText style={{ fontSize: 12, fontWeight: '600', color: syncStatus.ok ? '#059669' : '#EF4444', flex: 1 }}>
-            {syncStatus.ok
-              ? `Biometric synced ${syncStatus.lastAttempt ? syncStatus.lastAttempt.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : ''}`
-              : `Biometric: ${syncStatus.message}`}
+          <Feather name={bannerTone === 'ok' ? 'check-circle' : 'alert-circle'} size={14} color={bannerColor} />
+          <ThemedText style={{ fontSize: 12, fontWeight: '600', color: bannerColor, flex: 1 }}>
+            {healthLine
+              ? healthLine.text
+              : syncStatus.ok
+                ? `Biometric synced ${syncStatus.lastAttempt ? syncStatus.lastAttempt.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : ''}`
+                : `Biometric: ${syncStatus.message}`}
           </ThemedText>
-          <ThemedText style={{ fontSize: 11, color: syncStatus.ok ? '#059669' : '#EF4444', fontWeight: '700' }}>
-            {syncing ? 'Syncing...' : 'Sync Now'}
+          <ThemedText style={{ fontSize: 11, color: bannerColor, fontWeight: '700' }}>
+            {syncing ? 'Syncing...' : healthLine?.fresh ? 'Refresh' : 'Sync Now'}
           </ThemedText>
         </TouchableOpacity>
 
@@ -2726,8 +2925,25 @@ export default function AttendanceControlScreenNew() {
             <Spacer height={12} />
             <ThemedText style={{ color: theme.textSecondary }}>No records for this period</ThemedText>
           </View>
-        ) : activeTab === 'app' && (
-          grouped.map(({ date, appOnly, bioOnly, both, otherAttendance, noAttendance }) => {
+        ) : activeTab === 'app' && (<>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingHorizontal: 16, paddingBottom: 10 }}>
+            {DAY_FILTERS.map((f) => {
+              const active = dayFilter === f.key;
+              return (
+                <TouchableOpacity
+                  key={f.key}
+                  onPress={() => setDayFilter(f.key)}
+                  style={{ paddingHorizontal: 12, minHeight: 34, justifyContent: 'center', borderRadius: 17, borderWidth: 1,
+                           borderColor: active ? theme.primary : theme.border, backgroundColor: active ? theme.primary + '18' : 'transparent' }}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: active }}
+                >
+                  <ThemedText style={{ fontSize: 12, fontWeight: '700', color: active ? theme.primary : theme.text }}>{f.label}</ThemedText>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+          {grouped.map(({ date, appOnly, bioOnly, both, otherAttendance, noAttendance }) => {
             const expanded = expandedDates.has(date);
             const presentCount =
               both.length + appOnly.length + bioOnly.length + otherAttendance.length;
@@ -2791,121 +3007,86 @@ export default function AttendanceControlScreenNew() {
               );
             };
 
-            // "Both" section: dedupe by user, split left=App / right=Bio
-            const bothUserIds = [...new Set(both.map(r => r.user_id))];
-            const fmtPunch = (t: string) => t.slice(0,5).replace(/^(\d{2}):(\d{2})/, (_, h, m) => { const n=parseInt(h); return `${n%12||12}:${m} ${n>=12?'pm':'am'}`; });
-            const renderBothSection = () => {
-              if (bothUserIds.length === 0) return null;
+            const renderPresentCard = (item: AttendanceRecord) => {
+              const key = dayKey(item.user_id, item.date);
+              const events: DayEvent[] | undefined = dayEvents[key];
+              const sources = events?.length
+                ? daySources(events)
+                : [
+                    ...(item.app_checkin_time ? ["App"] : []),
+                    ...(item.biometric_first_in || (deviceAllPunches[key]?.length ?? 0) > 0 ? ["Bio"] : []),
+                    ...(dayVisits[key]?.length ? ["Site"] : []),
+                  ];
+              const punches = deviceAllPunches[key] ?? [];
+              const lastPunch = devicePunchMap[key]?.last ?? devicePunchMap[key]?.first ?? null;
+              const noCheckoutPunch = punches.length > 0 && !item.checkout_time && parseInt(String(lastPunch ?? '25').split(':')[0], 10) < 18;
+              const isLate = isServerConfirmedLate(item);
+              const statusColor = item.checkout_time ? Colors.light.success : Colors.light.info;
+              const sourceColor: Record<string, string> = { App: '#0EA5E9', Bio: '#7C3AED', Site: '#8B5CF6', Event: '#2563EB' };
               return (
-                <View>
-                  <View style={[s.sectionHeader, { backgroundColor: '#05966915', borderLeftColor: '#059669' }]}>
-                    <Feather name="check-circle" size={12} color="#059669" />
-                    <ThemedText style={[s.sectionHeaderText, { color: '#059669' }]}>App + Biometric ({bothUserIds.length})</ThemedText>
-                  </View>
-                  {bothUserIds.map(uid => {
-                    const appRec = both.find(r => r.user_id === uid)!;
-                    const ref = appRec;
-                    const bioPunches = deviceAllPunches[`${uid}_${date}`] ?? [];
-                    const rawPunch = devicePunchMap[`${uid}_${date}`];
-                    const isLate = isServerConfirmedLate(ref);
-
-                    let gapMins: number | null = null;
-                    if (appRec?.app_checkin_time && rawPunch?.first) {
-                      const rawMs = new Date(`${date}T${rawPunch.first}+05:30`).getTime();
-                      const appMs = toIST(appRec.app_checkin_time).getTime();
-                      gapMins = Math.round((appMs - rawMs) / 60000);
-                    }
-                    const bigGap = gapMins !== null && Math.abs(gapMins) >= 15;
-                    const gapLabel = gapMins !== null && gapMins !== 0
-                      ? `App ${gapMins > 0 ? Math.abs(gapMins)+'m AFTER' : Math.abs(gapMins)+'m BEFORE'} device`
-                      : null;
-                    const lastPunchHour = rawPunch?.last
-                      ? parseInt(rawPunch.last.split(':')[0], 10)
-                      : rawPunch?.first ? parseInt(rawPunch.first.split(':')[0], 10) : 25;
-                    const noCheckoutPunch = bioPunches.length > 0 && lastPunchHour < 18;
-                    const borderColor = bigGap ? '#EF4444' : noCheckoutPunch ? '#F59E0B' : '#059669';
-
-                    return (
-                      <View key={uid} style={[s.recordCard, { backgroundColor: theme.backgroundDefault, borderLeftColor: borderColor, padding: 0, overflow: 'hidden' }]}>
-                        {/* Header */}
-                        <View style={{ paddingHorizontal: 12, paddingTop: 10, paddingBottom: 6 }}>
-                          <ThemedText style={[s.empName, { color: textColor }]}>{ref.employee_name}</ThemedText>
-                          <ThemedText style={[s.meta, { color: theme.textSecondary }]}>{ref.office_name}</ThemedText>
-                          {bigGap && gapLabel && (
-                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 }}>
-                              <Feather name="alert-triangle" size={10} color="#EF4444" />
-                              <ThemedText style={{ fontSize: 11, color: '#EF4444', fontWeight: '700' }}>{gapLabel}</ThemedText>
-                            </View>
-                          )}
-                          {noCheckoutPunch && (
-                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
-                              <Feather name="alert-circle" size={10} color="#F59E0B" />
-                              <ThemedText style={{ fontSize: 11, color: '#F59E0B', fontWeight: '700' }}>No checkout punch before 6 PM</ThemedText>
-                            </View>
-                          )}
+                <View key={item.id} style={[s.recordCard, { backgroundColor: theme.backgroundDefault, borderLeftColor: noCheckoutPunch ? '#F59E0B' : '#059669' }]}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 10 }}>
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <ThemedText style={[s.empName, { color: textColor }]}>{item.employee_name}</ThemedText>
+                      <ThemedText style={[s.meta, { color: theme.textSecondary }]}>{item.office_name || 'Office not assigned'}</ThemedText>
+                      <View style={{ flexDirection: 'row', gap: 10, marginTop: 4, flexWrap: 'wrap' }}>
+                        <View style={s.timeChip}>
+                          <Feather name="log-in" size={11} color="#10B981" />
+                          <ThemedText style={[s.timeText, { color: textColor }]}>
+                            {fmt(item.checkin_time)}{item.first_in_source ? ` · ${String(item.first_in_source).toLowerCase().replace(/_/g, ' ')}` : ''}
+                          </ThemedText>
                         </View>
-                        {/* Left / Right split */}
-                        <View style={{ flexDirection: 'row', borderTopWidth: 1, borderTopColor: theme.backgroundRoot }}>
-                          {/* LEFT — App */}
-                          <View style={{ flex: 1, padding: 10, borderRightWidth: 1, borderRightColor: theme.backgroundRoot, backgroundColor: '#0EA5E908' }}>
-                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 6 }}>
-                              <Feather name="smartphone" size={11} color="#0EA5E9" />
-                              <ThemedText style={{ fontSize: 11, fontWeight: '700', color: '#0EA5E9' }}>App</ThemedText>
-                              {isLate && <View style={[s.statusBadge, { backgroundColor: '#F59E0B20' }]}><ThemedText style={[s.statusText, { color: '#F59E0B' }]}>Late</ThemedText></View>}
-                            </View>
-                            {appRec ? (
-                              <>
-                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                                  <Feather name="log-in" size={10} color="#10B981" />
-                                  <ThemedText style={[s.timeText, { color: textColor }]}>{fmt(appRec.app_checkin_time ?? undefined)}</ThemedText>
-                                </View>
-                                {appRec.checkout_time ? (
-                                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 3 }}>
-                                    <Feather name="log-out" size={10} color="#EF4444" />
-                                    <ThemedText style={[s.timeText, { color: textColor }]}>{fmt(appRec.checkout_time)}</ThemedText>
-                                  </View>
-                                ) : (
-                                  <ThemedText style={{ fontSize: 11, color: appRec.date < today ? '#F59E0B' : '#10B981', marginTop: 3 }}>
-                                    {appRec.date < today ? 'P-NC | Present - No Checkout' : 'Active'}
-                                  </ThemedText>
-                                )}
-                                <TouchableOpacity style={[s.timelineBtn, { marginTop: 6 }]} onPress={() => openTimeline(uid, ref.employee_name, ref.date)}>
-                                  <Feather name="map-pin" size={10} color="#3B82F6" />
-                                  <ThemedText style={s.timelineBtnText}>Timeline</ThemedText>
-                                </TouchableOpacity>
-                                {appRec && (
-                                  <TouchableOpacity style={[s.timelineBtn, { marginTop: 6 }]} onPress={() => correctAttendance(appRec)}>
-                                    <Feather name="edit-2" size={10} color="#6D1B6D" />
-                                    <ThemedText style={[s.timelineBtnText, { color: "#6D1B6D" }]}>Correct</ThemedText>
-                                  </TouchableOpacity>
-                                )}
-                              </>
-                            ) : (
-                              <ThemedText style={{ fontSize: 11, color: theme.textSecondary, fontStyle: 'italic' }}>No app record</ThemedText>
-                            )}
+                        {item.checkout_time ? (
+                          <View style={s.timeChip}>
+                            <Feather name="log-out" size={11} color="#EF4444" />
+                            <ThemedText style={[s.timeText, { color: textColor }]}>{fmt(item.checkout_time)}</ThemedText>
                           </View>
-                          {/* RIGHT — Biometric */}
-                          <View style={{ flex: 1, padding: 10, backgroundColor: '#7C3AED08' }}>
-                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 6 }}>
-                              <Feather name="cpu" size={11} color="#7C3AED" />
-                              <ThemedText style={{ fontSize: 11, fontWeight: '700', color: '#7C3AED' }}>Biometric</ThemedText>
-                              <ThemedText style={{ fontSize: 10, color: theme.textSecondary }}>({bioPunches.length} log{bioPunches.length !== 1 ? 's' : ''})</ThemedText>
-                            </View>
-                            {bioPunches.length === 0 ? (
-                              <ThemedText style={{ fontSize: 11, color: theme.textSecondary, fontStyle: 'italic' }}>No device punches</ThemedText>
-                            ) : (
-                              bioPunches.map((t, i) => (
-                                <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 2 }}>
-                                  <ThemedText style={{ fontSize: 10, color: theme.textSecondary, width: 14 }}>{i + 1}.</ThemedText>
-                                  <ThemedText style={[s.timeText, { color: textColor }]}>{fmtPunch(t)}</ThemedText>
-                                </View>
-                              ))
-                            )}
-                          </View>
-                        </View>
+                        ) : null}
                       </View>
-                    );
-                  })}
+                    </View>
+                    <View style={{ alignItems: 'flex-end', gap: 4 }}>
+                      <View style={[s.statusBadge, { backgroundColor: statusColor + '20' }]}>
+                        <ThemedText style={[s.statusText, { color: statusColor }]}>{attendanceStatusLabel(item, today)}</ThemedText>
+                      </View>
+                      {isLate ? (
+                        <View style={[s.statusBadge, { backgroundColor: '#F59E0B20' }]}>
+                          <ThemedText style={[s.statusText, { color: '#F59E0B' }]}>Late</ThemedText>
+                        </View>
+                      ) : null}
+                      <View style={{ flexDirection: 'row', gap: 4, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                        {sources.map((src) => (
+                          <View key={src} style={[s.statusBadge, { backgroundColor: (sourceColor[src] ?? '#64748B') + '18' }]}>
+                            <ThemedText style={[s.statusText, { color: sourceColor[src] ?? '#64748B' }]}>{src}</ThemedText>
+                          </View>
+                        ))}
+                      </View>
+                    </View>
+                  </View>
+                  {noCheckoutPunch ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 }}>
+                      <Feather name="alert-circle" size={10} color="#F59E0B" />
+                      <ThemedText style={{ fontSize: 11, color: '#F59E0B', fontWeight: '700' }}>No checkout punch before 6 PM</ThemedText>
+                    </View>
+                  ) : null}
+                  {events !== undefined || daysBetween(startDate, endDate) >= PREFETCH_MAX_DAYS ? (
+                    <DayStory
+                      events={events}
+                      loading={dayEventsLoading.has(key)}
+                      onLoad={() => void loadDayEventsFor(item.user_id, item.date)}
+                    />
+                  ) : (
+                    <VisitLines visits={dayVisits[key]} textColor={textColor} />
+                  )}
+                  <View style={{ flexDirection: 'row', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+                    <TouchableOpacity style={s.timelineBtn} onPress={() => openTimeline(item.user_id, item.employee_name, item.date)}>
+                      <Feather name="clock" size={10} color="#3B82F6" />
+                      <ThemedText style={s.timelineBtnText}>Timeline</ThemedText>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={s.timelineBtn} onPress={() => correctAttendance(item)}>
+                      <Feather name="edit-2" size={10} color="#6D1B6D" />
+                      <ThemedText style={[s.timelineBtnText, { color: "#6D1B6D" }]}>Correct</ThemedText>
+                    </TouchableOpacity>
+                  </View>
                 </View>
               );
             };
@@ -2927,191 +3108,24 @@ export default function AttendanceControlScreenNew() {
 
                 {expanded && (
                   <>
-                    {renderBothSection()}
-                    {appOnly.length > 0 && (
-                      <View>
-                        <View style={[s.sectionHeader, { backgroundColor: '#0EA5E915', borderLeftColor: '#0EA5E9' }]}>
-                          <Feather name="smartphone" size={12} color="#0EA5E9" />
-                          <ThemedText style={[s.sectionHeaderText, { color: '#0EA5E9' }]}>App Only ({appOnly.length})</ThemedText>
-                        </View>
-                        {appOnly.map(item => {
-                          const isLate = isServerConfirmedLate(item);
-                          const bioPunches = deviceAllPunches[`${item.user_id}_${item.date}`] ?? [];
-                          const fmtPunch = (t: string) => t.slice(0,5).replace(/^(\d{2}):(\d{2})/, (_, h, m) => { const n=parseInt(h); return `${n%12||12}:${m} ${n>=12?'pm':'am'}`; });
-                          return (
-                            <View key={item.id} style={[s.recordCard, { backgroundColor: theme.backgroundDefault, borderLeftColor: '#0EA5E9', padding: 0, overflow: 'hidden' }]}>
-                              {/* Employee name + office header */}
-                              <View style={{ paddingHorizontal: 12, paddingTop: 10, paddingBottom: 6 }}>
-                                <ThemedText style={[s.empName, { color: textColor }]}>{item.employee_name}</ThemedText>
-                                <ThemedText style={[s.meta, { color: theme.textSecondary }]}>{(item as any).check_in_office_name ?? item.office_name}</ThemedText>
-                              </View>
-                              {/* Left / Right split */}
-                              <View style={{ flexDirection: 'row', borderTopWidth: 1, borderTopColor: theme.backgroundRoot }}>
-                                {/* LEFT — App */}
-                                <View style={{ flex: 1, padding: 10, borderRightWidth: 1, borderRightColor: theme.backgroundRoot, backgroundColor: '#0EA5E908' }}>
-                                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 6 }}>
-                                    <Feather name="smartphone" size={11} color="#0EA5E9" />
-                                    <ThemedText style={{ fontSize: 11, fontWeight: '700', color: '#0EA5E9' }}>App</ThemedText>
-                                    {isLate && <View style={[s.statusBadge, { backgroundColor: '#F59E0B20' }]}><ThemedText style={[s.statusText, { color: '#F59E0B' }]}>Late</ThemedText></View>}
-                                  </View>
-                                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                                    <Feather name="log-in" size={10} color="#10B981" />
-                                    <ThemedText style={[s.timeText, { color: textColor }]}>{fmt(item.app_checkin_time ?? undefined)}</ThemedText>
-                                  </View>
-                                  {item.checkout_time ? (
-                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 3 }}>
-                                      <Feather name="log-out" size={10} color="#EF4444" />
-                                      <ThemedText style={[s.timeText, { color: textColor }]}>{fmt(item.checkout_time)}</ThemedText>
-                                    </View>
-                                  ) : (
-                                    <ThemedText style={{ fontSize: 11, color: item.date < today ? '#F59E0B' : '#10B981', marginTop: 3 }}>
-                                      {item.date < today ? 'P-NC | Present - No Checkout' : 'Active'}
-                                    </ThemedText>
-                                  )}
-                                  <TouchableOpacity style={[s.timelineBtn, { marginTop: 6 }]} onPress={() => openTimeline(item.user_id, item.employee_name, item.date)}>
-                                    <Feather name="map-pin" size={10} color="#3B82F6" />
-                                    <ThemedText style={s.timelineBtnText}>Timeline</ThemedText>
-                                  </TouchableOpacity>
-                                  <TouchableOpacity style={[s.timelineBtn, { marginTop: 6 }]} onPress={() => correctAttendance(item)}>
-                                    <Feather name="edit-2" size={10} color="#6D1B6D" />
-                                    <ThemedText style={[s.timelineBtnText, { color: "#6D1B6D" }]}>Correct</ThemedText>
-                                  </TouchableOpacity>
-                                </View>
-                                {/* RIGHT — Biometric */}
-                                <View style={{ flex: 1, padding: 10, backgroundColor: '#7C3AED08' }}>
-                                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 6 }}>
-                                    <Feather name="cpu" size={11} color="#7C3AED" />
-                                    <ThemedText style={{ fontSize: 11, fontWeight: '700', color: '#7C3AED' }}>Biometric</ThemedText>
-                                    <ThemedText style={{ fontSize: 10, color: theme.textSecondary }}>({bioPunches.length} log{bioPunches.length !== 1 ? 's' : ''})</ThemedText>
-                                  </View>
-                                  {bioPunches.length === 0 ? (
-                                    <ThemedText style={{ fontSize: 11, color: theme.textSecondary, fontStyle: 'italic' }}>No device punches</ThemedText>
-                                  ) : (
-                                    bioPunches.map((t, i) => (
-                                      <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 2 }}>
-                                        <ThemedText style={{ fontSize: 10, color: theme.textSecondary, width: 14 }}>{i + 1}.</ThemedText>
-                                        <ThemedText style={[s.timeText, { color: textColor }]}>{fmtPunch(t)}</ThemedText>
-                                      </View>
-                                    ))
-                                  )}
-                                </View>
-                              </View>
-                            </View>
-                          );
-                        })}
-                      </View>
-                    )}
-                    {bioOnly.length > 0 && (
-                      <View>
-                        <View style={[s.sectionHeader, { backgroundColor: '#7C3AED15', borderLeftColor: '#7C3AED' }]}>
-                          <Feather name="cpu" size={12} color="#7C3AED" />
-                          <ThemedText style={[s.sectionHeaderText, { color: '#7C3AED' }]}>Biometric Only ({bioOnly.length})</ThemedText>
-                        </View>
-                        {bioOnly.map(item => {
-                          const punch = devicePunchMap[`${item.user_id}_${item.date}`];
-                          // punch.last before 18:00 means no checkout punch — flag yellow
-                          const lastPunchHour = punch?.last
-                            ? parseInt(punch.last.split(':')[0], 10)
-                            : punch?.first
-                              ? parseInt(punch.first.split(':')[0], 10)
-                              : 25;
-                          const noCheckout = lastPunchHour < 18;
-                          return (
-                            <View key={item.id} style={[s.recordCard, { backgroundColor: theme.backgroundDefault, borderLeftColor: noCheckout ? '#F59E0B' : '#7C3AED' }]}>
-                              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                                <View style={{ flex: 1 }}>
-                                  <ThemedText style={[s.empName, { color: textColor }]}>{item.employee_name}</ThemedText>
-                                  <ThemedText style={[s.meta, { color: theme.textSecondary }]}>{(item as any).check_in_office_name ?? item.office_name}</ThemedText>
-                                  <View style={{ gap: 4, marginTop: 6 }}>
-                                    <View style={[s.sourceRow, { backgroundColor: '#7C3AED12' }]}>
-                                      <Feather name="cpu" size={10} color="#7C3AED" />
-                                      <ThemedText style={[s.sourceLbl, { color: '#7C3AED' }]}>Bio</ThemedText>
-                                      {punch ? (
-                                        <>
-                                          <ThemedText style={[s.timeText, { color: textColor }]}>
-                                            {punch.first.slice(0,5).replace(/^(\d{2}):(\d{2})/, (_, h, m) => { const n=parseInt(h); return `${n%12||12}:${m} ${n>=12?'pm':'am'}`; })}
-                                          </ThemedText>
-                                          {punch.last && punch.last !== punch.first && (
-                                            <ThemedText style={[s.timeText, { color: theme.textSecondary }]}>
-                                              {' → '}{punch.last.slice(0,5).replace(/^(\d{2}):(\d{2})/, (_, h, m) => { const n=parseInt(h); return `${n%12||12}:${m} ${n>=12?'pm':'am'}`; })}
-                                            </ThemedText>
-                                          )}
-                                        </>
-                                      ) : (
-                                        <ThemedText style={[s.timeText, { color: textColor }]}>{fmt(item.biometric_first_in ?? item.checkin_time)}</ThemedText>
-                                      )}
-                                    </View>
-                                    {noCheckout && (
-                                      <View style={[s.sourceRow, { backgroundColor: '#F59E0B15', marginTop: 2 }]}>
-                                        <Feather name="alert-circle" size={10} color="#F59E0B" />
-                                        <ThemedText style={{ fontSize: 11, color: '#F59E0B', fontWeight: '700' }}>No checkout punch before 6 PM</ThemedText>
-                                      </View>
-                                    )}
-                                  </View>
-                                </View>
-                                <View style={{ alignItems: 'flex-end', gap: 4 }}>
-                                  {noCheckout ? (
-                                    <View style={[s.statusBadge, { backgroundColor: '#F59E0B20' }]}>
-                                      <ThemedText style={[s.statusText, { color: '#F59E0B' }]}>No Out</ThemedText>
-                                    </View>
-                                  ) : (
-                                    <View style={[s.statusBadge, { backgroundColor: '#7C3AED20' }]}>
-                                      <ThemedText style={[s.statusText, { color: '#7C3AED' }]}>Bio</ThemedText>
-                                    </View>
-                                  )}
-                                  <TouchableOpacity style={s.timelineBtn} onPress={() => openTimeline(item.user_id, item.employee_name, item.date)}>
-                                    <Feather name="clock" size={11} color="#3B82F6" />
-                                    <ThemedText style={s.timelineBtnText}>Timeline</ThemedText>
-                                  </TouchableOpacity>
-                                </View>
-                              </View>
-                            </View>
-                          );
-                        })}
-                      </View>
-                    )}
-                    {otherAttendance.length > 0 && (
-                      <View>
-                        <View style={[s.sectionHeader, { backgroundColor: '#2563EB15', borderLeftColor: '#2563EB' }]}>
-                          <Feather name="map-pin" size={12} color="#2563EB" />
-                          <ThemedText style={[s.sectionHeaderText, { color: '#2563EB' }]}>Other Verified Attendance ({otherAttendance.length})</ThemedText>
-                        </View>
-                        {otherAttendance.map((item) => (
-                          <View key={item.id} style={[s.recordCard, { backgroundColor: theme.backgroundDefault, borderLeftColor: '#2563EB' }]}>
-                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 10 }}>
-                              <View style={{ flex: 1 }}>
-                                <ThemedText style={[s.empName, { color: textColor }]}>{item.employee_name}</ThemedText>
-                                <ThemedText style={[s.meta, { color: theme.textSecondary }]}>{(item as any).check_in_office_name ?? (item.office_name || 'Office not assigned')}</ThemedText>
-                                <ThemedText style={[s.timeText, { color: textColor, marginTop: 6 }]}>
-                                  {item.first_in_source || item.attendance_type || 'Verified'} · {fmt(item.checkin_time)}
-                                </ThemedText>
-                              </View>
-                              <View style={{ alignItems: 'flex-end', gap: 4 }}>
-                                <View style={[s.statusBadge, { backgroundColor: '#2563EB20' }]}>
-                                  <ThemedText style={[s.statusText, { color: '#2563EB' }]}>{attendanceStatusLabel(item, today)}</ThemedText>
-                                </View>
-                                {/* Field-visit and other non-biometric days have a location story too. */}
-                                {item.user_id ? (
-                                  <TouchableOpacity style={s.timelineBtn} onPress={() => openTimeline(item.user_id, item.employee_name, item.date)}>
-                                    <Feather name="map-pin" size={10} color="#3B82F6" />
-                                    <ThemedText style={s.timelineBtnText}>Timeline</ThemedText>
-                                  </TouchableOpacity>
-                                ) : null}
-                              </View>
-                              </View>
-                              {((item as any).active_site_name || (item as any).active_field_visit_name) && (
-                                <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}>
-                                  <View style={[s.statusBadge, { backgroundColor: '#8B5CF620', flexDirection: 'row', alignItems: 'center', gap: 4 }]}>
-                                    <Feather name="map-pin" size={10} color="#8B5CF6" />
-                                    <ThemedText style={[s.statusText, { color: '#8B5CF6' }]}>Site: {(item as any).active_site_name || (item as any).active_field_visit_name}</ThemedText>
-                                  </View>
-                                </View>
-                              )}
-
-                          </View>
-                        ))}
-                      </View>
-                    )}
+                    {(() => {
+                      // One card per person, whatever the sources; filters instead of sections.
+                      const seen = new Set<string>();
+                      const present = [...both, ...appOnly, ...bioOnly, ...otherAttendance].filter((r) => {
+                        if (seen.has(r.user_id)) return false;
+                        seen.add(r.user_id);
+                        return true;
+                      });
+                      const visible = present.filter((r) => matchesDayFilter(r));
+                      if (present.length > 0 && visible.length === 0) {
+                        return (
+                          <ThemedText style={{ color: theme.textSecondary, fontSize: 12, padding: 12 }}>
+                            Nobody on this day matches the filter.
+                          </ThemedText>
+                        );
+                      }
+                      return visible.map((item) => renderPresentCard(item));
+                    })()}
                     {noAttendance.length > 0 && (
                       <View>
                         <View style={[s.sectionHeader, { backgroundColor: '#64748B15', borderLeftColor: '#64748B' }]}>
@@ -3152,10 +3166,8 @@ export default function AttendanceControlScreenNew() {
                 )}
               </View>
             );
-          })
-
-
-        )}
+          })}
+        </>)}
 
         <Spacer height={100} />
       </ScrollView>
@@ -3258,6 +3270,7 @@ export default function AttendanceControlScreenNew() {
         pings={timelinePings}
         story={timelineStory}
         punches={timelinePunches}
+        events={timelineEvents}
         loading={timelineLoading}
         onClose={() => setTimelineEmployee(null)}
       />
@@ -3273,7 +3286,7 @@ export default function AttendanceControlScreenNew() {
           }}
         >
           <ThemedText style={{ color: "#9A3412", fontSize: 12, fontWeight: "600" }}>
-            The historical download includes all ten managed attendance sheets, including Combined and Team Head calculations, in one Excel workbook.
+            The historical download includes all eleven managed attendance sheets, including Combined and Team Head calculations, in one Excel workbook.
           </ThemedText>
         </View>
       ) : null}
@@ -3286,7 +3299,7 @@ export default function AttendanceControlScreenNew() {
           disabled={exporting}
         >
           <Feather name="download" size={18} color="#fff" />
-          <Text style={s.stickyDownloadText}>{exporting ? exportStatus || 'Exporting...' : 'Download Complete Attendance Excel (10 sheets)'}</Text>
+          <Text style={s.stickyDownloadText}>{exporting ? exportStatus || 'Exporting...' : 'Download Complete Attendance Excel (11 sheets)'}</Text>
         </TouchableOpacity>
       ) : (
         <TouchableOpacity

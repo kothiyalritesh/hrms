@@ -43,6 +43,35 @@ CREATE TABLE public.geofence_events (
 CREATE UNIQUE INDEX geofence_events_one_active_cycle
   ON public.geofence_events (attendance_id, geofence_type, geofence_id)
   WHERE status NOT IN ('RETURNED_INSIDE', 'CLOSED');
+-- columns the field-visit engine reads and writes (scenario 09)
+ALTER TABLE public.field_visits ADD COLUMN predefined_site_id uuid, ADD COLUMN visit_type text,
+  ADD COLUMN location_address text, ADD COLUMN checkin_radius_m double precision, ADD COLUMN notes text,
+  ADD COLUMN checkin_location jsonb, ADD COLUMN arrival_latitude double precision,
+  ADD COLUMN arrival_longitude double precision, ADD COLUMN arrival_accuracy_metres double precision,
+  ADD COLUMN arrival_distance_metres double precision, ADD COLUMN visit_state text, ADD COLUMN journey_status text,
+  ADD COLUMN departed_at timestamptz, ADD COLUMN checkout_office_id uuid, ADD COLUMN auto_closed boolean DEFAULT false,
+  ADD COLUMN source_field_visit_id uuid;
+ALTER TABLE public.attendance_logs ADD COLUMN checkin_status text, ADD COLUMN checkin_location jsonb,
+  ADD COLUMN checkin_latitude double precision, ADD COLUMN checkin_longitude double precision,
+  ADD COLUMN checkin_location_name text, ADD COLUMN checkin_distance_meters integer,
+  ADD COLUMN attendance_context text, ADD COLUMN field_visit_id uuid, ADD COLUMN context_location_name text,
+  ADD COLUMN context_started_at timestamptz, ADD COLUMN auto_checkout boolean, ADD COLUMN notes text;
+ALTER TABLE public.predefined_sites ADD COLUMN site_label text, ADD COLUMN project_name text,
+  ADD COLUMN address text, ADD COLUMN checkin_radius_m double precision;
+ALTER TABLE public.smartoffice_device_logs ADD COLUMN office_id uuid;
+-- day events (scenario 09): checkout details, company events, reviewed regularizations
+ALTER TABLE public.attendance_logs ADD COLUMN auto_closed boolean DEFAULT false, ADD COLUMN checkout_location_name text;
+ALTER TABLE public.attendance_regularization_requests ADD COLUMN reviewed_at timestamptz;
+CREATE TABLE public.events (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), title text);
+CREATE TABLE public.event_checkins (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), event_id uuid, user_id uuid,
+  checkin_time timestamptz DEFAULT now(), checkout_time timestamptz);
+-- as 20261001000000 (device serial -> office)
+CREATE TABLE public.biometric_devices (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), device_name text NOT NULL,
+  device_identifier text NOT NULL UNIQUE, office_id uuid NOT NULL REFERENCES public.offices(id),
+  status text NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'INACTIVE')),
+  last_sync_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now());
 CREATE TABLE public.geofence_reasons (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   geofence_event_id uuid NOT NULL REFERENCES public.geofence_events(id),
@@ -537,4 +566,103 @@ BEGIN
 END;
 $$;
 
+-- from supabase/migrations/20260810000000_field_event_audience_context_notifications.sql
+create or replace function public.sync_field_visit_arrival_attendance(p_visit_id uuid)
+returns uuid language plpgsql security definer set search_path=public,pg_temp as $$
+declare v_visit public.field_visits%rowtype;v_attendance public.attendance_logs%rowtype;
+  v_lat double precision;v_lon double precision;v_distance integer;
+begin
+  select * into v_visit from public.field_visits where id=p_visit_id;
+  if not found or v_visit.checkin_time is null then raise exception 'FIELD_VISIT_ARRIVAL_REQUIRED'; end if;
+  v_lat:=nullif(v_visit.checkin_location->>'latitude','')::double precision;
+  v_lon:=nullif(v_visit.checkin_location->>'longitude','')::double precision;
+  v_distance:=round(coalesce(v_visit.arrival_distance_metres,
+    nullif(v_visit.checkin_location->>'distance_metres','')::double precision,0));
+  perform pg_advisory_xact_lock(hashtextextended(v_visit.user_id::text||':'||v_visit.date::text,0));
+  select * into v_attendance from public.attendance_logs
+    where user_id=v_visit.user_id and date=v_visit.date order by checkin_time nulls last limit 1 for update;
+  if found then
+    update public.attendance_logs set
+      checkin_time=coalesce(checkin_time,v_visit.checkin_time),
+      attendance_type=case when checkin_time is null then 'FIELD_VISIT' else attendance_type end,
+      checkin_source=case when checkin_time is null then 'FIELD_VISIT' else checkin_source end,
+      checkin_status=case when checkin_time is null then 'FIELD_VISIT' else checkin_status end,
+      checkin_location=case when checkin_time is null then v_visit.checkin_location else checkin_location end,
+      checkin_latitude=case when checkin_time is null then v_lat else checkin_latitude end,
+      checkin_longitude=case when checkin_time is null then v_lon else checkin_longitude end,
+      checkin_location_name=case when checkin_time is null then coalesce(v_visit.project_name,v_visit.location_name) else checkin_location_name end,
+      checkin_distance_meters=case when checkin_time is null then v_distance else checkin_distance_meters end,
+      attendance_context='FIELD_VISIT',field_visit_id=v_visit.id,
+      context_location_name=coalesce(v_visit.project_name,v_visit.location_name),context_started_at=v_visit.checkin_time,
+      attendance_state='ON_FIELD_VISIT',attendance_status='PRESENT',day_status='P',
+      status=case when checkout_time is null then 'CHECKED_IN' else status end,updated_at=now()
+    where id=v_attendance.id returning * into v_attendance;
+  else
+    insert into public.attendance_logs(user_id,date,attendance_type,attendance_status,day_status,
+      checkin_time,checkin_source,checkin_status,checkin_location,checkin_latitude,checkin_longitude,
+      checkin_location_name,checkin_distance_meters,status,attendance_state,attendance_context,
+      field_visit_id,context_location_name,context_started_at,auto_checkout,notes)
+    values(v_visit.user_id,v_visit.date,'FIELD_VISIT','PRESENT','P',v_visit.checkin_time,
+      'FIELD_VISIT','FIELD_VISIT',v_visit.checkin_location,v_lat,v_lon,
+      coalesce(v_visit.project_name,v_visit.location_name),v_distance,'CHECKED_IN','ON_FIELD_VISIT',
+      'FIELD_VISIT',v_visit.id,coalesce(v_visit.project_name,v_visit.location_name),v_visit.checkin_time,false,
+      'Direct field visit attendance: '||v_visit.location_name||'.') returning * into v_attendance;
+  end if;
+  return v_attendance.id;
+exception when unique_violation then
+  select * into v_attendance from public.attendance_logs where user_id=v_visit.user_id and date=v_visit.date limit 1;
+  update public.attendance_logs set attendance_context='FIELD_VISIT',field_visit_id=v_visit.id,
+    context_location_name=coalesce(v_visit.project_name,v_visit.location_name),context_started_at=v_visit.checkin_time,
+    attendance_state='ON_FIELD_VISIT',updated_at=now() where id=v_attendance.id;
+  return v_attendance.id;
+end $$;
+
+-- from supabase/migrations/20261008140000_fix_another_visit_in_progress.sql
+CREATE OR REPLACE FUNCTION public.hrms_close_open_field_visits_before_today(p_user_id uuid DEFAULT NULL)
+RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_today date := (now() AT TIME ZONE 'Asia/Kolkata')::date;
+  r record;
+  v_count integer := 0;
+BEGIN
+  FOR r IN
+    SELECT id, date FROM public.field_visits
+    WHERE status = 'CHECKED_IN' AND checkout_time IS NULL
+      AND date < v_today
+      AND (p_user_id IS NULL OR user_id = p_user_id)
+    FOR UPDATE
+  LOOP
+    UPDATE public.field_visits
+    SET checkout_time = public.hrms_auto_checkout_at(r.date),
+        status = 'COMPLETED', visit_state = 'COMPLETED', journey_status = 'COMPLETED',
+        auto_closed = true
+    WHERE id = r.id;
+    PERFORM public.hrms_apply_field_visit_risk(r.id);
+    v_count := v_count + 1;
+  END LOOP;
+  RETURN v_count;
+END;
+$$;
+
+-- from supabase/migrations/20261001000000_multi_office_attendance_and_permissions.sql
+CREATE OR REPLACE FUNCTION public.trg_populate_biometric_log_office()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+IF NEW.office_id IS NULL AND NEW.serial_number IS NOT NULL THEN
+SELECT bd.office_id INTO NEW.office_id
+FROM public.biometric_devices bd
+WHERE bd.device_identifier = NEW.serial_number
+AND bd.status = 'ACTIVE'
+LIMIT 1;
+END IF;
+RETURN NEW;
+END;
+$$;
+
 RESET check_function_bodies;
+CREATE TRIGGER trg_biometric_log_office BEFORE INSERT ON public.smartoffice_device_logs
+  FOR EACH ROW EXECUTE FUNCTION public.trg_populate_biometric_log_office();

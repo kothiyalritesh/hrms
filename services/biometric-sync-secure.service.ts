@@ -89,7 +89,10 @@ async function getPendingRequest(): Promise<PendingBiometricSync | null> {
       !value?.requestId ||
       !value.fromDate ||
       !value.toDate ||
-      !value.createdAt
+      !value.createdAt ||
+      // Older than a day: the import is transactional and duplicates are
+      // skipped, so those dates can simply be synced again.
+      !(Date.now() - Date.parse(value.createdAt) <= STALE_PENDING_MS)
     ) {
       await clearPendingValue();
       return null;
@@ -104,6 +107,75 @@ async function getPendingRequest(): Promise<PendingBiometricSync | null> {
 async function savePendingRequest(value: PendingBiometricSync) {
   await writePendingValue(JSON.stringify(value));
 }
+
+// The server runs one sync at a time and also syncs today every minute, so a
+// manual sync often meets a busy server: wait and retry the same request.
+const BUSY_CODES = new Set(["SYNC_BUSY", "SYNC_IN_PROGRESS"]);
+const BUSY_RETRIES = 6;
+const BUSY_WAIT_MS = 10_000;
+
+const FRIENDLY: Record<string, string> = {
+  SYNC_BUSY: "The server is already syncing biometric punches (it does this every minute). Try again in a minute.",
+  SYNC_IN_PROGRESS: "This sync is still running on the server. Try again in a minute.",
+  ADMIN_PERMISSION_REQUIRED: "Only admin and HR can run a manual biometric sync.",
+  INVALID_DATE_RANGE: "Choose up to 31 days, ending today or earlier.",
+  SMARTOFFICE_UNAVAILABLE: "The SmartOffice biometric server did not answer. Check that it is online.",
+};
+
+/**
+ * The SmartOffice failures in words. The server reports them as
+ * "SMARTOFFICE_FETCH: SMARTOFFICE_HTTP_502 (SMARTOFFICE_TIMEOUT)".
+ */
+export function friendlySyncMessage(raw: string | null | undefined): string | null {
+  const text = String(raw ?? "");
+  if (!/SMARTOFFICE_|SERVER_NOT_CONFIGURED/.test(text)) return null;
+  if (text.includes("SERVER_NOT_CONFIGURED")) {
+    return "The server could not read the SmartOffice connection settings. Check the SmartOffice URL and API key in Supabase.";
+  }
+  const status = Number(text.match(/SMARTOFFICE_HTTP_(\d+)/)?.[1] ?? NaN);
+  if (status === 401 || status === 403) {
+    return "SmartOffice refused the API key. Check the API key in the SmartOffice settings.";
+  }
+  if (/SMARTOFFICE_(TIMEOUT|UNREACHABLE|UNAVAILABLE|PROXY_UNREACHABLE)/.test(text) || status >= 500 || status === 0) {
+    return (
+      "The SmartOffice biometric server at the office is not answering" +
+      (text.includes("TIMEOUT") ? " (no reply within 20 seconds)" : "") +
+      ". HRMS keeps trying every minute by itself; punches stay on the machines and come in once it answers."
+    );
+  }
+  return null;
+}
+
+export class BiometricSyncError extends Error {
+  constructor(message: string, readonly code: string | null) {
+    super(message);
+  }
+}
+
+/**
+ * On a non-2xx answer supabase-js returns only "Edge Function returned a
+ * non-2xx status code"; the server's own reason is in the response body.
+ */
+async function readFunctionError(error: any, data: any) {
+  let body = data && typeof data === "object" ? data : null;
+  const response = error?.context;
+  if (!body && response && typeof response.json === "function") {
+    body = await (typeof response.clone === "function" ? response.clone() : response).json().catch(() => null);
+  }
+  const code = body?.error ? String(body.error) : null;
+  const serverMessage = body?.message ? String(body.message) : null;
+  const message =
+    (code && FRIENDLY[code]) ||
+    friendlySyncMessage(serverMessage) ||
+    serverMessage ||
+    (response?.status === 401 ? "The server did not accept your sign-in. Sign out and sign in again." : null) ||
+    code ||
+    error?.message ||
+    "Biometric sync status is unknown.";
+  return new BiometricSyncError(message, code);
+}
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function confirmRequest(
   pending: PendingBiometricSync,
@@ -121,9 +193,7 @@ async function confirmRequest(
     },
   );
   if (error || data?.error) {
-    throw new Error(
-      `${data?.message || data?.error || error?.message || "Biometric sync status is unknown."} Request ID: ${pending.requestId}`,
-    );
+    throw await readFunctionError(error, data);
   }
   return requireConfirmedBiometricSync(data, {
     fromDate: pending.fromDate,
@@ -152,13 +222,17 @@ async function runRange(
     await clearPendingValue();
     existing = null;
   }
+  // An unconfirmed request for other dates must not block this one: ask the
+  // server once how it ended, then forget it either way. Each import is one
+  // transaction and duplicates are skipped, so those dates can simply be
+  // synced again (and the server job re-syncs today every minute).
   if (
     existing &&
     (existing.fromDate !== range.fromDate || existing.toDate !== range.toDate)
   ) {
-    throw new Error(
-      `Request ${existing.requestId} for ${existing.fromDate} to ${existing.toDate} still has an unknown result. Retry that request before starting another date range.`,
-    );
+    await confirmRequest(existing, true).catch(() => undefined);
+    await clearPendingValue();
+    existing = null;
   }
   const pending =
     existing?.fromDate === range.fromDate && existing.toDate === range.toDate
@@ -172,11 +246,26 @@ async function runRange(
   await savePendingRequest(pending);
 
   try {
-    let confirmed: ConfirmedBiometricSync;
-    try {
-      confirmed = await confirmRequest(pending);
-    } catch {
-      confirmed = await confirmRequest(pending, true);
+    let confirmed: ConfirmedBiometricSync | null = null;
+    for (let attempt = 0; !confirmed; attempt += 1) {
+      try {
+        confirmed = await confirmRequest(pending);
+      } catch (error) {
+        const code = error instanceof BiometricSyncError ? error.code : null;
+        if (code && BUSY_CODES.has(code) && attempt < BUSY_RETRIES) {
+          publish({
+            ok: true,
+            message: "Server is busy syncing; retrying…",
+            lastAttempt: new Date(),
+          });
+          await wait(BUSY_WAIT_MS);
+          continue;
+        }
+        // The request may have finished although the answer was lost.
+        confirmed = await confirmRequest(pending, true).catch(() => {
+          throw error;
+        });
+      }
     }
     await clearPendingValue();
     publish({
@@ -186,6 +275,10 @@ async function runRange(
     });
     return confirmed;
   } catch (error: any) {
+    // The server answered how it ended (failed, refused, ...): nothing is
+    // unfinished. Only a lost answer or a still-running sync stays pending.
+    const code = error instanceof BiometricSyncError ? error.code : null;
+    if (code && code !== "SYNC_IN_PROGRESS") await clearPendingValue();
     publish({
       ok: false,
       message:
@@ -209,9 +302,70 @@ async function recoverPendingRequest() {
       lastAttempt: new Date(),
     });
     return { pending: null, result };
-  } catch {
+  } catch (error) {
+    const code = error instanceof BiometricSyncError ? error.code : null;
+    if (code && code !== "SYNC_IN_PROGRESS") {
+      // It failed on the server (or the server never got it): not unfinished.
+      await clearPendingValue();
+      return { pending: null, result: null };
+    }
     return { pending, result: null };
   }
+}
+
+export type BiometricSyncHealth = {
+  now: string;
+  last_success_at: string | null;
+  last_attempt_at: string | null;
+  last_status: string | null;
+  failing_since: string | null;
+  consecutive_failures: number;
+  last_failure: string | null;
+};
+
+/** The server's every-minute sync: last success and since when it fails. */
+async function getHealth(): Promise<BiometricSyncHealth | null> {
+  const { data, error } = await supabase.rpc("rpc_biometric_sync_health");
+  if (error || !data) return null;
+  return data as BiometricSyncHealth;
+}
+
+/** Synced within this time = up to date; the server syncs every minute. */
+export const SYNC_FRESH_MS = 5 * 60_000;
+
+const istTime = (iso: string) => {
+  const d = new Date(Date.parse(iso) + 330 * 60_000);
+  return `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
+};
+
+const ago = (ms: number) => {
+  const min = Math.floor(ms / 60_000);
+  if (min < 1) return "just now";
+  if (min < 60) return `${min} min ago`;
+  const h = Math.floor(min / 60);
+  return `${h} h ${min % 60} min ago`;
+};
+
+/** One line for the Attendance Control banner. */
+export function describeSyncHealth(health: BiometricSyncHealth, nowMs = Date.now()) {
+  const lastMs = health.last_success_at ? Date.parse(health.last_success_at) : NaN;
+  const age = nowMs - lastMs;
+  const fresh = age <= SYNC_FRESH_MS;
+  const last = Number.isFinite(lastMs)
+    ? `last synced ${istTime(health.last_success_at!)} (${ago(age)})`
+    : "never synced yet";
+  if (fresh) {
+    return { tone: "ok" as const, fresh, text: `Biometric up to date · synced ${istTime(health.last_success_at!)} (${ago(age)}), automatic every minute` };
+  }
+  const tone = !Number.isFinite(lastMs) || age > 30 * 60_000 ? ("error" as const) : ("warn" as const);
+  if (health.failing_since) {
+    return {
+      tone,
+      fresh,
+      text: `SmartOffice server not answering since ${istTime(health.failing_since)} · ${last}. HRMS keeps retrying every minute.`,
+    };
+  }
+  return { tone, fresh, text: `Biometric ${last}.` };
 }
 
 async function runNow() {
@@ -230,6 +384,7 @@ export const biometricSyncService = {
   runRange,
   getPendingRequest,
   recoverPendingRequest,
+  getHealth,
   /**
    * Forget an unconfirmed request on this device. Safe: each import is one
    * database transaction (fully applied or rolled back) and re-importing the

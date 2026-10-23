@@ -31,7 +31,7 @@ export class EmployeeMasterService {
           .from("profiles")
           .select("id, name, employee_number, smartoffice_employee_code, office_id, team, department, reports_to, role, is_active, show_on_tv, created_at")
           .neq("is_active", false)
-          .select("id, name, employee_number, smartoffice_employee_code, office_id, team, department, reports_to, role, is_active, show_on_tv, created_at, attendance_reporting_enabled, last_working_date, joining_date")
+          .select("id, name, employee_number, smartoffice_employee_code, office_id, team, department, reports_to, role, is_active, show_on_tv, created_at, attendance_reporting_enabled, last_working_date, joining_date, date_of_joining")
           .eq("is_active", true)
           .eq("attendance_reporting_enabled", true)
           .order("name")
@@ -97,7 +97,8 @@ export class EmployeeMasterService {
         designation: p.role || "Executive",
         role: p.role || null,
         employment_status: "ACTIVE",
-        joining_date: p.created_at ? p.created_at.slice(0, 10) : null,
+        // The real joining date; profiles.joining_date is the reporting start.
+        joining_date: p.date_of_joining || null,
         shift_name: "Standard Morning Shift",
         shift_start: DEFAULT_LATE_CHECKIN_TIME,
         shift_end: "18:30:00",

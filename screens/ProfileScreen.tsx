@@ -182,7 +182,9 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
     const data: any = profileResult.data;
     const officeId: string | null = data?.office_id || null;
     setTeam(data?.team || null);
-    setDateOfJoining(data?.joining_date || data?.date_of_joining || null);
+    // date_of_joining is the real joining date HR enters. joining_date is the
+    // attendance-reporting start (2026-09-01 for most people), not a joining date.
+    setDateOfJoining(data?.date_of_joining || null);
     setHomeAddress(data?.home_address || null);
     let name: string | null =
       ((officesResult.data || []) as any[]).find((o) => o.id === officeId)?.name || null;
@@ -534,7 +536,10 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
                 Joined
               </ThemedText>
               <ThemedText type="body">
-                {formatDate(dateOfJoining || (user as any)?.date_of_joining || (user as any)?.joining_date || user?.created_at)}
+                {/* Never the reporting start (joining_date) or the account creation date. */}
+                {dateOfJoining || (user as any)?.date_of_joining
+                  ? formatDate(dateOfJoining || (user as any)?.date_of_joining)
+                  : "Not set (ask HR)"}
               </ThemedText>
             </View>
           </View>

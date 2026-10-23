@@ -42,6 +42,37 @@ export class GeoFenceError extends Error {
   }
 }
 
+export type CheckInSite = {
+  id: string;
+  name: string;
+  project_name: string | null;
+  address: string | null;
+  distance_m: number;
+  radius_m: number;
+};
+
+/** Outside every office but inside one or more active predefined sites. */
+export class SiteCheckInAvailableError extends Error {
+  constructor(public readonly sites: CheckInSite[]) {
+    super(
+      `You are at ${sites[0]?.name ?? "a work site"}. Use Check-In on the Home screen to check in at this site.`,
+    );
+    this.name = "SiteCheckInAvailableError";
+  }
+}
+
+export type SiteCheckInResult = {
+  success: boolean;
+  existing?: boolean;
+  mode?: "STARTED_DAY" | "SWITCHED_TO_SITE" | "ALREADY_AT_SITE";
+  visit_id?: string;
+  attendance_id?: string;
+  site_name?: string;
+  checkin_time?: string | null;
+  error?: string;
+  message?: string;
+};
+
 export class EarlyCheckoutError extends Error {
   public readonly workedMinutes: number;
   public readonly requiredMinimum: number;
@@ -602,6 +633,10 @@ export const AttendanceService = {
 
     const radius = effectiveOfficeRadius(nearest.office);
     if (nearest.distanceMetres + accuracy > radius) {
+      // At an authorized predefined site: offer site check-in instead of
+      // treating the attempt as a suspicious outside-office check-in.
+      const sites = await this.findCheckInSites(location).catch(() => []);
+      if (sites.length > 0) throw new SiteCheckInAvailableError(sites);
       // Tell the server about the attempt; it re-measures the distance and
       // lists it under Suspicious Attendance only when the reading is really
       // outside the office area. Never delays or changes the user's message.
@@ -650,6 +685,54 @@ export const AttendanceService = {
       distanceMetres: nearest.distanceMetres,
       radiusMetres: radius,
     };
+  },
+
+  /** Active predefined sites whose check-in radius contains this GPS reading (server rule). */
+  async findCheckInSites(location: {
+    latitude: number;
+    longitude: number;
+    accuracy?: number | null;
+  }): Promise<CheckInSite[]> {
+    const { data, error } = await supabase.rpc("rpc_checkin_sites_nearby", {
+      p_location: {
+        latitude: location.latitude,
+        longitude: location.longitude,
+        accuracy: Math.max(0, Number(location.accuracy) || 0),
+      },
+    });
+    if (error) throw error;
+    return Array.isArray(data) ? (data as CheckInSite[]) : [];
+  },
+
+  /**
+   * Check in at a predefined site (Home Check-In). The server re-checks GPS
+   * and the site radius, starts the day or switches the work place, and never
+   * creates a second attendance row.
+   */
+  async siteCheckIn(params: {
+    siteId: string;
+    location: {
+      latitude: number;
+      longitude: number;
+      accuracy?: number | null;
+      mocked?: boolean;
+      capturedAt?: string;
+    };
+  }): Promise<SiteCheckInResult> {
+    const { data, error } = await supabase.rpc("rpc_attendance_checkin_at_site", {
+      p_site_id: params.siteId,
+      p_location: {
+        latitude: params.location.latitude,
+        longitude: params.location.longitude,
+        accuracy: Math.max(0, Number(params.location.accuracy) || 0),
+        mocked: Boolean(params.location.mocked),
+        captured_at: params.location.capturedAt ?? new Date().toISOString(),
+      },
+    });
+    if (error) {
+      return { success: false, error: error.code, message: error.message };
+    }
+    return normalizeRpcResult<SiteCheckInResult>(data);
   },
 
   async updateAllAttendanceWarnings() {

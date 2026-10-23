@@ -36,6 +36,14 @@ import { useAuth } from "@/contexts/AuthContext";
 import { usePermissions } from "@/hooks/usePermissions";
 import { fetchAllPages } from "@/utils/supabasePagination";
 import { firstRpcRow } from "@/utils/supabaseRpc";
+import { parseImportDate, parseImportGender } from "@/utils/importDate";
+import {
+  eraseEmployee,
+  previewErase,
+  sameName,
+  summarizeErase,
+  type ErasePreview,
+} from "@/services/employee-erase.service";
 import { normalizeUserRole } from "@/utils/userRole";
 import {
   isSalesManagerRole,
@@ -83,8 +91,12 @@ interface BulkPreviewRow {
   role_name: string;
   office_id: string;
   office_name: string;
-  gender?: string;
-  date_of_joining?: string;
+  email?: string | null;
+  employee_number?: string | null;
+  gender?: string | null;
+  date_of_joining?: string | null;
+  date_of_birth?: string | null;
+  weekly_off_day?: number | null;
 }
 
 const EMPTY_FORM = {
@@ -205,6 +217,15 @@ export default function UserManagementScreen() {
   const [updateSuccess, setUpdateSuccess] = useState<string | null>(null);
 
   const [showAdminModal, setShowAdminModal] = useState(false);
+  // Delete = erase the person and every record of them (after a preview).
+  const [erase, setErase] = useState<{
+    id: string;
+    name: string;
+    preview: ErasePreview | null;
+    error: string | null;
+    typed: string;
+    running: boolean;
+  } | null>(null);
   const [adminForm, setAdminForm] = useState({ name: "", phone: "", role: "ADMIN" as string });
   const [savingAdmin, setSavingAdmin] = useState(false);
   // Names from public.teams (readable by every signed-in user); merged with
@@ -391,10 +412,32 @@ export default function UserManagementScreen() {
           else if (weeklyOffStr.startsWith('sat')) weeklyOffParsed = 6;
           else if (weeklyOffStr.startsWith('sun')) weeklyOffParsed = 0;
 
+          // Optional columns. Blank keeps what is stored for an existing employee.
+          const dateOf = (value: string | null, label: string) => {
+            const parsed = parseImportDate(value);
+            if (parsed === undefined) {
+              throw new Error(`Row ${row.sn} (${row.name}): ${label} "${value}" is not a date (use 15/10/2026 or 2026-10-15).`);
+            }
+            return parsed;
+          };
+          const gender = parseImportGender(row.gender);
+          if (gender === undefined) {
+            throw new Error(`Row ${row.sn} (${row.name}): gender "${row.gender}" must be Male or Female.`);
+          }
+          if (weeklyOffStr && weeklyOffParsed === null) {
+            throw new Error(`Row ${row.sn} (${row.name}): weekly off "${row.weekly_off_day}" is not a day name.`);
+          }
+
           return {
             row_number: row.sn,
             name: row.name,
             phone,
+            email: (row.email || "").trim() || null,
+            employee_number: (row.employee_number || "").trim() || null,
+            gender,
+            // the real joining date (profiles.date_of_joining), not the report start
+            date_of_joining: dateOf(row.joining_date, "joining date"),
+            date_of_birth: dateOf(row.date_of_birth, "date of birth"),
             team: (row.team || "").trim() || null,
             role_id: matchedRoles[0].id,
             role_name: matchedRoles[0].name,
@@ -923,33 +966,25 @@ export default function UserManagementScreen() {
   };
 
   const deleteEmployee = async (employeeId: string, name: string) => {
-    const confirmed = typeof window !== "undefined"
-      ? window.confirm(`Deactivate ${name}? Their historical HR records will be retained.`)
-      : await new Promise<boolean>((resolve) =>
-          Alert.alert(
-            "Deactivate Employee",
-            `Deactivate ${name}? Their historical HR records will be retained.`,
-            [{ text: "Cancel", style: "cancel", onPress: () => resolve(false) },
-             { text: "Deactivate", style: "destructive", onPress: () => resolve(true) }]
-          )
-        );
-    if (!confirmed) return;
-    const { data, error } = await supabase.rpc("rpc_admin_set_profile_active", {
-      p_profile_id: employeeId,
-      p_is_active: false,
-    });
-    const response = firstRpcRow<any>(data);
-    if (
-      error ||
-      response?.success !== true ||
-      response?.profile_id !== employeeId
-    ) {
-      const message =
-        error?.message || response?.message || "Server did not confirm deactivation.";
-      if (typeof window !== "undefined") window.alert("Failed to deactivate: " + message);
-      else Alert.alert("Deactivation failed", message);
-    } else {
+    setErase({ id: employeeId, name, preview: null, error: null, typed: "", running: false });
+    try {
+      const preview = await previewErase(employeeId);
+      setErase((current) => (current?.id === employeeId ? { ...current, preview } : current));
+    } catch (err: any) {
+      setErase((current) => (current?.id === employeeId ? { ...current, error: err?.message ?? String(err) } : current));
+    }
+  };
+
+  const confirmErase = async () => {
+    if (!erase || erase.running || !sameName(erase.typed, erase.name)) return;
+    setErase({ ...erase, running: true, error: null });
+    try {
+      await eraseEmployee(erase.id, erase.typed);
+      setErase(null);
       await loadEmployees();
+      Alert.alert("Employee deleted", `${erase.name} and all their records were deleted.`);
+    } catch (err: any) {
+      setErase((current) => (current ? { ...current, running: false, error: err?.message ?? String(err) } : current));
     }
   };
 
@@ -2002,6 +2037,79 @@ export default function UserManagementScreen() {
               </View>
               <Spacer height={Spacing.xl} />
               <Button onPress={handleSaveAdmin}>{savingAdmin ? "Creating..." : "Create Admin User"}</Button>
+            </ScrollView>
+          </ThemedView>
+        </View>
+      </Modal>
+
+      {/* Delete employee: preview, then type the name */}
+      <Modal visible={!!erase} transparent animationType="fade" onRequestClose={() => !erase?.running && setErase(null)}>
+        <View style={styles.modalOverlay}>
+          <ThemedView style={[styles.modalContainer, { paddingBottom: insets.bottom + Spacing.lg }]}>
+            <View style={styles.modalHeader}>
+              <ThemedText type="h3">Delete employee permanently</ThemedText>
+              <Pressable onPress={() => !erase?.running && setErase(null)}>
+                <Feather name="x" size={24} color={theme.text} />
+              </Pressable>
+            </View>
+            <ScrollView style={styles.modalContent} keyboardShouldPersistTaps="handled">
+              {erase && !erase.preview && !erase.error ? (
+                <ThemedText style={{ color: theme.textSecondary }}>Checking what will be deleted...</ThemedText>
+              ) : null}
+              {erase?.preview && !erase.preview.ok ? (
+                <ThemedText style={{ color: Colors.light.error }}>
+                  {`${erase.name} cannot be deleted right now. ${erase.preview.blocked}`}
+                </ThemedText>
+              ) : null}
+              {erase?.preview?.ok ? (() => {
+                const { lines, total } = summarizeErase(erase.preview.deleted);
+                return (
+                  <>
+                    <ThemedText>
+                      {`This deletes ${erase.name}, their login and ${total > 0 ? "everything recorded for them:" : "their profile (no other records found)."}`}
+                    </ThemedText>
+                    {lines.map((line) => (
+                      <ThemedText key={line} style={{ marginLeft: Spacing.md, marginTop: 2 }}>{"• " + line}</ThemedText>
+                    ))}
+                    <Spacer height={Spacing.sm} />
+                    <ThemedText style={{ color: Colors.light.error, fontWeight: "600" }}>
+                      It cannot be undone. Reports for past dates will no longer include this person.
+                    </ThemedText>
+                    <Spacer height={Spacing.md} />
+                    <ThemedText type="small" style={styles.inputLabel}>{`Type "${erase.name}" to confirm`}</ThemedText>
+                    <TextInput
+                      style={[styles.modalInput, { backgroundColor: theme.backgroundSecondary, color: theme.text }]}
+                      value={erase.typed}
+                      onChangeText={(typed) => setErase({ ...erase, typed })}
+                      placeholder={erase.name}
+                      placeholderTextColor={theme.textSecondary}
+                      autoCapitalize="words"
+                      autoCorrect={false}
+                    />
+                  </>
+                );
+              })() : null}
+              {erase?.error ? (
+                <ThemedText style={{ color: Colors.light.error, marginTop: Spacing.sm }}>{erase.error}</ThemedText>
+              ) : null}
+              <Spacer height={Spacing.xl} />
+              {erase?.preview?.ok ? (
+                <Pressable
+                  disabled={erase.running || !sameName(erase.typed, erase.name)}
+                  onPress={() => void confirmErase()}
+                  style={[styles.successBtn, {
+                    backgroundColor: Colors.light.error,
+                    alignSelf: "stretch",
+                    justifyContent: "center",
+                    opacity: erase.running || !sameName(erase.typed, erase.name) ? 0.4 : 1,
+                  }]}
+                >
+                  <Feather name="trash-2" size={16} color="#fff" />
+                  <ThemedText type="caption" style={{ color: "#fff", fontWeight: "700" }}>
+                    {erase.running ? "Deleting..." : "Delete permanently"}
+                  </ThemedText>
+                </Pressable>
+              ) : null}
             </ScrollView>
           </ThemedView>
         </View>

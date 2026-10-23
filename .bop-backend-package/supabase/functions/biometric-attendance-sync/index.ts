@@ -1,6 +1,8 @@
 import { createClient } from "npm:@supabase/supabase-js@2.39.0";
 
 const SYNC_SOURCE_HEADER = "pg_cron";
+const SMARTOFFICE_ATTEMPTS = 2;
+const SMARTOFFICE_RETRY_MS = 3_000;
 const FUNCTION_VERSION = "20260803.1";
 const REQUIRED_BACKEND_SCHEMA_VERSION = "20260810000000";
 const REQUEST_IN_PROGRESS_MS = 5 * 60 * 1000;
@@ -125,6 +127,25 @@ function toISTTimestamp(value: string) {
     : `${normalized}+05:30`;
 }
 
+// Supabase client errors are plain objects ({ code, message, details, hint });
+// String(error) gave "[object Object]" and hid every database failure.
+function describeError(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === "object") {
+    const e = error as Record<string, unknown>;
+    const parts = [e.code, e.message, e.details, e.hint]
+      .filter((value) => value != null && String(value).trim() !== "")
+      .map(String);
+    if (parts.length) return parts.join(" | ");
+    try {
+      return JSON.stringify(error);
+    } catch {
+      // fall through
+    }
+  }
+  return String(error);
+}
+
 function extractLogs(body: any): SmartOfficeLog[] {
   if (Array.isArray(body)) return body;
   if (Array.isArray(body?.records)) return body.records;
@@ -132,6 +153,10 @@ function extractLogs(body: any): SmartOfficeLog[] {
   return [];
 }
 
+// Active employees only: the database refuses punches of a deactivated
+// employee (ACTIVE_MAPPED_EMPLOYEE_REQUIRED) and the batch is one
+// transaction, so a single person who left but still punches blocked every
+// other punch. Their punches are kept as raw / unmatched instead.
 async function fetchAllMappedProfiles(admin: any) {
   const rows: any[] = [];
   const pageSize = 1000;
@@ -139,6 +164,7 @@ async function fetchAllMappedProfiles(admin: any) {
     const { data, error } = await admin
       .from("profiles")
       .select("id,smartoffice_employee_code")
+      .eq("is_active", true)
       .not("smartoffice_employee_code", "is", null)
       .order("id")
       .range(from, from + pageSize - 1);
@@ -201,18 +227,30 @@ Deno.serve(async (request) => {
   let fromDate = formatISTDate();
   let toDate = fromDate;
   if (!isCron) {
-    const userClient = createClient(supabaseUrl, anonKey, {
-      global: { headers: { Authorization: authorization } },
-      auth: { persistSession: false, autoRefreshToken: false },
-    });
-    const { data: userData } = await userClient.auth.getUser();
-    if (!userData.user) {
+    // Verify the caller's own session token explicitly (getUser() without a
+    // token depends on client session storage) and say why when it fails.
+    const accessToken = authorization.replace(/^Bearer\s+/i, "").trim();
+    if (!accessToken || accessToken === anonKey) {
       return Response.json(
-        { error: "UNAUTHORIZED" },
+        { error: "UNAUTHORIZED", message: "Sign in again to run a manual sync (no user session was sent)." },
         { status: 401, headers: CORS_HEADERS },
       );
     }
-    const { data: profile } = await userClient
+    const authClient = createClient(supabaseUrl, serviceRoleKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    const { data: userData, error: userError } =
+      await authClient.auth.getUser(accessToken);
+    if (!userData?.user) {
+      return Response.json(
+        {
+          error: "UNAUTHORIZED",
+          message: `Session check failed: ${userError?.message ?? "unknown user"}. Sign out and sign in again.`,
+        },
+        { status: 401, headers: CORS_HEADERS },
+      );
+    }
+    const { data: profile } = await authClient
       .from("profiles")
       .select("role,is_active")
       .eq("id", userData.user.id)
@@ -430,6 +468,14 @@ Deno.serve(async (request) => {
       { status: 500, headers: CORS_HEADERS },
     );
   }
+  if (!claimed && isCron) {
+    // The previous minute's run is still going: nothing failed, skip quietly.
+    await admin.from("biometric_sync_requests").delete().eq("request_id", requestId);
+    return Response.json(
+      { skipped: "SYNC_BUSY", requestId },
+      { headers: CORS_HEADERS },
+    );
+  }
   if (!claimed) {
     await admin
       .from("biometric_sync_requests")
@@ -449,6 +495,8 @@ Deno.serve(async (request) => {
     );
   }
 
+  // Which part of the sync failed, reported with the error.
+  let step = "SMARTOFFICE_FETCH";
   try {
     const exclusiveEnd = new Date(`${toDate}T00:00:00Z`);
     exclusiveEnd.setUTCDate(exclusiveEnd.getUTCDate() + 1);
@@ -456,15 +504,29 @@ Deno.serve(async (request) => {
     const proxyUrl =
       `${supabaseUrl}/functions/v1/smartoffice-proxy` +
       `/api/v2/WebAPI/GetDeviceLogs?FromDate=${fromDate}&ToDate=${toDateExclusive}`;
-    const response = await fetch(proxyUrl, {
-      headers: {
-        Accept: "application/json",
-        Authorization: `Bearer ${serviceRoleKey}`,
-        apikey: serviceRoleKey,
-      },
-    });
-    if (!response.ok) {
-      throw new Error(`SMARTOFFICE_HTTP_${response.status}`);
+    // The SmartOffice server (on the office internet line) often drops a
+    // single request: try once more after a short pause before failing.
+    let response: Response | null = null;
+    let failure = "";
+    for (let attempt = 1; attempt <= SMARTOFFICE_ATTEMPTS; attempt += 1) {
+      if (attempt > 1) await new Promise((r) => setTimeout(r, SMARTOFFICE_RETRY_MS));
+      response = await fetch(proxyUrl, {
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${serviceRoleKey}`,
+          apikey: serviceRoleKey,
+        },
+      }).catch(() => null);
+      if (response?.ok) break;
+      const reason = response
+        ? await response.json().then((b) => b?.error, () => null).catch(() => null)
+        : "SMARTOFFICE_PROXY_UNREACHABLE";
+      failure = `SMARTOFFICE_HTTP_${response?.status ?? 0}${reason ? ` (${reason})` : ""}`;
+      // 4xx (bad key, endpoint) will not get better by retrying.
+      if (response && response.status < 500) break;
+    }
+    if (!response?.ok) {
+      throw new Error(failure);
     }
     const body = await response.json();
     if (body?.status === false) {
@@ -472,6 +534,7 @@ Deno.serve(async (request) => {
     }
     const logs = extractLogs(body);
 
+    step = "LOAD_EMPLOYEE_CODES";
     const employees = await fetchAllMappedProfiles(admin);
 
     const profileIdsByCode = new Map<string, string[]>();
@@ -550,6 +613,7 @@ Deno.serve(async (request) => {
     }
 
     let rawIngestResult: any = null;
+    step = "INGEST_RAW_PUNCHES (ingest_biometric_punches)";
     if (rawPunchRows.length) {
       const { data, error } = await admin.rpc("ingest_biometric_punches", {
         p_punches: rawPunchRows,
@@ -565,6 +629,7 @@ Deno.serve(async (request) => {
     }
 
     let batchResult: any = null;
+    step = "APPLY_BATCH (apply_biometric_import_batch_v4)";
     if (deviceRows.length) {
       const serializedRows = JSON.stringify(deviceRows);
       const digest = await crypto.subtle.digest(
@@ -650,6 +715,7 @@ Deno.serve(async (request) => {
           summariesUpdated: 0,
           rawPunchIngest: rawIngestResult,
         };
+    step = "SAVE_RESULT";
     if (deviceRows.length) {
       const { error: batchResultError } = await admin
         .from("biometric_import_batches")
@@ -684,7 +750,8 @@ Deno.serve(async (request) => {
       .eq("singleton", true);
     return Response.json(result, { headers: CORS_HEADERS });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = `${step}: ${describeError(error)}`;
+    console.error("[biometric-attendance-sync]", message);
     await admin
       .from("biometric_sync_requests")
       .update({

@@ -146,7 +146,11 @@ Deno.serve(async (request) => {
       status: response.status,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
-  } catch {
-    return json({ error: "SMARTOFFICE_UNAVAILABLE" }, 502);
+  } catch (error) {
+    // Say which: no answer in time (server slow/asleep) or no connection at all.
+    if (error instanceof DOMException && error.name === "TimeoutError") {
+      return json({ error: "SMARTOFFICE_TIMEOUT" }, 504);
+    }
+    return json({ error: "SMARTOFFICE_UNREACHABLE" }, 502);
   }
 });

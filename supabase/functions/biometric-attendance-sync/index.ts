@@ -1,6 +1,8 @@
 import { createClient } from "npm:@supabase/supabase-js@2.39.0";
 
 const SYNC_SOURCE_HEADER = "pg_cron";
+const SMARTOFFICE_ATTEMPTS = 2;
+const SMARTOFFICE_RETRY_MS = 3_000;
 const FUNCTION_VERSION = "20260803.1";
 const REQUIRED_BACKEND_SCHEMA_VERSION = "20260810000000";
 const REQUEST_IN_PROGRESS_MS = 5 * 60 * 1000;
@@ -225,18 +227,30 @@ Deno.serve(async (request) => {
   let fromDate = formatISTDate();
   let toDate = fromDate;
   if (!isCron) {
-    const userClient = createClient(supabaseUrl, anonKey, {
-      global: { headers: { Authorization: authorization } },
-      auth: { persistSession: false, autoRefreshToken: false },
-    });
-    const { data: userData } = await userClient.auth.getUser();
-    if (!userData.user) {
+    // Verify the caller's own session token explicitly (getUser() without a
+    // token depends on client session storage) and say why when it fails.
+    const accessToken = authorization.replace(/^Bearer\s+/i, "").trim();
+    if (!accessToken || accessToken === anonKey) {
       return Response.json(
-        { error: "UNAUTHORIZED" },
+        { error: "UNAUTHORIZED", message: "Sign in again to run a manual sync (no user session was sent)." },
         { status: 401, headers: CORS_HEADERS },
       );
     }
-    const { data: profile } = await userClient
+    const authClient = createClient(supabaseUrl, serviceRoleKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    const { data: userData, error: userError } =
+      await authClient.auth.getUser(accessToken);
+    if (!userData?.user) {
+      return Response.json(
+        {
+          error: "UNAUTHORIZED",
+          message: `Session check failed: ${userError?.message ?? "unknown user"}. Sign out and sign in again.`,
+        },
+        { status: 401, headers: CORS_HEADERS },
+      );
+    }
+    const { data: profile } = await authClient
       .from("profiles")
       .select("role,is_active")
       .eq("id", userData.user.id)
@@ -454,6 +468,14 @@ Deno.serve(async (request) => {
       { status: 500, headers: CORS_HEADERS },
     );
   }
+  if (!claimed && isCron) {
+    // The previous minute's run is still going: nothing failed, skip quietly.
+    await admin.from("biometric_sync_requests").delete().eq("request_id", requestId);
+    return Response.json(
+      { skipped: "SYNC_BUSY", requestId },
+      { headers: CORS_HEADERS },
+    );
+  }
   if (!claimed) {
     await admin
       .from("biometric_sync_requests")
@@ -482,15 +504,29 @@ Deno.serve(async (request) => {
     const proxyUrl =
       `${supabaseUrl}/functions/v1/smartoffice-proxy` +
       `/api/v2/WebAPI/GetDeviceLogs?FromDate=${fromDate}&ToDate=${toDateExclusive}`;
-    const response = await fetch(proxyUrl, {
-      headers: {
-        Accept: "application/json",
-        Authorization: `Bearer ${serviceRoleKey}`,
-        apikey: serviceRoleKey,
-      },
-    });
-    if (!response.ok) {
-      throw new Error(`SMARTOFFICE_HTTP_${response.status}`);
+    // The SmartOffice server (on the office internet line) often drops a
+    // single request: try once more after a short pause before failing.
+    let response: Response | null = null;
+    let failure = "";
+    for (let attempt = 1; attempt <= SMARTOFFICE_ATTEMPTS; attempt += 1) {
+      if (attempt > 1) await new Promise((r) => setTimeout(r, SMARTOFFICE_RETRY_MS));
+      response = await fetch(proxyUrl, {
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${serviceRoleKey}`,
+          apikey: serviceRoleKey,
+        },
+      }).catch(() => null);
+      if (response?.ok) break;
+      const reason = response
+        ? await response.json().then((b) => b?.error, () => null).catch(() => null)
+        : "SMARTOFFICE_PROXY_UNREACHABLE";
+      failure = `SMARTOFFICE_HTTP_${response?.status ?? 0}${reason ? ` (${reason})` : ""}`;
+      // 4xx (bad key, endpoint) will not get better by retrying.
+      if (response && response.status < 500) break;
+    }
+    if (!response?.ok) {
+      throw new Error(failure);
     }
     const body = await response.json();
     if (body?.status === false) {

@@ -611,8 +611,9 @@ describe("production hardening contracts", () => {
     ]) {
       expect(control).toContain(sheetName);
     }
-    expect(control).toContain("Starting complete 10-sheet download");
-    expect(control).toContain("Download Complete Attendance Excel (10 sheets)");
+    expect(control).toContain("Starting complete 11-sheet download");
+    expect(control).toContain("Download Complete Attendance Excel (11 sheets)");
+    expect(control).toContain('XLSX.utils.book_append_sheet(wb, eventsSheet,    "Day Events")');
     expect(control).toContain("parseAttendanceTimestamp");
     expect(control).toContain("saveExcelWorkbook(");
     expect(control).toContain('type: "array"');

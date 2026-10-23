@@ -362,6 +362,7 @@ const linking = {
               LiveTracking: "live-tracking",
               OfficeExitReviews: "office-exits",
               LocationMonitor: "location-monitor",
+              BiometricDevices: "biometric-devices",
               TeamHierarchy: "teams",
               TicketManagement: "tickets",
               EventManagement: "events",

@@ -19,6 +19,8 @@ import {
 import { parseDatabaseTimestamp } from "@/utils/businessDate";
 import LocationDayStory, { LocationStory } from "@/components/LocationDayStory";
 import BiometricPunchList, { BiometricPunch } from "@/components/BiometricPunchList";
+import { DayEventList } from "@/components/attendance/DayStory";
+import type { DayEvent } from "@/services/attendance-day-events.service";
 
 export interface PingPoint {
   latitude: number | null;
@@ -43,6 +45,8 @@ interface Props {
   story?: LocationStory | null;
   /** Biometric device punches of the day (biometric-only staff have no GPS). */
   punches?: BiometricPunch[];
+  /** Every interaction of the day from every source (rpc_attendance_day_events). */
+  events?: DayEvent[];
 }
 
 function toIST(recorded_at: string) {
@@ -212,6 +216,7 @@ export default function LocationTimelineModal({
   onClose,
   story,
   punches = [],
+  events = [],
 }: Props) {
   const { theme } = useTheme();
 
@@ -248,8 +253,13 @@ export default function LocationTimelineModal({
             >
               Loading...
             </ThemedText>
-          ) : pings.length === 0 && !story?.events?.length ? (
-            punches.length > 0 ? (
+          ) : pings.length === 0 && !story?.events?.length && events.length === 0 ? (
+            events.length > 0 ? (
+              <ScrollView style={{ maxHeight: 420 }}>
+                <ThemedText style={{ fontSize: 11, fontWeight: "800", color: theme.textSecondary, marginBottom: 6 }}>THE WHOLE DAY</ThemedText>
+                <DayEventList events={events} />
+              </ScrollView>
+            ) : punches.length > 0 ? (
               <BiometricPunchList punches={punches} />
             ) : (
             <View style={{ alignItems: "center", paddingTop: 40 }}>
@@ -262,7 +272,14 @@ export default function LocationTimelineModal({
             )
           ) : (
             <>
-              <BiometricPunchList punches={punches} />
+              {events.length > 0 ? (
+                <ScrollView style={{ maxHeight: 260, marginBottom: 8 }}>
+                  <ThemedText style={{ fontSize: 11, fontWeight: "800", color: theme.textSecondary, marginBottom: 6 }}>THE WHOLE DAY</ThemedText>
+                  <DayEventList events={events} />
+                </ScrollView>
+              ) : (
+                <BiometricPunchList punches={punches} />
+              )}
               {/* @ts-ignore */}
               <GoogleMapView pings={pings} />
               {story ? (

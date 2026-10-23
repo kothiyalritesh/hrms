@@ -122,6 +122,8 @@ export const SCREEN_PERMISSIONS: Record<string, string[]> = {
   AdminDeviceSessions: ["devices.manage"],
   SmartOfficeIntegration: ["biometric.manage"],
   BiometricUserMatch: ["biometric.manage"],
+  // Which office each biometric machine is in (office return needs it).
+  BiometricDevices: ["biometric.manage"],
   SmartOfficeImportedData: ["biometric.manage"],
   LeaveManagement: ["leave.view", "leave.approve"],
   LeaveBalance: ["leave.view", "leave.balance.manage"],

@@ -16,7 +16,7 @@ $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 & python -I (Join-Path $here "build_mock_schema.py")
 if ($LASTEXITCODE -ne 0) { throw "mock schema generation failed" }
 $failed = 0
-foreach ($scenario in Get-ChildItem -Path $here -Filter "0*.sql" | Sort-Object Name) {
+foreach ($scenario in Get-ChildItem -Path $here -Filter "*.sql" | Where-Object { $_.Name -match '^\d\d_' } | Sort-Object Name) {
   $db = "hrms_rel_" + [IO.Path]::GetFileNameWithoutExtension($scenario.Name).Substring(0, 2)
   & $Psql -h 127.0.0.1 -p $Port -U $User -d postgres -q -c "DROP DATABASE IF EXISTS $db" -c "CREATE DATABASE $db" | Out-Null
   & $Psql -h 127.0.0.1 -p $Port -U $User -d $db -q -v ON_ERROR_STOP=1 -f (Join-Path $here "mock_schema.sql") | Out-Null

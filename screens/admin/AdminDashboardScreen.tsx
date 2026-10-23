@@ -475,6 +475,13 @@ export default function AdminDashboardScreen({ navigation }: Props) {
             accent="#3B82F6"
             onPress={() => navigation.navigate("CheckInLogs")}
           />)}
+          {canOpenScreen("BiometricDevices") && (<ActionCard
+            icon="cpu"
+            label="Biometric Devices"
+            desc="Link each machine to its office"
+            accent="#7C3AED"
+            onPress={() => navigation.navigate("BiometricDevices")}
+          />)}
           {canOpenScreen("LocationMonitor") && (<ActionCard
             icon="crosshair"
             label="Location Monitor"

@@ -24,7 +24,12 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Spacing, BorderRadius, Colors, Shadows } from "@/constants/theme";
 import Spacer from "@/components/Spacer";
 import { supabase } from "@/lib/supabase";
-import { AttendanceService } from "@/services/attendance.service";
+import {
+  AttendanceService,
+  GeoFenceError,
+  SiteCheckInAvailableError,
+  type CheckInSite,
+} from "@/services/attendance.service";
 import { requestOfficeExitPrompt } from "@/services/location/officeExitPrompt";
 import { OfficeService } from "@/services/office.service";
 import * as Location from "expo-location";
@@ -42,6 +47,35 @@ import AttendanceCheckoutFlow, {
 } from "@/components/AttendanceCheckoutFlow";
 
 // Alert.alert does nothing on Safari web — use this everywhere in this screen
+/** Site the employee is at (one: confirm by name; several: pick, nearest first). */
+function chooseCheckInSite(sites: CheckInSite[]): Promise<CheckInSite | null> {
+  const options = sites.slice(0, 3);
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (site: CheckInSite | null) => {
+      if (settled) return;
+      settled = true;
+      resolve(site);
+    };
+    const one = options.length === 1 ? options[0] : null;
+    Alert.alert(
+      one ? "Check in at this site?" : "Which site are you at?",
+      one
+        ? `${one.name}${one.project_name ? ` · ${one.project_name}` : ""}
+About ${one.distance_m} m from you.`
+        : "You are near more than one site. Choose the one you are working at now.",
+      [
+        ...options.map((site) => ({
+          text: one ? "Check in here" : `${site.name} (${site.distance_m} m)`,
+          onPress: () => done(site),
+        })),
+        { text: "Cancel", style: "cancel" as const, onPress: () => done(null) },
+      ],
+      { cancelable: true, onDismiss: () => done(null) },
+    );
+  });
+}
+
 function showAlert(title: string, message?: string) {
   if (Platform.OS === "web") {
     window.alert(message ? `${title}\n\n${message}` : title);
@@ -726,6 +760,39 @@ export default function DashboardScreen({ navigation }: DashboardScreenProps) {
     }
   };
 
+  // Home Check-In at a predefined site: no field visit to create by hand.
+  const runSiteCheckIn = async (sites: CheckInSite[]) => {
+    const site = await chooseCheckInSite(sites);
+    if (!site) return;
+    // A fresh reading: the server accepts GPS up to 60 s old.
+    const gps = await getCurrentLocation();
+    if (!gps) return;
+    const result = await AttendanceService.siteCheckIn({ siteId: site.id, location: gps });
+    if (!result.success) {
+      showAlert("Site check-in failed", result.message || "Please try again.");
+      return;
+    }
+    try {
+      await reloadAfterAttendanceChange();
+    } catch {
+      console.warn("Site check-in succeeded but the dashboard refresh was deferred");
+    }
+    if (Platform.OS !== "web") {
+      void recheckTracking().then((checked) => {
+        if (checked.platformSupported && checked.warning) {
+          navigation.navigate("LocationTrackingSetup");
+        }
+      });
+    }
+    const at = result.checkin_time
+      ? new Date(result.checkin_time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" })
+      : null;
+    showAlert(
+      result.mode === "ALREADY_AT_SITE" ? "Already checked in" : "Checked In ✅",
+      `${result.message ?? `Checked in at ${result.site_name ?? site.name}.`}${at ? ` Day started at ${at}.` : ""}`,
+    );
+  };
+
   const runAttendanceToggle = async () => {
     if (!user?.id) {
       showAlert("Error", "You must be logged in.");
@@ -769,10 +836,24 @@ export default function DashboardScreen({ navigation }: DashboardScreenProps) {
         return;
       }
 
-      const verifiedCheckIn = await AttendanceService.officeCheckIn({
-        userId: user.id,
-        location: gps,
-      });
+      let verifiedCheckIn: Awaited<ReturnType<typeof AttendanceService.officeCheckIn>>;
+      try {
+        verifiedCheckIn = await AttendanceService.officeCheckIn({
+          userId: user.id,
+          location: gps,
+        });
+      } catch (err) {
+        if (err instanceof SiteCheckInAvailableError) {
+          await runSiteCheckIn(err.sites);
+          return;
+        }
+        if (err instanceof GeoFenceError) {
+          throw new Error(
+            `You are about ${Math.round(err.distanceMetres)} m from ${err.officeName} (allowed ${Math.round(err.radiusMetres)} m), and not at an active work site. Move inside the office area, or ask HR to add this site in Site Management.`,
+          );
+        }
+        throw err;
+      }
       const checkInResult = verifiedCheckIn.result;
       const nearest = {
         office: verifiedCheckIn.office,

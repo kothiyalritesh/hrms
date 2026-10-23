@@ -311,6 +311,10 @@ GEO_PARTS = [
     (M / "20261008100000_production_integrity_phase_a.sql", "rpc_submit_geofence_reason", 0),
     (M / "20261008100000_production_integrity_phase_a.sql", "rpc_geofence_review_queue", 0),
     (M / "20261008180000_location_reliability_phase1.sql", "hrms_geofence_sweep", 0),
+    # site check-in / office return (scenario 09)
+    (M / "20260810000000_field_event_audience_context_notifications.sql", "sync_field_visit_arrival_attendance", 0),
+    (M / "20261008140000_fix_another_visit_in_progress.sql", "hrms_close_open_field_visits_before_today", 0),
+    (M / "20261001000000_multi_office_attendance_and_permissions.sql", "trg_populate_biometric_log_office", 0),
 ]
 
 GEO_TABLES = r"""
@@ -358,6 +362,35 @@ CREATE TABLE public.geofence_events (
 CREATE UNIQUE INDEX geofence_events_one_active_cycle
   ON public.geofence_events (attendance_id, geofence_type, geofence_id)
   WHERE status NOT IN ('RETURNED_INSIDE', 'CLOSED');
+-- columns the field-visit engine reads and writes (scenario 09)
+ALTER TABLE public.field_visits ADD COLUMN predefined_site_id uuid, ADD COLUMN visit_type text,
+  ADD COLUMN location_address text, ADD COLUMN checkin_radius_m double precision, ADD COLUMN notes text,
+  ADD COLUMN checkin_location jsonb, ADD COLUMN arrival_latitude double precision,
+  ADD COLUMN arrival_longitude double precision, ADD COLUMN arrival_accuracy_metres double precision,
+  ADD COLUMN arrival_distance_metres double precision, ADD COLUMN visit_state text, ADD COLUMN journey_status text,
+  ADD COLUMN departed_at timestamptz, ADD COLUMN checkout_office_id uuid, ADD COLUMN auto_closed boolean DEFAULT false,
+  ADD COLUMN source_field_visit_id uuid;
+ALTER TABLE public.attendance_logs ADD COLUMN checkin_status text, ADD COLUMN checkin_location jsonb,
+  ADD COLUMN checkin_latitude double precision, ADD COLUMN checkin_longitude double precision,
+  ADD COLUMN checkin_location_name text, ADD COLUMN checkin_distance_meters integer,
+  ADD COLUMN attendance_context text, ADD COLUMN field_visit_id uuid, ADD COLUMN context_location_name text,
+  ADD COLUMN context_started_at timestamptz, ADD COLUMN auto_checkout boolean, ADD COLUMN notes text;
+ALTER TABLE public.predefined_sites ADD COLUMN site_label text, ADD COLUMN project_name text,
+  ADD COLUMN address text, ADD COLUMN checkin_radius_m double precision;
+ALTER TABLE public.smartoffice_device_logs ADD COLUMN office_id uuid;
+-- day events (scenario 09): checkout details, company events, reviewed regularizations
+ALTER TABLE public.attendance_logs ADD COLUMN auto_closed boolean DEFAULT false, ADD COLUMN checkout_location_name text;
+ALTER TABLE public.attendance_regularization_requests ADD COLUMN reviewed_at timestamptz;
+CREATE TABLE public.events (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), title text);
+CREATE TABLE public.event_checkins (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), event_id uuid, user_id uuid,
+  checkin_time timestamptz DEFAULT now(), checkout_time timestamptz);
+-- as 20261001000000 (device serial -> office)
+CREATE TABLE public.biometric_devices (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), device_name text NOT NULL,
+  device_identifier text NOT NULL UNIQUE, office_id uuid NOT NULL REFERENCES public.offices(id),
+  status text NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'INACTIVE')),
+  last_sync_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now());
 CREATE TABLE public.geofence_reasons (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   geofence_event_id uuid NOT NULL REFERENCES public.geofence_events(id),
@@ -370,7 +403,11 @@ def build_geofence() -> None:
     for path, name, nth in GEO_PARTS:
         chunks.append(f"\n-- from {path.relative_to(ROOT).as_posix()}\n")
         chunks.append(function_source(path, name, nth) + "\n")
-    chunks.append("\nRESET check_function_bodies;\n")
+    chunks.append(
+        "\nRESET check_function_bodies;\n"
+        "CREATE TRIGGER trg_biometric_log_office BEFORE INSERT ON public.smartoffice_device_logs\n"
+        "  FOR EACH ROW EXECUTE FUNCTION public.trg_populate_biometric_log_office();\n"
+    )
     GEO_OUT.write_text("".join(chunks), encoding="utf-8", newline="\n")
     print(f"wrote {GEO_OUT.relative_to(ROOT).as_posix()}")
 

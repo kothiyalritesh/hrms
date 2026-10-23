@@ -30,6 +30,7 @@ export type AdminStackParamList = {
   LiveTracking: undefined;
   OfficeExitReviews: undefined;
   LocationMonitor: undefined;
+  BiometricDevices: undefined;
   TeamHierarchy: undefined;
   TicketManagement: undefined;
   EventManagement: undefined;
@@ -85,6 +86,7 @@ const BiometricDeviceManagementScreen = lazyScreen(() => import("@/screens/admin
 const ActivityAnalysisScreen = lazyScreen(() => import("@/screens/admin/ActivityAnalysisScreen"), SCREEN_PERMISSIONS.ActivityAnalysis);
 const FieldVisitAdminScreen = lazyScreen(() => import("@/screens/admin/FieldVisitAdminScreen"), SCREEN_PERMISSIONS.FieldVisitAdmin);
 const LiveTrackingScreen = lazyScreen(() => import("@/screens/admin/LiveTrackingScreen"), SCREEN_PERMISSIONS.LiveTracking);
+const BiometricDevicesScreen = lazyScreen(() => import("@/screens/admin/BiometricDevicesScreen"), SCREEN_PERMISSIONS.BiometricDevices);
 const LocationMonitorScreen = lazyScreen(() => import("@/screens/admin/LocationMonitorScreen"), SCREEN_PERMISSIONS.LocationMonitor);
 const OfficeExitReviewsScreen = lazyScreen(() => import("@/screens/admin/OfficeExitReviewsScreen"), SCREEN_PERMISSIONS.OfficeExitReviews);
 const TicketManagementScreen = lazyScreen(() => import("@/screens/admin/TicketManagementScreen"), SCREEN_PERMISSIONS.TicketManagement);
@@ -196,6 +198,11 @@ export default function AdminStackNavigator() {
         name="LocationMonitor"
         component={LocationMonitorScreen}
         options={{ headerTitle: "Location Monitor" }}
+      />
+      <Stack.Screen
+        name="BiometricDevices"
+        component={BiometricDevicesScreen}
+        options={{ headerTitle: "Biometric Devices" }}
       />
       <Stack.Screen
         name="TeamHierarchy"
